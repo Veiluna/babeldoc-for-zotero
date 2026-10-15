@@ -22,6 +22,7 @@ var ZoteroTranslateFiles = {
     this.id = data.id;
     this.version = data.version;
     this.rootURI = data.rootURI;
+    this.modules.preferences = ZoteroTranslateFilesPreferences;
     this.started = true;
     this.callModules("init", [data]);
     this.log("initialized " + this.version);

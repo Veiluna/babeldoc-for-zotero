@@ -1,0 +1,61 @@
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml"
+      id="zotero-translate-files-preferences"
+      class="main-section"
+      onload="ZoteroTranslateFilesPreferences.initializePane(document, window)">
+  <linkset>
+    <html:link rel="localization" href="zotero-translate-files.ftl" />
+  </linkset>
+
+  <html:div>
+    <html:label for="zotero-translate-files-preferences-base-url"
+                data-l10n-id="zotero-translate-files-pref-base-url" />
+    <html:input id="zotero-translate-files-preferences-base-url"
+                type="text"
+                preference="extensions.zotero-translate-files.baseURL"
+                autocomplete="off" />
+  </html:div>
+
+  <html:div>
+    <html:label for="zotero-translate-files-preferences-api-key"
+                data-l10n-id="zotero-translate-files-pref-api-key" />
+    <html:input id="zotero-translate-files-preferences-api-key"
+                type="password"
+                preference="extensions.zotero-translate-files.apiKey"
+                autocomplete="off" />
+  </html:div>
+
+  <html:div>
+    <html:label for="zotero-translate-files-preferences-model"
+                data-l10n-id="zotero-translate-files-pref-model" />
+    <html:input id="zotero-translate-files-preferences-model"
+                type="text"
+                preference="extensions.zotero-translate-files.model"
+                autocomplete="off" />
+  </html:div>
+
+  <html:div>
+    <html:label for="zotero-translate-files-preferences-babeldoc-path"
+                data-l10n-id="zotero-translate-files-pref-babeldoc-path" />
+    <html:input id="zotero-translate-files-preferences-babeldoc-path"
+                type="text"
+                preference="extensions.zotero-translate-files.babeldocPath"
+                autocomplete="off" />
+    <html:button id="zotero-translate-files-preferences-browse"
+                 type="button"
+                 data-l10n-id="zotero-translate-files-pref-browse" />
+  </html:div>
+
+  <html:p data-l10n-id="zotero-translate-files-pref-babeldoc-help" />
+  <html:button id="zotero-translate-files-preferences-test"
+               type="button"
+               data-l10n-id="zotero-translate-files-pref-test" />
+  <html:div id="zotero-translate-files-preferences-api-status"
+            role="status"
+            aria-live="polite"
+            data-l10n-id="zotero-translate-files-pref-api-idle" />
+  <html:div id="zotero-translate-files-preferences-path-status"
+            role="status"
+            aria-live="polite"
+            data-l10n-id="zotero-translate-files-pref-path-idle" />
+</vbox>
