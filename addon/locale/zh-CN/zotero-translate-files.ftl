@@ -1,5 +1,6 @@
 zotero-translate-files-name = Zotero 中文 PDF 翻译
-zotero-translate-files-menu-label = 翻译成中文 PDF
+zotero-translate-files-menu-label =
+    .label = 翻译成中文 PDF
 zotero-translate-files-pref-base-url = 接口地址
 zotero-translate-files-pref-api-key = API key
 zotero-translate-files-pref-model = 模型名

@@ -23,6 +23,9 @@ var ZoteroTranslateFiles = {
     this.version = data.version;
     this.rootURI = data.rootURI;
     this.modules.preferences = ZoteroTranslateFilesPreferences;
+    this.modules.menu = ZoteroTranslateFilesMenu;
+    this.modules.queue = ZoteroTranslateFilesQueue;
+    this.modules.runner = ZoteroTranslateFilesRunner;
     this.started = true;
     this.callModules("init", [data]);
     this.log("initialized " + this.version);

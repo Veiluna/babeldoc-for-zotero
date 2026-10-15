@@ -1,5 +1,6 @@
 zotero-translate-files-name = Zotero Chinese PDF Translator
-zotero-translate-files-menu-label = Translate to Chinese PDF
+zotero-translate-files-menu-label =
+    .label = Translate to Chinese PDF
 zotero-translate-files-pref-base-url = API base URL
 zotero-translate-files-pref-api-key = API key
 zotero-translate-files-pref-model = Model name
