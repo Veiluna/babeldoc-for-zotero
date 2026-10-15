@@ -183,7 +183,7 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
-  function closeProgressWindow(job, succeeded, aborted) {
+  function closeProgressWindow(job, succeeded, aborted, warning) {
     if (!currentProgress || currentProgress.job !== job) return;
     var entry = currentProgress;
     currentProgress = null;
@@ -192,7 +192,14 @@ var ZoteroTranslateFilesQueue = (function () {
     try {
       if (succeeded) {
         entry.itemProgress.setProgress(100);
-        entry.itemProgress.setText("翻译完成（队列中还有 " + pending.length + " 篇）");
+        var failedParagraphs = Number(warning && warning.failed_paragraphs);
+        if (Number.isFinite(failedParagraphs) && failedParagraphs > 0) {
+          entry.itemProgress.setText(
+            "已完成，但有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文（队列中还有 " + pending.length + " 篇）"
+          );
+        } else {
+          entry.itemProgress.setText("翻译完成（队列中还有 " + pending.length + " 篇）");
+        }
       } else if (aborted) {
         entry.itemProgress.setText("翻译已取消。");
       } else {
@@ -207,6 +214,7 @@ var ZoteroTranslateFilesQueue = (function () {
 
   async function runJob(job, controller) {
     var translationResult = null;
+    var translationWarning = null;
     var succeeded = false;
     var failure = null;
     try {
@@ -225,6 +233,7 @@ var ZoteroTranslateFilesQueue = (function () {
         },
         signal: controller.signal,
       });
+      translationWarning = translationResult && translationResult.warning;
 
       if (controller.signal.aborted) return;
       var outputPath = typeof translationResult === "string"
@@ -260,7 +269,7 @@ var ZoteroTranslateFilesQueue = (function () {
       if (!succeeded && !controller.signal.aborted) {
         reportFailure(job, failure || new Error("翻译失败。"));
       }
-      closeProgressWindow(job, succeeded, controller.signal.aborted);
+      closeProgressWindow(job, succeeded, controller.signal.aborted, translationWarning);
     }
   }
 

@@ -253,12 +253,36 @@ async function cleanupFollowsImportAndProgressShowsQueuePosition() {
   );
 }
 
+async function partialFailureWarningShowsInCompletionProgress() {
+  const harness = makeHarness({
+    runner: {
+      async translate() {
+        return {
+          outputPath: "partial-translation.pdf",
+          warning: { failed_paragraphs: 2, message: "Connection error." },
+        };
+      },
+    },
+  });
+  harness.items.set(42, { id: 42 });
+  harness.queue.enqueue([42]);
+  await harness.queue.onIdle();
+
+  assert.ok(
+    harness.progressWindows[0].texts.some(text =>
+      text.includes("已完成，但有 2 段翻译失败，保留原文")
+    ),
+    "partial translation failures should be shown when the job completes",
+  );
+}
+
 (async () => {
   await fifoDedupeAndContinueAfterFailure();
   await validatesSettingsBeforeStarting();
   await cancelAbortsRunningJobAndDropsPendingJobs();
   await failureLogsOmitRunnerAndHandlerErrors();
   await cleanupFollowsImportAndProgressShowsQueuePosition();
+  await partialFailureWarningShowsInCompletionProgress();
   process.stdout.write("translation queue regression cases passed\n");
 })().catch(error => {
   process.stderr.write(error.stack + "\n");

@@ -89,11 +89,16 @@ function makeHarness(options = {}) {
 
       const progressLine = "ZTF_PROGRESS {\"overall\":42.5,\"stage\":\"翻译段落\",\"current\":3,\"total\":10}\r\n";
       const resultLine = options.errorEvent
-        ? "ZTF_ERROR {\"error\":\"request failed with " + apiKey + "\"}\r\n"
+        ? "ZTF_ERROR " + JSON.stringify(options.errorEvent === true
+          ? { error: "request failed with " + apiKey }
+          : options.errorEvent) + "\r\n"
         : options.omitResult
           ? ""
           : "ZTF_RESULT {\"mono\":" + JSON.stringify(outputPath) + "}\r\n";
-      const stdout = makeStream(progressLine + resultLine);
+      const warningLine = options.warning
+        ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
+        : "";
+      const stdout = makeStream(progressLine + warningLine + resultLine);
       const stderr = makeStream("diagnostic includes " + apiKey + "\r\n");
 
       return {
@@ -205,17 +210,37 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
 }
 
 async function errorsAreUsefulAndKeyFree() {
-  const harness = makeHarness({ errorEvent: true });
+  const harness = makeHarness({
+    errorEvent: {
+      message: "request failed with RUNNER_SECRET_KEY_789",
+      kind: "translation_failed",
+      failed_paragraphs: 2,
+    },
+  });
   await assert.rejects(
     harness.runner.translate(harness.item, {}),
     error => {
       assert.ok(error.message.includes("request failed"));
-      assert.ok(error.message.includes("[已隐藏]"));
+      assert.ok(!error.message.includes("BabelDOC 翻译失败"));
       assert.ok(!error.message.includes(harness.apiKey));
       return true;
     },
   );
   assert.equal(harness.removedDirectories.length, 1, "failed jobs should remove their work directory");
+}
+
+async function parsesAndRedactsPartialFailureWarning() {
+  const harness = makeHarness({
+    warning: {
+      failed_paragraphs: 3,
+      message: "Connection error with RUNNER_SECRET_KEY_789",
+    },
+  });
+  const result = await harness.runner.translate(harness.item, {});
+  assert.equal(result.warning.failed_paragraphs, 3);
+  assert.ok(result.warning.message.includes("Connection error"));
+  assert.ok(!result.warning.message.includes(harness.apiKey));
+  await result.cleanup();
 }
 
 async function nonZeroExitFailsAndRedactsStderr() {
@@ -270,6 +295,7 @@ async function abortKillsTheChildAndCleansUp() {
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
   await errorsAreUsefulAndKeyFree();
+  await parsesAndRedactsPartialFailureWarning();
   await nonZeroExitFailsAndRedactsStderr();
   await findsOutputWhenNoResultLineWasEmitted();
   await missingOrEmptyOutputFailsEvenAfterExitZero();

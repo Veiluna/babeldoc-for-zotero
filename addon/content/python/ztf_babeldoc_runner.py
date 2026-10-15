@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import json
 import logging
+import logging.handlers
 import multiprocessing
 import os
+import re
 import sys
+import threading
 import traceback
 from typing import Any
 
@@ -17,12 +21,251 @@ def _redact(value: Any, api_key: str) -> str:
     return text.replace(api_key, "[已隐藏]") if api_key else text
 
 
+def _redact_payload(value: Any, api_key: str) -> Any:
+    """Redact protocol values before JSON escapes quotes and backslashes."""
+    if isinstance(value, str):
+        return _redact(value, api_key)
+    if isinstance(value, dict):
+        return {
+            _redact(key, api_key): _redact_payload(item, api_key)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_payload(item, api_key) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _redact(value, api_key)
+
+
 def _emit(prefix: str, payload: dict[str, Any], api_key: str) -> None:
-    line = prefix + json.dumps(payload, ensure_ascii=False, default=str)
-    print(_redact(line, api_key), flush=True)
+    safe_payload = _redact_payload(payload, api_key)
+    line = prefix + json.dumps(safe_payload, ensure_ascii=False, default=str)
+    print(line, flush=True)
 
 
-def _configure_logging(api_key: str) -> None:
+class _SynchronousPolicyCapture(logging.Filter):
+    """Collect policy records on the emitting thread before QueueHandler enqueues them."""
+
+    def __init__(self, policy: "TranslationPolicy") -> None:
+        super().__init__()
+        self.policy = policy
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        self.policy.handle(record)
+        return True
+
+
+def _install_synchronous_log_capture(babeldoc_main: Any, policy: "TranslationPolicy") -> None:
+    """Keep policy collection ahead of BabelDOC 0.6.4's lossy QueueListener path."""
+    original_speed_up_logs = babeldoc_main.speed_up_logs
+    capture_filter = _SynchronousPolicyCapture(policy)
+
+    @functools.wraps(original_speed_up_logs)
+    def speed_up_logs_with_policy_capture() -> Any:
+        root_logger = logging.getLogger()
+        # Do not let QueueListener invoke policy later on its own thread; by then
+        # thread-local paragraph context is gone and EvictQueue may have dropped logs.
+        root_logger.handlers[:] = [
+            handler for handler in root_logger.handlers if handler is not policy
+        ]
+        result = original_speed_up_logs()
+
+        queue_handlers = [
+            handler
+            for handler in root_logger.handlers
+            if isinstance(handler, logging.handlers.QueueHandler)
+        ]
+        if queue_handlers:
+            queue_handlers[0].addFilter(capture_filter)
+        elif root_logger.handlers:
+            # Retain synchronous collection if another BabelDOC version does not
+            # use QueueHandler, while preserving its configured output handlers.
+            root_logger.handlers[0].addFilter(capture_filter)
+        else:
+            root_logger.addHandler(policy)
+        return result
+
+    babeldoc_main.speed_up_logs = speed_up_logs_with_policy_capture
+
+
+class TranslationPolicy(logging.Handler):
+    """Collect paragraph failures and token counts from BabelDOC's own logs."""
+
+    _completion_tokens_re = re.compile(r"^Completion tokens:\s*(\d+)\s*$")
+
+    def __init__(self) -> None:
+        super().__init__(logging.NOTSET)
+        self._lock = threading.Lock()
+        self._thread_state = threading.local()
+        self._attempted_paragraph_ids: dict[int, Any] = {}
+        self._failed_paragraph_ids: set[int] = set()
+        self._unbound_failed_paragraphs = 0
+        self.paragraph_attempts = 0
+        self.failed_paragraphs = 0
+        self.completion_tokens: int | None = None
+        self.first_error = ""
+
+    def _record_attempt(self, paragraph: Any) -> None:
+        if paragraph is None:
+            return
+        paragraph_id = id(paragraph)
+        with self._lock:
+            # Keep the object alive so its id cannot be reused during the job.
+            self._attempted_paragraph_ids.setdefault(paragraph_id, paragraph)
+            self.paragraph_attempts = len(self._attempted_paragraph_ids)
+
+    def instrument(self, il_translator_class: type) -> None:
+        """Count paragraphs with text in both batch and fallback translation paths."""
+        policy = self
+        original_paragraph = il_translator_class.translate_paragraph
+        original_pre_translate = il_translator_class.pre_translate_paragraph
+
+        @functools.wraps(original_paragraph)
+        def tracked_paragraph(instance: Any, *args: Any, **kwargs: Any) -> Any:
+            paragraph = args[0] if args else kwargs.get("paragraph")
+            missing = object()
+            previous = getattr(policy._thread_state, "paragraph", missing)
+            policy._thread_state.paragraph = paragraph
+            try:
+                return original_paragraph(instance, *args, **kwargs)
+            finally:
+                if previous is missing:
+                    del policy._thread_state.paragraph
+                else:
+                    policy._thread_state.paragraph = previous
+
+        @functools.wraps(original_pre_translate)
+        def tracked_pre_translate(instance: Any, *args: Any, **kwargs: Any) -> Any:
+            paragraph = args[0] if args else kwargs.get("paragraph")
+            result = original_pre_translate(instance, *args, **kwargs)
+            if isinstance(result, (tuple, list)) and result and result[0] is not None:
+                policy._record_attempt(paragraph)
+            return result
+
+        il_translator_class.translate_paragraph = tracked_paragraph
+        il_translator_class.pre_translate_paragraph = tracked_pre_translate
+
+    @staticmethod
+    def _is_paragraph_error(record: logging.LogRecord, message: str) -> bool:
+        return (
+            record.name.endswith(".il_translator")
+            and (
+                message.startswith("Error translating paragraph.")
+                or message.startswith("ContentFilterError:")
+            )
+        )
+
+    @staticmethod
+    def _first_line(value: Any) -> str:
+        text = str(value).strip()
+        return text.splitlines()[0].strip() if text else ""
+
+    @staticmethod
+    def _exception_name(record: logging.LogRecord) -> str:
+        exc_info = record.exc_info
+        if exc_info and len(exc_info) > 1 and exc_info[1] is not None:
+            return type(exc_info[1]).__name__
+        return ""
+
+    @staticmethod
+    def _underlying_error(record: logging.LogRecord, message: str) -> str:
+        exc_info = record.exc_info
+        exception_name = ""
+        if exc_info and len(exc_info) > 1 and exc_info[1] is not None:
+            exception_name = type(exc_info[1]).__name__
+            detail = TranslationPolicy._first_line(exc_info[1])
+            if detail:
+                return detail
+
+        if message.startswith("ContentFilterError:"):
+            detail = TranslationPolicy._first_line(message.partition(":")[2])
+            if detail.endswith("."):
+                detail = detail[:-1].rstrip()
+            if detail:
+                return detail
+
+        # Paragraph source text can itself contain "Error:". BabelDOC appends
+        # the actual exception at the end, so parse the final marker only.
+        marker = message.rfind("Error:")
+        if marker >= 0:
+            detail = TranslationPolicy._first_line(message[marker + len("Error:"):])
+            # BabelDOC appends a period after the exception text in this log message.
+            if detail.endswith("."):
+                detail = detail[:-1].rstrip()
+            if detail:
+                return detail
+        return (
+            exception_name
+            or message.strip()
+            or "BabelDOC reported a paragraph translation error."
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+            token_match = self._completion_tokens_re.match(message)
+            if token_match:
+                with self._lock:
+                    self.completion_tokens = int(token_match.group(1))
+
+            if not self._is_paragraph_error(record, message):
+                return
+
+            paragraph = getattr(self._thread_state, "paragraph", None)
+            with self._lock:
+                if paragraph is not None:
+                    paragraph_id = id(paragraph)
+                    self._attempted_paragraph_ids.setdefault(paragraph_id, paragraph)
+                    self._failed_paragraph_ids.add(paragraph_id)
+                    self.paragraph_attempts = len(self._attempted_paragraph_ids)
+                else:
+                    # BabelDOC executor logging can lose thread-local context;
+                    # each matching fallback error record still represents one failed paragraph.
+                    self._unbound_failed_paragraphs += 1
+                self.failed_paragraphs = (
+                    len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
+                )
+
+            # Count the failed paragraph before extracting a human-readable
+            # diagnostic so an empty or malformed exception message cannot hide it.
+            try:
+                error = self._underlying_error(record, message)
+            except Exception:
+                error = self._exception_name(record) or (
+                    "BabelDOC reported a paragraph translation error."
+                )
+            with self._lock:
+                if not self.first_error:
+                    self.first_error = error
+        except Exception:
+            # Diagnostics must never interfere with BabelDOC's translation threads.
+            return
+
+    def decision(self) -> dict[str, Any] | None:
+        with self._lock:
+            attempts = self.paragraph_attempts
+            failures = self.failed_paragraphs
+            completion_tokens = self.completion_tokens
+            first_error = self.first_error
+
+        all_paragraphs_failed = attempts > 0 and failures >= attempts
+        no_completion_tokens = attempts > 0 and completion_tokens == 0
+        if no_completion_tokens or all_paragraphs_failed:
+            return {
+                "kind": "translation_failed",
+                "failed_paragraphs": failures,
+                "message": first_error or "BabelDOC produced no completion tokens for paragraph text.",
+            }
+        if failures:
+            return {
+                "kind": "warning",
+                "failed_paragraphs": failures,
+                "message": first_error or "One or more paragraph translations failed.",
+            }
+        return None
+
+
+def _configure_logging(api_key: str, policy: TranslationPolicy) -> None:
     class RedactingStreamHandler(logging.StreamHandler):
         def format(self, record: logging.LogRecord) -> str:
             return _redact(super().format(record), api_key)
@@ -33,7 +276,7 @@ def _configure_logging(api_key: str) -> None:
     # BabelDOC's cli() uses basicConfig with a RichHandler that writes to stdout.
     # Configure the root first; basicConfig then leaves this sanitized stderr handler in place.
     root_logger = logging.getLogger()
-    root_logger.handlers[:] = [handler]
+    root_logger.handlers[:] = [handler, policy]
     root_logger.setLevel(logging.INFO)
 
     babeldoc_logger = logging.getLogger("babeldoc")
@@ -55,7 +298,7 @@ def main() -> int:
     # never this value; the plugin also asserts the key is absent from Subprocess.call arguments.
     sys.argv[1:1] = ["--openai-api-key", api_key]
 
-    state = {"error": False, "result": False}
+    state: dict[str, Any] = {"error": "", "result": ""}
 
     def create_progress_handler(config: Any, show_log: bool = False):
         del config, show_log
@@ -74,11 +317,8 @@ def main() -> int:
                     api_key,
                 )
             elif event_type == "error":
-                state["error"] = True
-                _emit(
-                    "ZTF_ERROR ",
-                    {"error": _redact(event.get("error", "BabelDOC reported an error."), api_key)},
-                    api_key,
+                state["error"] = _redact(
+                    event.get("error", "BabelDOC reported an error."), api_key
                 )
             elif event_type == "finish":
                 result = event.get("translate_result") or {}
@@ -91,16 +331,19 @@ def main() -> int:
                     )
                 mono_path = str(mono_path) if mono_path else ""
                 if mono_path:
-                    state["result"] = True
-                _emit("ZTF_RESULT ", {"mono": mono_path}, api_key)
+                    state["result"] = mono_path
 
         return contextlib.nullcontext(), handle_event
 
     try:
         import babeldoc.main as babeldoc_main
+        from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
 
         babeldoc_main.create_progress_handler = create_progress_handler
-        _configure_logging(api_key)
+        policy = TranslationPolicy()
+        policy.instrument(ILTranslator)
+        _configure_logging(api_key, policy)
+        _install_synchronous_log_capture(babeldoc_main, policy)
 
         try:
             multiprocessing.set_start_method("spawn")
@@ -126,10 +369,37 @@ def main() -> int:
         print(_redact(formatted_traceback, api_key), file=sys.stderr, flush=True)
         exit_code = 1
 
-    # BabelDOC may log a translation error and still return success. Enforce a failed
-    # process status unless a finish event supplied a monolingual result path.
-    if state["error"] or not state["result"]:
+    # BabelDOC can swallow paragraph API errors and still emit a PDF and exit 0.
+    decision = policy.decision() if "policy" in locals() else None
+    if decision and decision["kind"] == "translation_failed":
+        _emit(
+            "ZTF_ERROR ",
+            {
+                "message": decision["message"],
+                "kind": decision["kind"],
+                "failed_paragraphs": decision["failed_paragraphs"],
+            },
+            api_key,
+        )
+        return 1
+
+    if state["error"]:
+        _emit("ZTF_ERROR ", {"message": state["error"]}, api_key)
         return exit_code or 1
+
+    if exit_code != 0 or not state["result"]:
+        return exit_code or 1
+
+    if decision and decision["kind"] == "warning":
+        _emit(
+            "ZTF_WARNING ",
+            {
+                "message": decision["message"],
+                "failed_paragraphs": decision["failed_paragraphs"],
+            },
+            api_key,
+        )
+    _emit("ZTF_RESULT ", {"mono": state["result"]}, api_key)
     return exit_code
 
 

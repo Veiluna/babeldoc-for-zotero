@@ -203,6 +203,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var stderrStreamError = "";
       var resultPath = null;
       var eventError = "";
+      var warning = null;
 
       function handleProtocolLine(rawLine) {
         var line = rawLine.replace(/\r$/, "");
@@ -210,6 +211,7 @@ var ZoteroTranslateFilesRunner = (function () {
         if (line.indexOf("ZTF_PROGRESS ") === 0) marker = "ZTF_PROGRESS ";
         else if (line.indexOf("ZTF_RESULT ") === 0) marker = "ZTF_RESULT ";
         else if (line.indexOf("ZTF_ERROR ") === 0) marker = "ZTF_ERROR ";
+        else if (line.indexOf("ZTF_WARNING ") === 0) marker = "ZTF_WARNING ";
         else return;
 
         var event;
@@ -235,7 +237,15 @@ var ZoteroTranslateFilesRunner = (function () {
         } else if (marker === "ZTF_RESULT ") {
           if (event.mono) resultPath = String(event.mono);
         } else if (marker === "ZTF_ERROR ") {
-          eventError = redact(event.error || "BabelDOC 报告了错误。", apiKey);
+          eventError = redact(event.message || event.error || "BabelDOC 报告了错误。", apiKey);
+        } else if (marker === "ZTF_WARNING ") {
+          var failedParagraphs = Number(event.failed_paragraphs);
+          warning = {
+            failed_paragraphs: Number.isFinite(failedParagraphs)
+              ? Math.max(0, Math.floor(failedParagraphs))
+              : 0,
+            message: redact(event.message || "部分段落翻译失败。", apiKey),
+          };
         }
       }
 
@@ -275,7 +285,8 @@ var ZoteroTranslateFilesRunner = (function () {
       if (signal && signal.aborted) throw new Error("翻译任务已取消。");
 
       var exitCode = exitResult && exitResult.exitCode;
-      if (eventError || exitCode !== 0) {
+      if (eventError) throw new Error(eventError);
+      if (exitCode !== 0) {
         throw new Error(formatFailure(exitCode, eventError, stderrLines, stderrStreamError, apiKey));
       }
 
@@ -293,6 +304,7 @@ var ZoteroTranslateFilesRunner = (function () {
 
       return {
         outputPath: resultPath,
+        warning: warning,
         cleanup: cleanup,
       };
     } catch (error) {
