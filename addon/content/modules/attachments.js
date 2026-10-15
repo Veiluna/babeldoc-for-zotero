@@ -2,7 +2,7 @@
 
 var ZoteroTranslateFilesAttachments = (function () {
   var TRANSLATED_TITLE_SUFFIX = "（中文译本）";
-  // Task 6's importer will add this stable marker to every generated attachment.
+  // The importer adds this stable marker to every generated attachment.
   var TRANSLATED_ATTACHMENT_TAG = "zotero-translate-files:translated";
   var pendingTranslatedImports = new Map();
 

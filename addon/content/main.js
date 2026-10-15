@@ -7,9 +7,7 @@ var ZoteroTranslateFiles = {
   started: false,
   windows: new Map(),
 
-  // Feature modules are filled in by later implementation steps.
-  // Each may implement init(), onMainWindowLoad({ window }),
-  // onMainWindowUnload({ window }), and shutdown().
+  // Bootstrap loads the feature modules before init() and dispatches lifecycle hooks here.
   modules: {
     preferences: null,
     menu: null,

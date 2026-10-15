@@ -7,6 +7,10 @@ const source = fs.readFileSync(
   path.join(__dirname, "../addon/content/modules/queue.js"),
   "utf8"
 );
+const configSource = fs.readFileSync(
+  path.join(__dirname, "../addon/content/modules/config.js"),
+  "utf8"
+);
 
 function deferred() {
   let resolve;
@@ -39,17 +43,6 @@ function makeHarness(options = {}) {
     ZoteroTranslateFilesAttachments: {
       isTranslatablePDF: item => !!item && item.translatable !== false,
     },
-    ZoteroTranslateFilesConfig: {
-      getSettings: () => settings,
-      redact(value, apiKey) {
-        let text = String(value == null ? "" : value);
-        const configuredKey = apiKey == null ? settings.apiKey : apiKey;
-        if (configuredKey) text = text.split(String(configuredKey)).join("[已隐藏]");
-        return text
-          .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏]")
-          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[已隐藏 API key]");
-      },
-    },
     Services: {
       prompt: {
         alert(parent, title, message) { alerts.push({ parent, title, message }); },
@@ -60,6 +53,12 @@ function makeHarness(options = {}) {
       return scheduledCallbacks.length;
     },
     Zotero: {
+      Prefs: {
+        get(name) {
+          const prefix = "extensions.zotero-translate-files.";
+          return settings[name.slice(prefix.length)];
+        },
+      },
       Items: { get: id => items.get(id) },
       getMainWindow: () => mainWindow,
       ProgressWindow: function (settings = {}) {
@@ -81,6 +80,7 @@ function makeHarness(options = {}) {
     },
     ZoteroTranslateFilesRunner: options.runner || { translate: async () => "output.pdf" },
   };
+  vm.runInNewContext(configSource, context, { filename: "config.js" });
   if (options.useAbortController !== false) context.AbortController = AbortController;
   vm.runInNewContext(source, context, { filename: "queue.js" });
 
@@ -269,7 +269,7 @@ async function failureAlertsAreDeferredRedactedAndQueueContinues() {
         if (item.id === 32) {
           throw new Error(
             "HTTP 401 Unauthorized\nAuthorization: Bearer bearer-secret-value\n" +
-            "provider echoed sk-1234567890 " + secret
+            "scope_Bearer boundary-bearer-secret prefix_sk-1234567890 " + secret
           );
         }
         return "next-output.pdf";
@@ -292,7 +292,7 @@ async function failureAlertsAreDeferredRedactedAndQueueContinues() {
   assert.match(harness.alerts[0].message, /First paper/);
   assert.match(harness.alerts[0].message, /API key 无效或无权限/);
   assert.match(harness.alerts[0].message, /技术详情：.*HTTP 401/);
-  for (const sensitive of [secret, "bearer-secret-value", "sk-1234567890"]) {
+  for (const sensitive of [secret, "bearer-secret-value", "boundary-bearer-secret", "sk-1234567890"]) {
     assert.ok(!harness.alerts[0].message.includes(sensitive), "alerts must redact API credentials");
     assert.ok(!harness.logs.join("\n").includes(sensitive), "logs must redact API credentials");
   }

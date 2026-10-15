@@ -7,6 +7,10 @@ const runnerSource = fs.readFileSync(
   path.join(__dirname, "../addon/content/modules/runner.js"),
   "utf8"
 );
+const configSource = fs.readFileSync(
+  path.join(__dirname, "../addon/content/modules/config.js"),
+  "utf8"
+);
 
 function deferred() {
   let resolve;
@@ -99,7 +103,11 @@ function makeHarness(options = {}) {
         ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
         : "";
       const stdout = makeStream(progressLine + warningLine + resultLine);
-      const stderr = makeStream("diagnostic includes " + apiKey + "\r\n");
+      const stderr = makeStream(
+        "diagnostic includes " + apiKey + "\r\n" +
+        "scope_Bearer boundary-bearer-secret\r\n" +
+        "prefix_sk-1234567890\r\n"
+      );
 
       return {
         stdin: { close() {} },
@@ -135,29 +143,24 @@ function makeHarness(options = {}) {
     TextDecoder,
     Services: { uuid: { generateUUID: () => "{test-job-id}" } },
     Zotero: {
+      Prefs: {
+        get(name) {
+          const prefix = "extensions.zotero-translate-files.";
+          const values = {
+            baseURL: "https://api.example.test/v1/chat/completions",
+            apiKey,
+            model: "test-model",
+            babeldocPath: "C:\\babeldoc\\Scripts\\babeldoc.exe",
+          };
+          return values[name.slice(prefix.length)];
+        },
+      },
       File: fileAPI,
       DataDirectory: { dir: "C:\\Zotero" },
     },
     ZoteroTranslateFiles: { rootURI: "jar:file:///plugin.xpi!/" },
-    ZoteroTranslateFilesConfig: {
-      getSettings: () => ({
-        apiKey,
-        baseURL: "https://api.example.test/v1/chat/completions",
-        model: "test-model",
-        babeldocPath: "C:\\babeldoc\\Scripts\\babeldoc.exe",
-      }),
-      redact(value, configuredKey) {
-        let text = String(value == null ? "" : value);
-        const secret = configuredKey == null ? apiKey : configuredKey;
-        if (secret) text = text.split(String(secret)).join("[已隐藏]");
-        return text
-          .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏]")
-          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[已隐藏 API key]");
-      },
-      resolvePythonFromBabelDOCPath: () => pythonPath,
-      openAIBaseURLForBabelDOC: value => value.replace(/\/chat\/completions$/, ""),
-    },
   };
+  vm.runInNewContext(configSource, context, { filename: "config.js" });
   vm.runInNewContext(runnerSource, context, { filename: "runner.js" });
 
   return {
@@ -259,6 +262,8 @@ async function nonZeroExitFailsAndRedactsStderr() {
       assert.ok(error.message.includes("退出码 2"));
       assert.ok(error.message.includes("[已隐藏]"));
       assert.ok(!error.message.includes(harness.apiKey));
+      assert.ok(!error.message.includes("boundary-bearer-secret"));
+      assert.ok(!error.message.includes("sk-1234567890"));
       return true;
     },
   );
