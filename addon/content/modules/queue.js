@@ -7,6 +7,7 @@ var ZoteroTranslateFilesQueue = (function () {
   var importer = null;
   var currentJob = null;
   var currentController = null;
+  var currentProgress = null;
   var stopped = true;
   var idleWaiters = [];
 
@@ -119,7 +120,95 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
+  function progressText(progress, queueRemaining) {
+    var stage = String(progress && progress.stage || "正在翻译");
+    var overall = Number(progress && progress.overall);
+    if (!Number.isFinite(overall)) overall = 0;
+    overall = Math.max(0, Math.min(100, overall));
+    return stage + " · " + Math.round(overall) + "%（队列中还有 " + queueRemaining + " 篇）";
+  }
+
+  function refreshProgress(job, progress) {
+    if (!currentProgress || currentProgress.job !== job) return;
+    currentProgress.lastProgress = progress || currentProgress.lastProgress;
+    if (!currentProgress.itemProgress) return;
+
+    try {
+      var overall = Number(currentProgress.lastProgress && currentProgress.lastProgress.overall);
+      if (!Number.isFinite(overall)) overall = 0;
+      currentProgress.itemProgress.setProgress(Math.max(0, Math.min(100, overall)));
+      currentProgress.itemProgress.setText(
+        progressText(currentProgress.lastProgress, pending.length)
+      );
+    } catch (error) {
+      // Progress UI errors must not interrupt the translation queue.
+    }
+  }
+
+  function openProgressWindow(job, attachmentItem) {
+    var title = "PDF";
+    try {
+      title = String(attachmentItem.getField("title") || title);
+    } catch (error) {
+      // Keep the generic title if the attachment cannot provide one.
+    }
+
+    var entry = { job: job, window: null, itemProgress: null, lastProgress: {
+      overall: 0,
+      stage: "正在准备 BabelDOC",
+    } };
+    currentProgress = entry;
+    try {
+      entry.window = new Zotero.ProgressWindow({ closeOnClick: false });
+      entry.window.changeHeadline("正在翻译：" + title);
+      var itemTypeIconName = "attachment";
+      try {
+        if (typeof attachmentItem.getItemTypeIconName === "function") {
+          itemTypeIconName = attachmentItem.getItemTypeIconName() || itemTypeIconName;
+        }
+      } catch (error) {
+        // Fall back to the standard attachment icon if the item cannot provide one.
+      }
+      entry.itemProgress = new entry.window.ItemProgress(
+        itemTypeIconName,
+        title
+      );
+      entry.itemProgress.setProgress(0);
+      entry.itemProgress.setText(progressText(entry.lastProgress, pending.length));
+      entry.window.show();
+    } catch (error) {
+      entry.window = null;
+      entry.itemProgress = null;
+      log("could not show translation progress window");
+    }
+  }
+
+  function closeProgressWindow(job, succeeded, aborted) {
+    if (!currentProgress || currentProgress.job !== job) return;
+    var entry = currentProgress;
+    currentProgress = null;
+    if (!entry.window || !entry.itemProgress) return;
+
+    try {
+      if (succeeded) {
+        entry.itemProgress.setProgress(100);
+        entry.itemProgress.setText("翻译完成（队列中还有 " + pending.length + " 篇）");
+      } else if (aborted) {
+        entry.itemProgress.setText("翻译已取消。");
+      } else {
+        if (typeof entry.itemProgress.setError === "function") entry.itemProgress.setError();
+        entry.itemProgress.setText("翻译失败。");
+      }
+      entry.window.startCloseTimer(5000);
+    } catch (error) {
+      // A closing progress window must not affect import or queue cleanup.
+    }
+  }
+
   async function runJob(job, controller) {
+    var translationResult = null;
+    var succeeded = false;
+    var failure = null;
     try {
       var settingsError = getSettingsError();
       if (settingsError) throw settingsError;
@@ -127,7 +216,8 @@ var ZoteroTranslateFilesQueue = (function () {
       var attachmentItem = Zotero.Items.get(job.attachmentID);
       if (!attachmentItem) throw new Error("PDF 附件已不存在或无法读取。");
 
-      var outputPath = await runner.translate(attachmentItem, {
+      openProgressWindow(job, attachmentItem);
+      translationResult = await runner.translate(attachmentItem, {
         onProgress: function (progress) {
           if (!controller.signal.aborted && typeof api.onProgress === "function") {
             api.onProgress(job, progress);
@@ -137,15 +227,40 @@ var ZoteroTranslateFilesQueue = (function () {
       });
 
       if (controller.signal.aborted) return;
+      var outputPath = typeof translationResult === "string"
+        ? translationResult
+        : translationResult && translationResult.outputPath;
+      if (!outputPath) throw new Error("BabelDOC 没有返回可导入的译本文件。");
+
       var resultImporter = importer;
       if (!resultImporter && ZoteroTranslateFiles && ZoteroTranslateFiles.modules) {
         resultImporter = ZoteroTranslateFiles.modules.importer;
       }
       if (resultImporter && typeof resultImporter.importResult === "function") {
         await resultImporter.importResult(attachmentItem, outputPath);
+      } else {
+        throw new Error("翻译结果导入模块尚未初始化。");
       }
+      succeeded = true;
     } catch (error) {
-      if (!controller.signal.aborted) reportFailure(job, error);
+      failure = error;
+    } finally {
+      if (translationResult && typeof translationResult.cleanup === "function") {
+        try {
+          await translationResult.cleanup();
+        } catch (cleanupError) {
+          if (succeeded) {
+            succeeded = false;
+            failure = new Error("翻译已导入，但清理临时文件失败。");
+          }
+          log("temporary work directory cleanup failed for attachment " + job.attachmentID);
+        }
+      }
+
+      if (!succeeded && !controller.signal.aborted) {
+        reportFailure(job, failure || new Error("翻译失败。"));
+      }
+      closeProgressWindow(job, succeeded, controller.signal.aborted);
     }
   }
 
@@ -207,6 +322,7 @@ var ZoteroTranslateFilesQueue = (function () {
       }
 
       showEnqueueNotice(addedCount, beforeCount, duplicateCount);
+      if (currentJob && currentProgress) refreshProgress(currentJob, currentProgress.lastProgress);
       if (addedCount) startNext();
 
       return {
@@ -242,8 +358,9 @@ var ZoteroTranslateFilesQueue = (function () {
       log("translation failed for attachment " + job.attachmentID + "; details omitted");
     },
 
-    // Task 5 supplies progress-window updates for BabelDOC progress events.
-    onProgress: function () {},
+    onProgress: function (job, progress) {
+      refreshProgress(job, progress || {});
+    },
 
     setImporter: function (value) {
       importer = value || null;

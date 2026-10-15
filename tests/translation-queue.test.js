@@ -20,6 +20,8 @@ function deferred() {
 
 function makeHarness(options = {}) {
   const notices = [];
+  const progressWindows = [];
+  const imports = [];
   const failures = [];
   const logs = [];
   const items = new Map();
@@ -34,13 +36,20 @@ function makeHarness(options = {}) {
     ZoteroTranslateFilesConfig: { getSettings: () => settings },
     Zotero: {
       Items: { get: id => items.get(id) },
-      ProgressWindow: function () {
-        const notice = { descriptions: [], shown: false };
-        notices.push(notice);
+      ProgressWindow: function (settings = {}) {
+        const notice = { descriptions: [], texts: [], shown: false };
+        if (settings.closeOnClick === false) progressWindows.push(notice);
+        else notices.push(notice);
         this.changeHeadline = () => {};
         this.addDescription = value => notice.descriptions.push(value);
         this.show = () => { notice.shown = true; };
-        this.startCloseTimer = () => {};
+        this.startCloseTimer = (...args) => { notice.closeTimerArgs = args; };
+        this.ItemProgress = function (...args) {
+          notice.itemProgressArgs = args;
+          this.setProgress = value => { notice.progress = value; };
+          this.setText = value => { notice.text = value; notice.texts.push(value); };
+          this.setError = () => { notice.error = true; };
+        };
       },
       debug: message => logs.push(String(message)),
     },
@@ -50,6 +59,9 @@ function makeHarness(options = {}) {
   vm.runInNewContext(source, context, { filename: "queue.js" });
 
   const queue = context.ZoteroTranslateFilesQueue;
+  queue.setImporter(options.importer || {
+    importResult: async (item, outputPath) => imports.push([item.id, outputPath]),
+  });
   const originalFailureHandler = queue.onJobFailed;
   queue.onJobFailed = (job, error) => {
     failures.push({ id: job.attachmentID, message: String(error.message || error) });
@@ -57,7 +69,7 @@ function makeHarness(options = {}) {
   };
   queue.init();
 
-  return { queue, items, failures, logs, notices, settings };
+  return { queue, items, failures, logs, notices, progressWindows, imports, settings };
 }
 
 async function fifoDedupeAndContinueAfterFailure() {
@@ -188,11 +200,65 @@ async function failureLogsOmitRunnerAndHandlerErrors() {
   assert.ok(!throwingHook.logs.join("\n").includes(secret), "failure-handler logging must omit error details");
 }
 
+async function cleanupFollowsImportAndProgressShowsQueuePosition() {
+  const events = [];
+  const harness = makeHarness({
+    runner: {
+      async translate(item, { onProgress }) {
+        if (item.id === 40) {
+          onProgress({ overall: 42.5, stage: "翻译段落" });
+          return {
+            outputPath: "first-translation.pdf",
+            cleanup: async () => { events.push("cleanup"); },
+          };
+        }
+        return "second-translation.pdf";
+      },
+    },
+    importer: {
+      async importResult(item, outputPath) {
+        events.push("import:" + item.id + ":" + outputPath);
+      },
+    },
+  });
+  harness.items.set(40, {
+    id: 40,
+    getField: () => "First paper",
+    getItemTypeIconName: () => "attachment-pdf",
+  });
+  harness.items.set(41, { id: 41 });
+
+  harness.queue.enqueue([40, 41]);
+  await harness.queue.onIdle();
+
+  assert.deepEqual(events, [
+    "import:40:first-translation.pdf",
+    "cleanup",
+    "import:41:second-translation.pdf",
+  ], "the work directory must remain until import finishes");
+  assert.equal(harness.progressWindows.length, 2, "each job should have one progress window");
+  assert.equal(
+    harness.progressWindows[0].itemProgressArgs[0],
+    "attachment-pdf",
+    "the ItemProgress icon argument should be the attachment item type",
+  );
+  assert.deepEqual(
+    harness.progressWindows[0].closeTimerArgs,
+    [5000],
+    "the completion window close timer must not require mouse hover",
+  );
+  assert.ok(
+    harness.progressWindows[0].texts.some(text => text.includes("43%（队列中还有 1 篇）")),
+    "BabelDOC progress should show the rounded percentage and queued count",
+  );
+}
+
 (async () => {
   await fifoDedupeAndContinueAfterFailure();
   await validatesSettingsBeforeStarting();
   await cancelAbortsRunningJobAndDropsPendingJobs();
   await failureLogsOmitRunnerAndHandlerErrors();
+  await cleanupFollowsImportAndProgressShowsQueuePosition();
   process.stdout.write("translation queue regression cases passed\n");
 })().catch(error => {
   process.stderr.write(error.stack + "\n");
