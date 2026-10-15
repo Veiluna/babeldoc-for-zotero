@@ -1,8 +1,46 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const installerPath = path.resolve(__dirname, "../scripts/install-babeldoc.ps1");
+const constraintsPath = path.resolve(__dirname, "../scripts/babeldoc-constraints.txt");
+const installerSource = fs.readFileSync(installerPath, "utf8");
+
+assert.ok(fs.existsSync(constraintsPath), "BabelDOC pip constraints file must exist");
+const constraintsSource = fs.readFileSync(constraintsPath, "utf8");
+assert.match(constraintsSource, /^#.*BabelDOC imports `?bitstring\.BitStream`?.*bitstring 5/m);
+assert.match(constraintsSource, /^bitstring<5\s*$/m);
+assert.match(installerSource, /Join-Path \$PSScriptRoot 'babeldoc-constraints\.txt'/);
+assert.match(installerSource, /Test-Path -LiteralPath \$constraintsPath -PathType Leaf/);
+assert.match(
+  installerSource,
+  /\$installArguments = @\('-m', 'pip', 'install', '--no-warn-script-location'\)/,
+);
+assert.match(
+  installerSource,
+  /\$installArguments \+= @\('--upgrade', '-c', \$constraintsPath, 'bitstring<5', \$babelDocRequirement\)/,
+);
+assert.match(
+  installerSource,
+  /\$installArguments \+= @\('-c', \$constraintsPath, 'bitstring<5', \$babelDocRequirement\)/,
+);
+assert.equal(
+  (installerSource.match(/'--no-warn-script-location'/g) || []).length,
+  2,
+  "both pip install commands should suppress script-location warnings",
+);
+
+const importChecks = [
+  ...installerSource.matchAll(
+    /Invoke-NativeCommand -Executable \$pythonExe -Arguments @\('-c', 'import babeldoc\.main'\)/g,
+  ),
+];
+assert.equal(importChecks.length, 2, "babeldoc.main should be checked before and after warmup");
+const warmupBlockIndex = installerSource.indexOf("if (-not $SkipWarmup)");
+assert.ok(warmupBlockIndex > importChecks[0].index, "the first import check must run before warmup");
+assert.ok(warmupBlockIndex < importChecks[1].index, "the final import check must remain after warmup");
+
 const powershellProbe = String.raw`
 $ErrorActionPreference = 'Stop'
 $tokens = $null

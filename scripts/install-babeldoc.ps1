@@ -208,6 +208,11 @@ function Invoke-NativeCommand {
 }
 
 try {
+    $constraintsPath = Join-Path $PSScriptRoot 'babeldoc-constraints.txt'
+    if (-not (Test-Path -LiteralPath $constraintsPath -PathType Leaf)) {
+        throw "找不到 BabelDOC pip 约束文件：$constraintsPath"
+    }
+
     if ([string]::IsNullOrWhiteSpace($EnvPrefix)) {
         if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
             throw '无法确定 LOCALAPPDATA。请使用 -EnvPrefix 指定环境路径。'
@@ -279,24 +284,29 @@ try {
     }
 
     Write-Host '正在升级环境内的 pip。'
-    $upgradePipArguments = @('-m', 'pip', 'install', '--upgrade', 'pip') + $pipIndexArguments
+    $upgradePipArguments = @('-m', 'pip', 'install', '--upgrade', '--no-warn-script-location', 'pip') + $pipIndexArguments
     $null = Invoke-NativeCommand -Executable $pythonExe -Arguments $upgradePipArguments -FailureMessage '升级 pip 失败'
 
+    $installArguments = @('-m', 'pip', 'install', '--no-warn-script-location')
     if ([string]::IsNullOrWhiteSpace($BabelDocVersion)) {
         $babelDocRequirement = 'BabelDOC'
         Write-Host '正在升级到与当前 Python 兼容的最新版 BabelDOC。'
-        $installArguments = @('-m', 'pip', 'install', '--upgrade', $babelDocRequirement) + $pipIndexArguments
+        $installArguments += @('--upgrade', '-c', $constraintsPath, 'bitstring<5', $babelDocRequirement)
     }
     else {
         $babelDocRequirement = "BabelDOC==$BabelDocVersion"
         Write-Host "正在安装固定版本 $babelDocRequirement。"
-        $installArguments = @('-m', 'pip', 'install', $babelDocRequirement) + $pipIndexArguments
+        $installArguments += @('-c', $constraintsPath, 'bitstring<5', $babelDocRequirement)
     }
+    $installArguments += $pipIndexArguments
     $null = Invoke-NativeCommand -Executable $pythonExe -Arguments $installArguments -FailureMessage '安装 BabelDOC 失败'
 
     if (-not (Test-Path -LiteralPath $babelDocExe -PathType Leaf)) {
         throw "安装后找不到 BabelDOC 命令：$babelDocExe"
     }
+
+    Write-Host '正在预下载前验证 Python 模块导入。'
+    $null = Invoke-NativeCommand -Executable $pythonExe -Arguments @('-c', 'import babeldoc.main') -FailureMessage '预下载前导入 babeldoc.main 失败'
 
     if (-not $SkipWarmup) {
         if ($OfflineAssets) {
