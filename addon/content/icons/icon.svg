@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="PDF translation">
+  <rect x="5" y="3" width="28" height="38" rx="3" fill="#f4f7fb" stroke="#315b8a" stroke-width="2"/>
+  <path d="M11 13h16M11 19h16M11 25h10" fill="none" stroke="#315b8a" stroke-linecap="round" stroke-width="2"/>
+  <circle cx="33" cy="32" r="11" fill="#2f7d5b" stroke="#fff" stroke-width="2"/>
+  <path d="M27 32h11m-4-4 4 4-4 4" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+</svg>

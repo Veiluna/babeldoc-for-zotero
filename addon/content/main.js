@@ -1,0 +1,79 @@
+/* global Zotero */
+
+var ZoteroTranslateFiles = {
+  id: null,
+  version: null,
+  rootURI: null,
+  started: false,
+  windows: new Map(),
+
+  // Feature modules are filled in by later implementation steps.
+  // Each may implement init(), onMainWindowLoad({ window }),
+  // onMainWindowUnload({ window }), and shutdown().
+  modules: {
+    preferences: null,
+    menu: null,
+    queue: null,
+    runner: null,
+    importer: null,
+  },
+
+  init(data) {
+    this.id = data.id;
+    this.version = data.version;
+    this.rootURI = data.rootURI;
+    this.started = true;
+    this.callModules("init", [data]);
+    this.log("initialized " + this.version);
+  },
+
+  addToWindow(window) {
+    if (!this.started || !window || this.windows.has(window)) return;
+    this.windows.set(window, true);
+    this.callModules("onMainWindowLoad", [{ window }]);
+  },
+
+  removeFromWindow(window) {
+    if (!window || !this.windows.has(window)) return;
+    this.callModules("onMainWindowUnload", [{ window }], true);
+    this.windows.delete(window);
+  },
+
+  removeFromAllWindows() {
+    for (var window of Array.from(this.windows.keys())) {
+      this.removeFromWindow(window);
+    }
+  },
+
+  shutdown() {
+    this.removeFromAllWindows();
+    this.callModules("shutdown", [], true);
+    this.started = false;
+    this.id = null;
+    this.version = null;
+    this.rootURI = null;
+    this.log("shutdown complete");
+  },
+
+  callModules(hook, args, reverse) {
+    var names = Object.keys(this.modules);
+    if (reverse) names.reverse();
+
+    for (var name of names) {
+      var module = this.modules[name];
+      if (module && typeof module[hook] === "function") {
+        try {
+          module[hook].apply(module, args);
+        } catch (error) {
+          this.log(name + "." + hook + " failed: " + error);
+        }
+      }
+    }
+  },
+
+  log(message) {
+    if (typeof Zotero !== "undefined" && Zotero.debug) {
+      Zotero.debug("Zotero 中文 PDF 翻译: " + message);
+    }
+  },
+};

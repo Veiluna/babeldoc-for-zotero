@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "Zotero 中文 PDF 翻译",
+  "version": "0.1.0",
+  "description": "将 PDF 翻译为保留版式的简体中文译本。",
+  "author": "Veiluna",
+  "icons": {
+    "48": "content/icons/icon.svg"
+  },
+  "applications": {
+    "zotero": {
+      "id": "zotero-translate-files@veiluna.github.io",
+      "strict_min_version": "6.999",
+      "strict_max_version": "10.*"
+    }
+  }
+}
