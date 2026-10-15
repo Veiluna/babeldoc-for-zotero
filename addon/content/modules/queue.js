@@ -1,4 +1,4 @@
-/* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
+/* global Zotero, Services, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
 
 var ZoteroTranslateFilesQueue = (function () {
   var pending = [];
@@ -17,6 +17,124 @@ var ZoteroTranslateFilesQueue = (function () {
     } else if (Zotero && typeof Zotero.debug === "function") {
       Zotero.debug("Zotero 中文 PDF 翻译 queue: " + message);
     }
+  }
+
+  function getAttachmentTitle(item, job) {
+    var title = "";
+    try {
+      if (item && typeof item.getField === "function") {
+        title = String(item.getField("title") || "").trim();
+      }
+    } catch (error) {
+      // Use the title captured when the job entered the queue.
+    }
+    title = title || String(job && job.attachmentTitle || "").trim();
+    title = title.replace(/[\r\n\t]+/g, " ");
+    return ZoteroTranslateFilesConfig.redact(title || "PDF 附件 #" + (job && job.attachmentID || "?"));
+  }
+
+  function getFailureText(error) {
+    var text = "";
+    if (error && error.message != null) text = String(error.message);
+    else text = String(error == null ? "翻译失败" : error);
+
+    var status = error && (error.status || error.statusCode);
+    if (status && !/\bHTTP\s+\d{3}\b/i.test(text)) text = "HTTP " + status + ": " + text;
+    if (error && error.code && text.indexOf(String(error.code)) < 0) {
+      text += "\n错误代码：" + String(error.code);
+    }
+    return {
+      raw: text,
+      redacted: ZoteroTranslateFilesConfig.redact(text),
+    };
+  }
+
+  function getFailureCause(text) {
+    if (/\b(?:401|403)\b|unauthorized|forbidden|invalid[_ -]?api[_ -]?key|incorrect api key|insufficient permission|no permission/i.test(text)) {
+      return "API key 无效或无权限";
+    }
+    if (/\b404\b|model[_ -]+not[_ -]+found|(?:HTTP|endpoint|interface|接口|model|模型).{0,40}(?:not found|does not exist)/i.test(text)) {
+      return "接口地址或模型名不正确";
+    }
+    if (/\b429\b|rate.?limit|too many requests|quota.{0,20}(?:exceeded|insufficient)|insufficient[_ -]+quota/i.test(text)) {
+      return "请求过于频繁或额度不足";
+    }
+    if (/PDF.{0,50}(?:不存在|不可用|未下载|尚未下载|not found|missing)|附件.{0,50}(?:不存在|无法读取|not found|missing)/i.test(text)) {
+      return "PDF 文件不存在（可能尚未下载）";
+    }
+    if (/找不到 BabelDOC|(?:python|babeldoc)(?:\.exe)?[^\r\n]{0,80}(?:not found|missing|does not exist|cannot find|未找到|找不到|不存在)|(?:ENOENT|NS_ERROR_FILE_NOT_FOUND|WinError 2)|No module named ['\"]?babeldoc|ModuleNotFoundError[^\r\n]*babeldoc/i.test(text)) {
+      return "找不到 BabelDOC，请检查设置中的路径或运行安装脚本";
+    }
+    if (/ECONN(?:REFUSED|RESET|ABORTED)|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ERR_NETWORK|APIConnectionError|ConnectionError|ConnectError|connection.{0,30}(?:refused|reset|failed|error|timed out)|failed to connect|could not connect|network is unreachable|无法连接|连接失败/i.test(text)) {
+      return "无法连接到接口地址";
+    }
+    if (/未生成有效的中文 PDF|没有收到 BabelDOC 结果文件|没有返回可导入的译本文件|no output|output file.{0,30}(?:missing|not found)/i.test(text)) {
+      return "BabelDOC 未生成可导入的中文 PDF";
+    }
+    if (/导入|译本附件|创建译本|无法生成译本|\bimport(?:er)?\b/i.test(text)) {
+      return "无法导入中文译本";
+    }
+    if (/API Base URL|API key|模型名|BabelDOC 路径|Zotero 设置|settings?.{0,30}(?:missing|incomplete)/i.test(text)) {
+      return "翻译设置不完整，请检查接口地址、API key、模型名和 BabelDOC 路径";
+    }
+    return "翻译过程中发生错误，请查看技术详情";
+  }
+
+  function getTechnicalDetail(text) {
+    var lines = String(text || "").split(/\r?\n/)
+      .map(function (line) { return line.trim(); })
+      .filter(Boolean);
+    var detail = lines.slice(-3).join(" | ") || "未提供错误详情";
+    if (detail.length > 700) detail = "…" + detail.slice(-699);
+    return detail;
+  }
+
+  function scheduleFailureAlert(message) {
+    // The timer lets runJob's finally handler start the next queued job before a modal can block UI work.
+    // One timer is kept per failed job; shutdown suppresses alerts that have not appeared yet.
+    setTimeout(function () {
+      if (stopped) return;
+
+      var parentWindow = null;
+      try {
+        if (Zotero && typeof Zotero.getMainWindow === "function") {
+          parentWindow = Zotero.getMainWindow();
+        }
+      } catch (error) {
+        // The prompt can still be shown without a parent window.
+      }
+
+      try {
+        if (typeof Services !== "undefined" && Services.prompt && typeof Services.prompt.alert === "function") {
+          Services.prompt.alert(parentWindow, "翻译失败", message);
+          return;
+        }
+      } catch (error) {
+        // Fall back to Zotero.alert if the platform prompt is unavailable.
+      }
+      try {
+        if (Zotero && typeof Zotero.alert === "function") {
+          Zotero.alert(parentWindow, "翻译失败", message);
+          return;
+        }
+      } catch (error) {
+        // Reporting UI failures must not interrupt the queue.
+      }
+      log("could not show translation failure alert");
+    }, 0);
+  }
+
+  function failureMessage(job, error) {
+    var failureText = getFailureText(error);
+    var title = getAttachmentTitle(null, job);
+    var cause = getFailureCause(failureText.raw);
+    var detail = getTechnicalDetail(failureText.redacted);
+    var message = title + "\n原因：" + cause + "\n技术详情：" + detail;
+    return {
+      // Dynamic title and error detail are already redacted; do not redact the fixed cause text.
+      message: message,
+      logMessage: "translation failed for attachment " + job.attachmentID + " (" + title + "): " + cause + "; " + detail,
+    };
   }
 
   function showNotice(descriptions) {
@@ -211,6 +329,8 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   async function runJob(job, controller) {
+    var attachmentItem = null;
+    job.attachmentTitle = getAttachmentTitle(null, job);
     var translationResult = null;
     var translationWarning = null;
     var completedTitle = null;
@@ -218,7 +338,8 @@ var ZoteroTranslateFilesQueue = (function () {
     var skipped = false;
     var failure = null;
     try {
-      var attachmentItem = Zotero.Items.get(job.attachmentID);
+      attachmentItem = Zotero.Items.get(job.attachmentID);
+      job.attachmentTitle = getAttachmentTitle(attachmentItem, job);
       if (!attachmentItem) throw new Error("PDF 附件已不存在或无法读取。");
       // A translated attachment may have been inserted after enqueueing but before this job starts.
       if (!ZoteroTranslateFilesAttachments.isTranslatablePDF(attachmentItem)) {
@@ -347,7 +468,15 @@ var ZoteroTranslateFilesQueue = (function () {
         }
 
         queuedIDs.add(key);
-        pending.push({ attachmentID: numericID });
+        var queuedItem = null;
+        try {
+          queuedItem = Zotero.Items.get(numericID);
+        } catch (error) {
+          // Keep an ID-based fallback title if the attachment lookup already fails.
+        }
+        var job = { attachmentID: numericID };
+        job.attachmentTitle = getAttachmentTitle(queuedItem, job);
+        pending.push(job);
         addedCount++;
       }
 
@@ -382,10 +511,18 @@ var ZoteroTranslateFilesQueue = (function () {
       api.cancelAll();
     },
 
-    // Task 7 supplies the user-facing alert. Every failed job is still discarded.
     onJobFailed: function (job, error) {
-      void error;
-      log("translation failed for attachment " + job.attachmentID + "; details omitted");
+      var failure = failureMessage(job, error);
+      scheduleFailureAlert(failure.message);
+      try {
+        if (Zotero && typeof Zotero.debug === "function") {
+          Zotero.debug("Zotero 中文 PDF 翻译: " + failure.logMessage);
+        } else {
+          log(failure.logMessage);
+        }
+      } catch (logError) {
+        // A diagnostic failure must not suppress the already scheduled alert.
+      }
     },
 
     onProgress: function (job, progress) {

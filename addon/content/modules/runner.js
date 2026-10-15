@@ -4,8 +4,7 @@ var ZoteroTranslateFilesRunner = (function () {
   var RUNNER_FILENAME = "ztf_babeldoc_runner.py";
 
   function redact(value, apiKey) {
-    var text = String(value == null ? "" : value);
-    return apiKey ? text.split(apiKey).join("[已隐藏]") : text;
+    return ZoteroTranslateFilesConfig.redact(value, apiKey);
   }
 
   function pathToFile(path) {

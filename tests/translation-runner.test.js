@@ -146,6 +146,14 @@ function makeHarness(options = {}) {
         model: "test-model",
         babeldocPath: "C:\\babeldoc\\Scripts\\babeldoc.exe",
       }),
+      redact(value, configuredKey) {
+        let text = String(value == null ? "" : value);
+        const secret = configuredKey == null ? apiKey : configuredKey;
+        if (secret) text = text.split(String(secret)).join("[已隐藏]");
+        return text
+          .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏]")
+          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[已隐藏 API key]");
+      },
       resolvePythonFromBabelDOCPath: () => pythonPath,
       openAIBaseURLForBabelDOC: value => value.replace(/\/chat\/completions$/, ""),
     },

@@ -23,6 +23,30 @@ var ZoteroTranslateFilesConfig = (function () {
     };
   }
 
+  // Sanitize diagnostics before they reach logs or user-facing alerts.
+  function redact(value, apiKey) {
+    var text;
+    try {
+      text = String(value == null ? "" : value);
+    } catch (error) {
+      text = "无法读取错误详情";
+    }
+
+    var configuredKey = apiKey;
+    if (configuredKey == null) {
+      try {
+        configuredKey = getSettings().apiKey;
+      } catch (error) {
+        configuredKey = "";
+      }
+    }
+    if (configuredKey) text = text.split(String(configuredKey)).join("[已隐藏]");
+
+    return text
+      .replace(/Bearer\s+\S+/gi, "Bearer [已隐藏]")
+      .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[已隐藏 API key]");
+  }
+
   // The test endpoint is appended to the user's base URL unless already present.
   function chatCompletionsURL(baseURL) {
     var url = String(baseURL || "").trim().replace(/\/+$/, "");
@@ -64,6 +88,7 @@ var ZoteroTranslateFilesConfig = (function () {
 
   return {
     getSettings: getSettings,
+    redact: redact,
     chatCompletionsURL: chatCompletionsURL,
     openAIBaseURLForBabelDOC: openAIBaseURLForBabelDOC,
     resolvePythonFromBabelDOCPath: resolvePythonFromBabelDOCPath,

@@ -24,6 +24,9 @@ function makeHarness(options = {}) {
   const imports = [];
   const failures = [];
   const logs = [];
+  const alerts = [];
+  const scheduledCallbacks = [];
+  const mainWindow = { name: "most-recent-zotero-window" };
   const items = new Map();
   const settings = options.settings || {
     baseURL: "https://example.test/v1",
@@ -36,9 +39,29 @@ function makeHarness(options = {}) {
     ZoteroTranslateFilesAttachments: {
       isTranslatablePDF: item => !!item && item.translatable !== false,
     },
-    ZoteroTranslateFilesConfig: { getSettings: () => settings },
+    ZoteroTranslateFilesConfig: {
+      getSettings: () => settings,
+      redact(value, apiKey) {
+        let text = String(value == null ? "" : value);
+        const configuredKey = apiKey == null ? settings.apiKey : apiKey;
+        if (configuredKey) text = text.split(String(configuredKey)).join("[已隐藏]");
+        return text
+          .replace(/\bBearer\s+\S+/gi, "Bearer [已隐藏]")
+          .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[已隐藏 API key]");
+      },
+    },
+    Services: {
+      prompt: {
+        alert(parent, title, message) { alerts.push({ parent, title, message }); },
+      },
+    },
+    setTimeout(callback, delay) {
+      scheduledCallbacks.push({ callback, delay });
+      return scheduledCallbacks.length;
+    },
     Zotero: {
       Items: { get: id => items.get(id) },
+      getMainWindow: () => mainWindow,
       ProgressWindow: function (settings = {}) {
         const notice = { descriptions: [], texts: [], shown: false };
         if (settings.closeOnClick === false) progressWindows.push(notice);
@@ -76,7 +99,25 @@ function makeHarness(options = {}) {
   };
   queue.init();
 
-  return { queue, items, failures, logs, notices, progressWindows, imports, settings };
+  return {
+    queue,
+    items,
+    failures,
+    logs,
+    notices,
+    progressWindows,
+    imports,
+    settings,
+    alerts,
+    mainWindow,
+    flushAlerts() {
+      while (scheduledCallbacks.length) {
+        const scheduled = scheduledCallbacks.shift();
+        assert.equal(scheduled.delay, 0, "failure alerts should be deferred without a delay");
+        scheduled.callback();
+      }
+    },
+  };
 }
 
 async function fifoDedupeAndContinueAfterFailure() {
@@ -208,11 +249,107 @@ async function cancelAbortsRunningJobAndDropsPendingJobs() {
   assert.equal(abortEvents, 1, "the fallback signal must dispatch abort listeners");
   assert.deepEqual(started, [20], "pending jobs must be discarded on cancellation");
   assert.deepEqual(failures, [], "shutdown cancellation must not be reported as a translation failure");
+  harness.flushAlerts();
+  assert.deepEqual(harness.alerts, [], "shutdown cancellation must not show a failure alert");
+}
+
+async function failureAlertsAreDeferredRedactedAndQueueContinues() {
+  const secret = "DEMO_SECRET_KEY_987";
+  const started = [];
+  const harness = makeHarness({
+    settings: {
+      baseURL: "https://example.test/v1",
+      apiKey: secret,
+      model: "model",
+      babeldocPath: "C:\\babeldoc\\python.exe",
+    },
+    runner: {
+      async translate(item) {
+        started.push(item.id);
+        if (item.id === 32) {
+          throw new Error(
+            "HTTP 401 Unauthorized\nAuthorization: Bearer bearer-secret-value\n" +
+            "provider echoed sk-1234567890 " + secret
+          );
+        }
+        return "next-output.pdf";
+      },
+    },
+  });
+  harness.items.set(32, { id: 32, getField: () => "First paper" });
+  harness.items.set(33, { id: 33, getField: () => "Second paper" });
+
+  harness.queue.enqueue([32, 33]);
+  await harness.queue.onIdle();
+
+  assert.deepEqual(started, [32, 33], "the next job must start without waiting for the alert");
+  assert.deepEqual(harness.alerts, [], "the alert should be scheduled after the queue advances");
+  harness.flushAlerts();
+
+  assert.equal(harness.alerts.length, 1, "a failed job should produce exactly one alert");
+  assert.equal(harness.alerts[0].parent, harness.mainWindow, "the prompt should use Zotero's latest main window");
+  assert.equal(harness.alerts[0].title, "翻译失败");
+  assert.match(harness.alerts[0].message, /First paper/);
+  assert.match(harness.alerts[0].message, /API key 无效或无权限/);
+  assert.match(harness.alerts[0].message, /技术详情：.*HTTP 401/);
+  for (const sensitive of [secret, "bearer-secret-value", "sk-1234567890"]) {
+    assert.ok(!harness.alerts[0].message.includes(sensitive), "alerts must redact API credentials");
+    assert.ok(!harness.logs.join("\n").includes(sensitive), "logs must redact API credentials");
+  }
+}
+
+async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() {
+  const cases = [
+    ["HTTP 403 Forbidden", "API key 无效或无权限"],
+    ["invalid_api_key", "API key 无效或无权限"],
+    ["HTTP 404 Client Error: Not Found", "接口地址或模型名不正确"],
+    ["model_not_found", "接口地址或模型名不正确"],
+    ["HTTP 429 Too Many Requests", "请求过于频繁或额度不足"],
+    ["insufficient_quota", "请求过于频繁或额度不足"],
+    ["ConnectError: ECONNREFUSED", "无法连接到接口地址"],
+    ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
+    ["python.exe not found", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
+    ["找不到 BabelDOC 环境中的 python.exe", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
+    ["No module named 'babeldoc'", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
+    ["PDF 文件不可用：附件可能尚未下载", "PDF 文件不存在（可能尚未下载）"],
+    ["BabelDOC 没有返回可导入的译本文件。", "BabelDOC 未生成可导入的中文 PDF"],
+    ["Zotero 未能创建译本附件。", "无法导入中文译本"],
+  ];
+  const harness = makeHarness();
+
+  for (let index = 0; index < cases.length; index++) {
+    harness.queue.onJobFailed(
+      { attachmentID: index + 60, attachmentTitle: "Failure case " + index },
+      new Error(cases[index][0])
+    );
+  }
+  harness.flushAlerts();
+
+  assert.equal(harness.alerts.length, cases.length, "each failure should retain its own alert");
+  for (let index = 0; index < cases.length; index++) {
+    assert.match(harness.alerts[index].message, new RegExp(cases[index][1]));
+    assert.match(harness.alerts[index].message, /技术详情：/);
+  }
+
+  const shutdownHarness = makeHarness();
+  shutdownHarness.queue.onJobFailed(
+    { attachmentID: 70, attachmentTitle: "Pending alert" },
+    new Error("process spawn failed")
+  );
+  shutdownHarness.queue.shutdown();
+  shutdownHarness.flushAlerts();
+  assert.deepEqual(shutdownHarness.alerts, [], "shutdown must suppress an alert that has not been shown");
 }
 
 async function failureLogsOmitRunnerAndHandlerErrors() {
   const secret = "DEMO_SECRET_KEY_987";
   const defaultHook = makeHarness({
+    settings: {
+      baseURL: "https://example.test/v1",
+      apiKey: secret,
+      model: "model",
+      babeldocPath: "C:\\babeldoc\\python.exe",
+    },
     runner: {
       translate: async () => { throw new Error("request failed with key " + secret); },
     },
@@ -224,6 +361,12 @@ async function failureLogsOmitRunnerAndHandlerErrors() {
   assert.ok(!defaultHook.logs.join("\n").includes(secret), "default failure logging must omit runner details");
 
   const throwingHook = makeHarness({
+    settings: {
+      baseURL: "https://example.test/v1",
+      apiKey: secret,
+      model: "model",
+      babeldocPath: "C:\\babeldoc\\python.exe",
+    },
     runner: {
       translate: async () => { throw new Error("runner error " + secret); },
     },
@@ -350,6 +493,8 @@ async function cleanupRunsWhenImportFails() {
   await validatesSettingsBeforeStarting();
   await rechecksTranslatablePDFBeforeRunnerStarts();
   await cancelAbortsRunningJobAndDropsPendingJobs();
+  await failureAlertsAreDeferredRedactedAndQueueContinues();
+  await failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts();
   await failureLogsOmitRunnerAndHandlerErrors();
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
