@@ -33,6 +33,9 @@ function makeHarness(options = {}) {
   };
   const context = {
     ZoteroTranslateFiles: { log: message => logs.push(String(message)) },
+    ZoteroTranslateFilesAttachments: {
+      isTranslatablePDF: item => !!item && item.translatable !== false,
+    },
     ZoteroTranslateFilesConfig: { getSettings: () => settings },
     Zotero: {
       Items: { get: id => items.get(id) },
@@ -60,7 +63,11 @@ function makeHarness(options = {}) {
 
   const queue = context.ZoteroTranslateFilesQueue;
   queue.setImporter(options.importer || {
-    importResult: async (item, outputPath) => imports.push([item.id, outputPath]),
+    importResult: async (item, outputPath) => {
+      imports.push([item.id, outputPath]);
+      const title = typeof item.getField === "function" ? item.getField("title") : "PDF";
+      return { getField: () => String(title || "PDF") + "（中文译本）" };
+    },
   });
   const originalFailureHandler = queue.onJobFailed;
   queue.onJobFailed = (job, error) => {
@@ -137,6 +144,35 @@ async function validatesSettingsBeforeStarting() {
   assert.match(failures[0], /Zotero 设置/);
   assert.match(failures[0], /API Base URL/);
   assert.match(failures[0], /BabelDOC 路径/);
+}
+
+async function rechecksTranslatablePDFBeforeRunnerStarts() {
+  const firstTranslation = deferred();
+  const started = [];
+  const harness = makeHarness({
+    runner: {
+      translate(item) {
+        started.push(item.id);
+        return item.id === 44 ? firstTranslation.promise : Promise.resolve("unexpected.pdf");
+      },
+    },
+  });
+  const firstItem = { id: 44 };
+  const queuedItem = { id: 45, translatable: true };
+  harness.items.set(firstItem.id, firstItem);
+  harness.items.set(queuedItem.id, queuedItem);
+
+  harness.queue.enqueue([firstItem.id, queuedItem.id]);
+  assert.deepEqual(started, [44], "the second item waits behind the active translation");
+  queuedItem.translatable = false;
+
+  const idle = harness.queue.onIdle();
+  firstTranslation.resolve("first.pdf");
+  await idle;
+
+  assert.deepEqual(started, [44], "a queued attachment that is no longer translatable must be skipped");
+  assert.equal(harness.progressWindows.length, 1, "skipped items must not open a translation progress window");
+  assert.deepEqual(harness.failures, [], "a stale queue entry is not a translation failure");
 }
 
 async function cancelAbortsRunningJobAndDropsPendingJobs() {
@@ -251,6 +287,10 @@ async function cleanupFollowsImportAndProgressShowsQueuePosition() {
     harness.progressWindows[0].texts.some(text => text.includes("43%（队列中还有 1 篇）")),
     "BabelDOC progress should show the rounded percentage and queued count",
   );
+  assert.ok(
+    harness.progressWindows[0].texts.includes("已完成：First paper（中文译本）"),
+    "the completion progress should name the imported translated attachment",
+  );
 }
 
 async function partialFailureWarningShowsInCompletionProgress() {
@@ -270,19 +310,50 @@ async function partialFailureWarningShowsInCompletionProgress() {
 
   assert.ok(
     harness.progressWindows[0].texts.some(text =>
-      text.includes("已完成，但有 2 段翻译失败，保留原文")
+      text.includes("已完成：PDF（中文译本）（有 2 段翻译失败，保留原文）")
     ),
     "partial translation failures should be shown when the job completes",
   );
 }
 
+async function cleanupRunsWhenImportFails() {
+  const events = [];
+  const failures = [];
+  const harness = makeHarness({
+    runner: {
+      async translate() {
+        return {
+          outputPath: "failed-import.pdf",
+          cleanup: async () => { events.push("cleanup"); },
+        };
+      },
+    },
+    importer: {
+      async importResult() {
+        events.push("import");
+        throw new Error("import failed");
+      },
+    },
+  });
+  harness.queue.onJobFailed = (job, error) => failures.push([job.attachmentID, error.message]);
+  harness.items.set(43, { id: 43 });
+
+  harness.queue.enqueue([43]);
+  await harness.queue.onIdle();
+
+  assert.deepEqual(events, ["import", "cleanup"]);
+  assert.deepEqual(failures, [[43, "import failed"]]);
+}
+
 (async () => {
   await fifoDedupeAndContinueAfterFailure();
   await validatesSettingsBeforeStarting();
+  await rechecksTranslatablePDFBeforeRunnerStarts();
   await cancelAbortsRunningJobAndDropsPendingJobs();
   await failureLogsOmitRunnerAndHandlerErrors();
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
+  await cleanupRunsWhenImportFails();
   process.stdout.write("translation queue regression cases passed\n");
 })().catch(error => {
   process.stderr.write(error.stack + "\n");

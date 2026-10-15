@@ -1,4 +1,4 @@
-/* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
+/* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
 
 var ZoteroTranslateFilesQueue = (function () {
   var pending = [];
@@ -183,7 +183,7 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
-  function closeProgressWindow(job, succeeded, aborted, warning) {
+  function closeProgressWindow(job, succeeded, aborted, warning, completedTitle) {
     if (!currentProgress || currentProgress.job !== job) return;
     var entry = currentProgress;
     currentProgress = null;
@@ -193,13 +193,11 @@ var ZoteroTranslateFilesQueue = (function () {
       if (succeeded) {
         entry.itemProgress.setProgress(100);
         var failedParagraphs = Number(warning && warning.failed_paragraphs);
+        var completionText = "已完成：" + String(completedTitle || "中文译本");
         if (Number.isFinite(failedParagraphs) && failedParagraphs > 0) {
-          entry.itemProgress.setText(
-            "已完成，但有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文（队列中还有 " + pending.length + " 篇）"
-          );
-        } else {
-          entry.itemProgress.setText("翻译完成（队列中还有 " + pending.length + " 篇）");
+          completionText += "（有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文）";
         }
+        entry.itemProgress.setText(completionText);
       } else if (aborted) {
         entry.itemProgress.setText("翻译已取消。");
       } else {
@@ -215,14 +213,21 @@ var ZoteroTranslateFilesQueue = (function () {
   async function runJob(job, controller) {
     var translationResult = null;
     var translationWarning = null;
+    var completedTitle = null;
     var succeeded = false;
+    var skipped = false;
     var failure = null;
     try {
-      var settingsError = getSettingsError();
-      if (settingsError) throw settingsError;
-
       var attachmentItem = Zotero.Items.get(job.attachmentID);
       if (!attachmentItem) throw new Error("PDF 附件已不存在或无法读取。");
+      // A translated attachment may have been inserted after enqueueing but before this job starts.
+      if (!ZoteroTranslateFilesAttachments.isTranslatablePDF(attachmentItem)) {
+        skipped = true;
+        return;
+      }
+
+      var settingsError = getSettingsError();
+      if (settingsError) throw settingsError;
 
       openProgressWindow(job, attachmentItem);
       translationResult = await runner.translate(attachmentItem, {
@@ -246,7 +251,17 @@ var ZoteroTranslateFilesQueue = (function () {
         resultImporter = ZoteroTranslateFiles.modules.importer;
       }
       if (resultImporter && typeof resultImporter.importResult === "function") {
-        await resultImporter.importResult(attachmentItem, outputPath);
+        var translatedAttachment = await resultImporter.importResult(attachmentItem, outputPath);
+        if (translatedAttachment && typeof translatedAttachment.getField === "function") {
+          try {
+            completedTitle = String(translatedAttachment.getField("title") || "");
+          } catch (error) {
+            completedTitle = null;
+          }
+        }
+        if (!completedTitle) {
+          completedTitle = String(attachmentItem.getField("title") || "PDF") + "（中文译本）";
+        }
       } else {
         throw new Error("翻译结果导入模块尚未初始化。");
       }
@@ -266,10 +281,16 @@ var ZoteroTranslateFilesQueue = (function () {
         }
       }
 
-      if (!succeeded && !controller.signal.aborted) {
+      if (!succeeded && !skipped && !controller.signal.aborted) {
         reportFailure(job, failure || new Error("翻译失败。"));
       }
-      closeProgressWindow(job, succeeded, controller.signal.aborted, translationWarning);
+      closeProgressWindow(
+        job,
+        succeeded,
+        controller.signal.aborted,
+        translationWarning,
+        completedTitle,
+      );
     }
   }
 

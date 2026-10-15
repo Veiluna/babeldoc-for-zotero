@@ -4,6 +4,43 @@ var ZoteroTranslateFilesAttachments = (function () {
   var TRANSLATED_TITLE_SUFFIX = "（中文译本）";
   // Task 6's importer will add this stable marker to every generated attachment.
   var TRANSLATED_ATTACHMENT_TAG = "zotero-translate-files:translated";
+  var pendingTranslatedImports = new Map();
+
+  function pendingImportKey(item, title) {
+    var parentItemID = item.parentItemID || null;
+    var collections = [];
+    if (!parentItemID && typeof item.getCollections === "function") {
+      collections = (item.getCollections() || []).map(String).sort();
+    }
+    return JSON.stringify([
+      String(item.libraryID == null ? "" : item.libraryID),
+      String(parentItemID == null ? "" : parentItemID),
+      String(title),
+      collections,
+    ]);
+  }
+
+  function beginTranslatedImport(original, translatedTitle) {
+    var key = pendingImportKey(original, translatedTitle);
+    pendingTranslatedImports.set(key, (pendingTranslatedImports.get(key) || 0) + 1);
+    var active = true;
+
+    return function endTranslatedImport() {
+      if (!active) return;
+      active = false;
+      var count = pendingTranslatedImports.get(key) || 0;
+      if (count <= 1) pendingTranslatedImports.delete(key);
+      else pendingTranslatedImports.set(key, count - 1);
+    };
+  }
+
+  function isPendingTranslatedImport(item, title) {
+    try {
+      return pendingTranslatedImports.has(pendingImportKey(item, title));
+    } catch (error) {
+      return false;
+    }
+  }
 
   function isTranslatedAttachment(item) {
     if (!item || typeof item.getField !== "function" || typeof item.getTags !== "function") {
@@ -20,9 +57,10 @@ var ZoteroTranslateFilesAttachments = (function () {
     }
 
     if (!title.endsWith(TRANSLATED_TITLE_SUFFIX)) return false;
-    return tags.some(function (tag) {
+    if (tags.some(function (tag) {
       return (typeof tag === "string" ? tag : tag && tag.tag) === TRANSLATED_ATTACHMENT_TAG;
-    });
+    })) return true;
+    return isPendingTranslatedImport(item, title);
   }
 
   function isTranslatablePDF(item) {
@@ -85,6 +123,7 @@ var ZoteroTranslateFilesAttachments = (function () {
   return {
     TRANSLATED_TITLE_SUFFIX: TRANSLATED_TITLE_SUFFIX,
     TRANSLATED_ATTACHMENT_TAG: TRANSLATED_ATTACHMENT_TAG,
+    beginTranslatedImport: beginTranslatedImport,
     isTranslatedAttachment: isTranslatedAttachment,
     isTranslatablePDF: isTranslatablePDF,
     resolvePDFAttachments: resolvePDFAttachments,

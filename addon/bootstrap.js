@@ -26,6 +26,7 @@ async function startup({ id, version, rootURI }) {
 
     Services.scriptloader.loadSubScript(rootURI + "content/modules/config.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/attachments.js");
+    Services.scriptloader.loadSubScript(rootURI + "content/modules/importer.js");
     Services.scriptloader.loadSubScript(rootURI + "content/preferences.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/runner.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/queue.js");

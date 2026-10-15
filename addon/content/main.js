@@ -26,6 +26,7 @@ var ZoteroTranslateFiles = {
     this.modules.menu = ZoteroTranslateFilesMenu;
     this.modules.queue = ZoteroTranslateFilesQueue;
     this.modules.runner = ZoteroTranslateFilesRunner;
+    this.modules.importer = ZoteroTranslateFilesImporter;
     this.started = true;
     this.callModules("init", [data]);
     this.log("initialized " + this.version);
