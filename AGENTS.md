@@ -28,10 +28,13 @@
 - 提交信息注明 "Implemented by Claude Opus 5.5 (escalated: <触发的指标>)"，并告知用户；
 - 下一个任务恢复由 6luna 编写。
 
-## 文档查询（context7）
+## 文档查询（context7，强制）
 
-- **所有阶段**的模型（6luna、6.1sol、Claude）都可以使用 context7 MCP 查询库和 API 文档（Zotero 插件 API、Firefox/Gecko ESR 140、OpenAI API、BabelDOC、Python 库等），先查文档再写代码或下审查结论，不凭记忆。
-- Claude 也会主动用 context7 查询相关文档，并把结论写进任务说明，提供给对应的模型。
+- **编写代码前必须查询**：任何模型（6luna，或升级后的 Claude Opus 5.5）在编写或修改调用库、接口的代码之前，都必须先用 context7 MCP（resolve-library-id → query-docs）查询**实际所用版本**的文档，并按文档实现，不得凭记忆使用参数名、函数签名或默认值。涉及的库和接口包括 Zotero 插件 API、Firefox/Gecko ESR 140、OpenAI Chat Completions 参数（如 `max_tokens` 与 `max_completion_tokens`、`temperature` 是否支持）、BabelDOC 0.6.4、PyMuPDF、Python 标准库等。
+- **总结中必须列出**：编写者的最终总结必须包含 "Docs checked (context7)" 一节，逐项写明查询的库或接口、context7 库 ID 和确认的结论。缺少这一节视为任务未完成。
+- **审查时必须核对**：6.1sol 审查时要自己用 context7 核对每一处库/接口调用和参数是否符合该版本文档。与文档不符，或缺少 "Docs checked (context7)" 一节，都列为必须修改项。
+- **Claude**：写任务说明前，同样先用 context7 查询相关文档，并把结论写进说明。
+- 起因：曾凭记忆使用 `max_tokens`，结果服务商的部分后端只接受 `max_completion_tokens`，返回 400。
 - 文档与本机实际安装的源码冲突时，**以源码为准**：Zotero 10.0.6 在 `G:\Program Files\Zotero` 的 `omni.ja`，BabelDOC 0.6.4 在 `G:\ProgramData\zotero-translate-files\babeldoc-env`。
 
 ## 每个任务的流程
