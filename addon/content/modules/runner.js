@@ -224,6 +224,7 @@ var ZoteroTranslateFilesRunner = (function () {
           ZTF_MAX_REQUESTS: String(settings.maxRequests),
           ZTF_REPAIR_FAILED: settings.repairFailed ? "1" : "0",
           ZTF_TRANSLATE_REFERENCES: settings.translateReferences ? "1" : "0",
+          ZTF_TOKEN_PARAM: settings.tokenParam || "max_tokens",
           ZTF_JOB_LOG_PATH: logPath,
           PYTHONUTF8: "1",
           PYTHONIOENCODING: "utf-8",
@@ -304,6 +305,16 @@ var ZoteroTranslateFilesRunner = (function () {
           var fragmentItems = event.fragment_item_count == null ? NaN : Number(event.fragment_item_count);
           if (Number.isFinite(fragmentItems)) fragmentItemCount = Math.max(0, Math.floor(fragmentItems));
           if (event.log_path) logPath = String(event.log_path);
+          // The runner adapts if the provider rejects the token-limit parameter;
+          // remember what worked so the next job uses it from the first request.
+          if (event.token_param && event.token_param !== settings.tokenParam &&
+              ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.setTokenParam === "function") {
+            try {
+              ZoteroTranslateFilesConfig.setTokenParam(String(event.token_param));
+            } catch (error) {
+              // Remembering the dialect is an optimisation; never fail the job for it.
+            }
+          }
         } else if (marker === "ZTF_ERROR ") {
           var errorDetail = event.message || event.error || "BabelDOC 报告了错误。";
           if (ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function") {

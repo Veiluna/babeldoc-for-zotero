@@ -6,3 +6,4 @@ pref("extensions.zotero-translate-files.maxOutputTokens", 8192);
 pref("extensions.zotero-translate-files.maxRequests", 20);
 pref("extensions.zotero-translate-files.repairFailed", true);
 pref("extensions.zotero-translate-files.translateReferences", false);
+pref("extensions.zotero-translate-files.tokenParam", "max_tokens");

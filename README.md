@@ -1,6 +1,6 @@
 # Translate Files for Zotero
 
-当前版本：**0.2.2**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.2.3**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -175,6 +175,10 @@ python tests/test_min_requests.py
 - 每个任务会在 Zotero 数据目录的 `zotero-translate-files/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
 
 设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
+
+## 0.2.3 改进
+
+- 部分模型（包括 chatanywhere 上的部分模型）不再接受 `max_tokens`，要求改用 `max_completion_tokens`；也有模型不接受 `temperature`。服务端会先返回不消耗额度的 HTTP 400。插件遇到这种拒绝时，会自动换成对方要求的参数，在同一次计数的请求里重发一次，并记住结果：测试连接成功后，以及翻译完成后，都会保存到隐藏设置 `extensions.zotero-translate-files.tokenParam`，之后的请求直接使用。其他错误不重试。
 
 ## 0.2.2 改进
 

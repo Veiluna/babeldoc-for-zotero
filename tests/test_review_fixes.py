@@ -473,7 +473,100 @@ def test_author_bylines_need_evidence_and_skip_edit_distance():
     assert not runner.validate_translation_output(byline, dropped, item, long_counter)["usable"]
 
 
+class _UnsupportedParameter(Exception):
+    status_code = 400
+
+    def __init__(self, param, message):
+        super().__init__(f"Error code: 400 - {message}")
+        self.body = {"error": {"message": message, "type": "invalid_request_error", "param": param, "code": "unsupported_parameter"}}
+
+
+class _FakeCompletions:
+    def __init__(self, reject):
+        self.reject = set(reject)
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        for name in self.reject:
+            if name in kwargs:
+                if name == "max_tokens":
+                    raise _UnsupportedParameter(
+                        "max_tokens",
+                        "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+                    )
+                if name == "max_completion_tokens":
+                    raise _UnsupportedParameter(
+                        "max_completion_tokens",
+                        "Unsupported parameter: 'max_completion_tokens' is not supported with this model. Use 'max_tokens' instead.",
+                    )
+                raise _UnsupportedParameter(name, f"Unsupported value: '{name}' does not support 0.3 with this model.")
+        return "ok"
+
+
+def _fake_client(reject):
+    completions = _FakeCompletions(reject)
+    return SimpleNamespace(chat=SimpleNamespace(completions=completions)), completions
+
+
+def test_completion_adapts_to_unsupported_token_and_sampling_parameters():
+    client, completions = _fake_client({"max_tokens"})
+    state = {"token_param": "max_tokens"}
+    assert runner.create_completion_adapting(client, state, 4096, model="m", messages=[]) == "ok"
+    assert [("max_tokens" in c, c.get("max_completion_tokens")) for c in completions.calls] == [(True, None), (False, 4096)]
+    assert state["token_param"] == "max_completion_tokens"
+    # Learned for the rest of the job: the next request goes straight through.
+    runner.create_completion_adapting(client, state, 4096, model="m", messages=[])
+    assert len(completions.calls) == 3 and "max_tokens" not in completions.calls[2]
+
+    # A previously learned setting can be reversed when the provider routes to
+    # a backend that now rejects max_completion_tokens.
+    client, completions = _fake_client({"max_completion_tokens"})
+    state = {"token_param": "max_completion_tokens"}
+    assert runner.create_completion_adapting(client, state, 4096, model="m", messages=[]) == "ok"
+    assert [
+        ("max_completion_tokens" in call, call.get("max_tokens"))
+        for call in completions.calls
+    ] == [(True, None), (False, 4096)]
+    assert state["token_param"] == "max_tokens"
+
+    reverse_message = "Unsupported parameter: 'max_completion_tokens' is not supported with this model. Use 'max_tokens' instead."
+    assert runner.parameter_adaptation(_UnsupportedParameter("max_completion_tokens", reverse_message)) == "max_tokens"
+    assert runner.parameter_adaptation(_UnsupportedParameter(None, reverse_message)) == "max_tokens"
+    assert runner.parameter_adaptation(
+        _UnsupportedParameter(None, "Unsupported request. Use 'max_tokens' instead of 'max_completion_tokens'.")
+    ) is None
+
+    client, completions = _fake_client({"max_tokens", "temperature"})
+    state = {"token_param": "max_tokens"}
+    assert runner.create_completion_adapting(client, state, 100, model="m", messages=[], temperature=0.3) == "ok"
+    assert len(completions.calls) == 3 and state["drop_sampling"] is True
+    assert "temperature" not in completions.calls[-1] and completions.calls[-1]["max_completion_tokens"] == 100
+
+
+def test_other_errors_are_not_retried_and_the_slot_is_counted_once():
+    class _NotFound(Exception):
+        status_code = 404
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **k: (_ for _ in ()).throw(_NotFound("no")))))
+    budget = runner.RequestBudget(5)
+    try:
+        runner.request_once(budget, lambda: runner.create_completion_adapting(client, {}, 10, model="m", messages=[]))
+    except _NotFound:
+        pass
+    else:
+        raise AssertionError("404 must propagate")
+    assert budget.requests == 1
+
+    client, completions = _fake_client({"max_tokens"})
+    budget = runner.RequestBudget(5)
+    runner.request_once(budget, lambda: runner.create_completion_adapting(client, {"token_param": "max_tokens"}, 10, model="m", messages=[]))
+    assert budget.requests == 1 and len(completions.calls) == 2, "the no-cost rejected attempt shares one counted slot"
+    assert runner.parameter_adaptation(ConnectionError("x")) is None
+
+
 if __name__ == "__main__":
+    test_completion_adapts_to_unsupported_token_and_sampling_parameters()
+    test_other_errors_are_not_retried_and_the_slot_is_counted_once()
     test_author_bylines_need_evidence_and_skip_edit_distance()
     test_urls_emails_and_author_lines_may_stay_verbatim()
     test_provider_message_is_only_a_fixed_category()

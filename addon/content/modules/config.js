@@ -11,7 +11,28 @@ var ZoteroTranslateFilesConfig = (function () {
     maxRequests: "extensions.zotero-translate-files.maxRequests",
     repairFailed: "extensions.zotero-translate-files.repairFailed",
     translateReferences: "extensions.zotero-translate-files.translateReferences",
+    // Learned, not user-facing: "max_tokens" or "max_completion_tokens".
+    tokenParam: "extensions.zotero-translate-files.tokenParam",
   };
+
+  var TOKEN_LIMIT_PARAMETERS = ["max_tokens", "max_completion_tokens"];
+  var ADAPTABLE_PARAMETERS = TOKEN_LIMIT_PARAMETERS;
+
+  function rejectedParameter(message) {
+    // Match the parameter named by the rejection itself. A provider may also
+    // mention the replacement in the same message ("Use X instead"), which
+    // must not be mistaken for the rejected parameter.
+    var patterns = [
+      /\bunsupported\s+parameter\s*:\s*["'`]?([a-z_]+)["'`]?/i,
+      /["'`]?([a-z_]+)["'`]?\s+(?:parameter\s+)?(?:is\s+)?not\s+supported\b/i,
+      /\bdoes\s+not\s+support\s+(?:the\s+)?(?:parameter\s+)?["'`]?([a-z_]+)["'`]?/i,
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var match = patterns[i].exec(message);
+      if (match && ADAPTABLE_PARAMETERS.indexOf(match[1]) !== -1) return match[1];
+    }
+    return "";
+  }
 
   function getSettings() {
     function read(name) {
@@ -53,7 +74,46 @@ var ZoteroTranslateFilesConfig = (function () {
       maxRequests: readInteger("maxRequests", 20, 1, "单篇最多请求次数"),
       repairFailed: readBoolean("repairFailed", true),
       translateReferences: readBoolean("translateReferences", false),
+      tokenParam: TOKEN_LIMIT_PARAMETERS.indexOf(read("tokenParam")) !== -1
+        ? read("tokenParam")
+        : "max_tokens",
     };
+  }
+
+  function setTokenParam(value) {
+    if (TOKEN_LIMIT_PARAMETERS.indexOf(value) === -1) return false;
+    Zotero.Prefs.set(preferences.tokenParam, value, true);
+    return true;
+  }
+
+  // Some models reject max_tokens ("Use 'max_completion_tokens' instead") and
+  // others the reverse. Such a 400 is a validation error that costs no quota.
+  // Returns the parameter name to use instead, or "" for any other response.
+  function tokenLimitAdaptation(status, responseText) {
+    if (Number(status) !== 400) return "";
+    var details = {};
+    try {
+      var body = JSON.parse(String(responseText || ""));
+      details = (body && typeof body.error === "object" && body.error) || body || {};
+    } catch (error) {
+      details = {};
+    }
+    var param = String(details.param || "");
+    var message = (String(details.message || "") + " " + String(responseText || "")).toLowerCase();
+    var unsupported = /unsupported|not supported/.test(String(details.code || "") + " " + message);
+    if (!unsupported) return "";
+    // Structured error fields are authoritative; only inspect message text
+    // when the provider omitted `param`.
+    if (param === "max_tokens") {
+      return "max_completion_tokens";
+    }
+    if (param === "max_completion_tokens") {
+      return "max_tokens";
+    }
+    var rejected = rejectedParameter(message);
+    if (rejected === "max_tokens") return "max_completion_tokens";
+    if (rejected === "max_completion_tokens") return "max_tokens";
+    return "";
   }
 
   // Sanitize diagnostics before they reach logs or user-facing alerts.
@@ -194,6 +254,8 @@ var ZoteroTranslateFilesConfig = (function () {
 
   return {
     getSettings: getSettings,
+    setTokenParam: setTokenParam,
+    tokenLimitAdaptation: tokenLimitAdaptation,
     redact: redact,
     formatHTMLDiagnostic: formatHTMLDiagnostic,
     chatCompletionsURL: chatCompletionsURL,

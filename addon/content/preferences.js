@@ -194,26 +194,45 @@ var ZoteroTranslateFilesPreferences = (function () {
     }
 
     try {
-      var response = await Zotero.HTTP.request(
-        "POST",
-        endpoint,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer " + settings.apiKey,
-            "api-key": settings.apiKey,
-          },
-          body: JSON.stringify({
-            model: settings.model,
-            messages: [{ role: "user", content: "ping" }],
-            max_tokens: 1,
-          }),
-          responseType: "text",
-          successCodes: false,
-          timeout: 30000,
-        }
-      );
-      var status = getHTTPStatus(response);
+      var tokenParam = settings.tokenParam || "max_tokens";
+      var response;
+      var status;
+      // At most one reshaped retry: a model that rejects the token-limit
+      // parameter name answers with a no-cost 400 naming the other one.
+      for (var attempt = 0; attempt < 2; attempt++) {
+        var payload = {
+          model: settings.model,
+          messages: [{ role: "user", content: "ping" }],
+        };
+        payload[tokenParam] = 16;
+        response = await Zotero.HTTP.request(
+          "POST",
+          endpoint,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: "Bearer " + settings.apiKey,
+              "api-key": settings.apiKey,
+            },
+            body: JSON.stringify(payload),
+            responseType: "text",
+            successCodes: false,
+            timeout: 30000,
+          }
+        );
+        status = getHTTPStatus(response);
+        var adapted = attempt === 0 &&
+          typeof ZoteroTranslateFilesConfig.tokenLimitAdaptation === "function"
+          ? ZoteroTranslateFilesConfig.tokenLimitAdaptation(status, response && response.responseText)
+          : "";
+        if (!adapted || adapted === tokenParam) break;
+        tokenParam = adapted;
+      }
+      if (status >= 200 && status < 300 && tokenParam !== (settings.tokenParam || "max_tokens") &&
+          typeof ZoteroTranslateFilesConfig.setTokenParam === "function") {
+        // Remember the dialect so translations use it from the first request.
+        ZoteroTranslateFilesConfig.setTokenParam(tokenParam);
+      }
       if (status === 0) {
         setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
       } else if (status >= 200 && status < 300) {

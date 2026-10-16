@@ -222,6 +222,7 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.equal(call.environment.ZTF_MAX_REQUESTS, "20");
   assert.equal(call.environment.ZTF_REPAIR_FAILED, "1");
   assert.equal(call.environment.ZTF_TRANSLATE_REFERENCES, "0");
+  assert.equal(call.environment.ZTF_TOKEN_PARAM, "max_tokens");
   assert.match(call.environment.ZTF_JOB_LOG_PATH, /\\logs\\.*-ABCD1234\.jsonl$/);
   const workingDir = args[args.indexOf("--working-dir") + 1];
   assert.equal(workingDir, "C:\\Temp\\zotero-translate-files-test-job-id\\babeldoc-work");

@@ -364,6 +364,103 @@ def request_once(budget: RequestBudget, operation: Any) -> Any:
     return operation()
 
 
+TOKEN_LIMIT_PARAMETERS = ("max_tokens", "max_completion_tokens")
+_SAMPLING_PARAMETERS = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
+_ADAPTABLE_PARAMETERS = TOKEN_LIMIT_PARAMETERS + _SAMPLING_PARAMETERS
+_REJECTED_PARAMETER_PATTERNS = (
+    re.compile(r"\bunsupported\s+parameter\s*:\s*['\"]?([a-z_]+)['\"]?", re.I),
+    re.compile(r"['\"`]?([a-z_]+)['\"`]?\s+(?:parameter\s+)?(?:is\s+)?not\s+supported\b", re.I),
+    re.compile(r"\bdoes\s+not\s+support\s+(?:the\s+)?(?:parameter\s+)?['\"]?([a-z_]+)['\"]?", re.I),
+)
+
+
+def _rejected_parameter(message: str) -> str | None:
+    """Return only a parameter named as rejected, never one suggested instead."""
+    for pattern in _REJECTED_PARAMETER_PATTERNS:
+        match = pattern.search(message)
+        if match and match.group(1) in _ADAPTABLE_PARAMETERS:
+            return match.group(1)
+    return None
+
+
+def parameter_adaptation(error: Any) -> str | None:
+    """How to reshape a request the provider rejected *before* processing it.
+
+    Newer models reject ``max_tokens`` ("Use 'max_completion_tokens' instead")
+    or sampling parameters such as ``temperature``; such a 400 costs no quota.
+    Returns "max_completion_tokens", "max_tokens" or "drop_sampling", or None
+    for any other error (which is never retried).
+    """
+    if _provider_status(error) != 400:
+        return None
+    body = getattr(error, "body", None)
+    details = body.get("error", body) if isinstance(body, dict) else {}
+    details = details if isinstance(details, dict) else {}
+    param = str(details.get("param") or "")
+    code = str(details.get("code") or "")
+    message = " ".join(
+        str(part) for part in (details.get("message"), str(error)) if part
+    ).casefold()
+    unsupported = "unsupported" in code or "unsupported" in message or "not supported" in message
+    if not unsupported:
+        return None
+    # The structured field is authoritative. Message fallback must identify
+    # the rejected name, not a replacement mentioned later in the same text.
+    if param == "max_tokens":
+        return "max_completion_tokens"
+    if param == "max_completion_tokens":
+        return "max_tokens"
+    if param in _SAMPLING_PARAMETERS:
+        return "drop_sampling"
+    rejected = _rejected_parameter(message)
+    if rejected == "max_tokens":
+        return "max_completion_tokens"
+    if rejected == "max_completion_tokens":
+        return "max_tokens"
+    if rejected in _SAMPLING_PARAMETERS:
+        return "drop_sampling"
+    return None
+
+
+def create_completion_adapting(
+    client: Any,
+    request_state: dict[str, Any],
+    token_limit: int,
+    **kwargs: Any,
+) -> Any:
+    """``client.chat.completions.create`` with the provider's parameter dialect.
+
+    The token-limit parameter name lives in ``request_state["token_param"]``
+    (initialised from the plugin setting). If the provider rejects a parameter
+    as unsupported, the request is reshaped and sent again — at most twice, in
+    the same counted request slot, since the rejected attempt was not processed.
+    The learned dialect is kept for the rest of the job.
+    """
+    attempts = 0
+    while True:
+        call = dict(kwargs)
+        if request_state.get("drop_sampling"):
+            for name in _SAMPLING_PARAMETERS:
+                call.pop(name, None)
+        call[request_state.get("token_param", "max_tokens")] = token_limit
+        try:
+            return client.chat.completions.create(**call)
+        except Exception as error:
+            adaptation = parameter_adaptation(error)
+            if adaptation is None or attempts >= 2:
+                raise
+            attempts += 1
+            if adaptation == "drop_sampling":
+                if request_state.get("drop_sampling"):
+                    raise
+                request_state["drop_sampling"] = True
+            else:
+                if request_state.get("token_param") == adaptation:
+                    raise
+                request_state["token_param"] = adaptation
+            request_state.setdefault("parameter_adaptations", []).append(adaptation)
+
+
 def _failed_json_items(
     items: list[dict[str, Any]], message: str
 ) -> list[dict[str, Any]]:
@@ -2583,10 +2680,12 @@ def _install_min_request_patches(
                     request_state.get("repair_request_count", 0)
                 ) + 1
             try:
-                response = instance.client.chat.completions.create(
+                response = create_completion_adapting(
+                    instance.client,
+                    request_state,
+                    max_output_tokens,
                     model=instance.model,
                     **options,
-                    max_tokens=max_output_tokens,
                     messages=[{"role": "user", "content": prompt_text}],
                     extra_headers=extra_headers,
                     extra_body=instance.extra_body,
@@ -3116,10 +3215,12 @@ def _install_min_request_patches(
             request_index += 1
             response = request_once(
                 request_budget,
-                lambda: instance.client.chat.completions.create(
+                lambda: create_completion_adapting(
+                    instance.client,
+                    request_state,
+                    max_output_tokens,
                     model=instance.model,
                     **options,
-                    max_tokens=max_output_tokens,
                     messages=[{"role": "user", "content": text}],
                     extra_headers=extra_headers,
                     extra_body=instance.extra_body,
@@ -3140,10 +3241,12 @@ def _install_min_request_patches(
         try:
             response = request_once(
                 request_budget,
-                lambda: instance.client.chat.completions.create(
+                lambda: create_completion_adapting(
+                    instance.client,
+                    request_state,
+                    max_output_tokens,
                     model=instance.model,
                     **options,
-                    max_tokens=max_output_tokens,
                     messages=instance.prompt(text),
                     extra_body=instance.extra_body,
                 ),
@@ -4035,7 +4138,11 @@ def main() -> int:
         )
 
     request_budget = RequestBudget(max_requests, emit_request_progress)
+    token_param = os.environ.pop("ZTF_TOKEN_PARAM", "").strip()
     request_state: dict[str, Any] = {
+        # The provider's token-limit parameter, learned by the plugin's
+        # connection test; requests still adapt if the provider rejects it.
+        "token_param": token_param if token_param in TOKEN_LIMIT_PARAMETERS else "max_tokens",
         "fatal_error": "",
         "fatal_kind": "",
         "job_log_path": job_log_path,
@@ -4276,6 +4383,8 @@ def main() -> int:
             "repair_request_count": request_state.get("repair_request_count", 0),
             "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
             "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
+            "token_param": request_state.get("token_param"),
+            "parameter_adaptations": request_state.get("parameter_adaptations", []),
         },
         api_key,
     )
@@ -4283,6 +4392,8 @@ def main() -> int:
         "ZTF_RESULT ",
         {
             "mono": state["result"],
+            # Lets the plugin remember the provider's token-limit parameter.
+            "token_param": request_state.get("token_param"),
             "requests": request_budget.requests,
             "main_minimum_requests": request_state.get(
                 "main_minimum_requests", request_budget.requests

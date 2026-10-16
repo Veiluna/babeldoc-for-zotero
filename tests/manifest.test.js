@@ -17,7 +17,7 @@ const manifest = JSON.parse(manifestBytes.toString("utf8"));
 assert.equal(manifest.manifest_version, 2);
 assert.equal(manifest.name, "Translate Files for Zotero");
 assert.match(manifest.description, /Translate PDF attachments/);
-assert.equal(manifest.version, "0.2.2");
+assert.equal(manifest.version, "0.2.3");
 
 const zotero = manifest.applications && manifest.applications.zotero;
 assert.ok(zotero, "applications.zotero is required");
@@ -137,7 +137,7 @@ const release = updatesManifest.addons[zotero.id].updates[0];
 assert.equal(release.version, manifest.version);
 assert.equal(
   release.update_link,
-  "https://github.com/Veiluna/zotero-translate-files/releases/download/v0.2.2/zotero-translate-files-0.2.2.xpi"
+  "https://github.com/Veiluna/zotero-translate-files/releases/download/v0.2.3/zotero-translate-files-0.2.3.xpi"
 );
 assert.equal(release.applications.zotero.strict_min_version, zotero.strict_min_version);
 assert.equal(release.applications.zotero.strict_max_version, zotero.strict_max_version);
