@@ -437,6 +437,54 @@ def _safe_log_identifier(value: Any, api_key: str) -> str:
     return masked
 
 
+def _provider_error_message(value: Any) -> str:
+    """The provider's own error message (OpenAI-style body), if any."""
+    body = getattr(value, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("msg") or error.get("detail")
+            if isinstance(message, str):
+                return message
+        elif isinstance(error, str):
+            return error
+    message = getattr(value, "message", None)
+    return message if isinstance(message, str) else ""
+
+
+# Fixed diagnostic categories. The provider's own wording is never logged:
+# even a short excerpt can be document text echoed back, so only the
+# category that matched is recorded.
+_PROVIDER_MESSAGE_CATEGORIES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("quota_or_rate_limit", re.compile(r"rate.?limit|too many requests|quota|insufficient|balance|余额|额度|限流|次数", re.I)),
+    ("context_or_max_tokens", re.compile(r"max_tokens|max_completion_tokens|context.?length|maximum context|too long|token limit", re.I)),
+    ("model_unavailable", re.compile(r"model.{0,40}(?:not found|does not exist|not support|unavailable|invalid)|no such model|模型.{0,10}(?:不存在|不支持)", re.I)),
+    ("authentication", re.compile(r"api.?key|unauthori[sz]ed|authenticat|permission|forbidden|鉴权|令牌", re.I)),
+    ("json_mode_unsupported", re.compile(r"response_format|json_object|json mode", re.I)),
+    ("content_filtered", re.compile(r"content.?(?:policy|filter|management)|moderation|safety|sensitive|违规|审核", re.I)),
+    ("timeout", re.compile(r"time(?:d)?.?out|超时", re.I)),
+    ("invalid_request", re.compile(r"invalid|bad request|malformed|parameter|参数", re.I)),
+)
+
+
+def provider_message_for_log(value: Any, api_key: str, request_text: str) -> str:
+    """A fixed diagnostic category for the provider's error message, or "".
+
+    Free text from the provider is never logged (a 24-char echo test cannot
+    prove a message is not document text); instead the message is classified
+    into one of a few allow-listed categories. ``api_key`` and ``request_text``
+    are accepted for interface stability; nothing from them is returned.
+    """
+    del api_key, request_text
+    message = _provider_error_message(value)
+    if not message:
+        return ""
+    for category, pattern in _PROVIDER_MESSAGE_CATEGORIES:
+        if pattern.search(message):
+            return category
+    return "unclassified"
+
+
 def log_safe_error(value: Any, api_key: str = "") -> str:
     """Controlled, bounded error summary for the diagnostics log.
 
@@ -685,9 +733,74 @@ def _is_fragment_item(item: dict[str, Any]) -> bool:
     )
 
 
+_ENGLISH_FUNCTION_WORDS = frozenset(
+    "a an and are as at be by for from in is of on or that the to with".split()
+)
+
+
+_NAME_TOKEN_RE = re.compile(r"[A-Z][a-z]+(?:[-'][A-Z][a-z]+)*|[A-Z]\.")
+
+
+def _looks_like_name_list(text: str) -> bool:
+    """An author line: two or more comma/"and"-separated names of 2–4 tokens,
+    each token a capitalized name or an initial ("Lisa Liu, D. Essam")."""
+    parts = [part.strip() for part in re.split(r",|;|&|\band\b", text) if part.strip()]
+    if len(parts) < 2:
+        return False
+    for part in parts:
+        tokens = part.split()
+        if not 2 <= len(tokens) <= 4:
+            return False
+        if not all(_NAME_TOKEN_RE.fullmatch(token) for token in tokens):
+            return False
+    return True
+
+
+# Evidence that a line is an author byline rather than a title-cased heading:
+# an e-mail address, or an affiliation marker attached to a name ("Liu{v1}",
+# "Liu1", "Liu*", "Liu†").
+_AUTHOR_EVIDENCE_RE = re.compile(
+    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\}\s*@\s*[\w.-]+"
+    r"|[a-z]\{\s*v\s*\d+\s*\}|[a-z](?:\d{1,2}|[*†‡§¶]+)(?=[\s,;]|$)"
+)
+
+
+def _is_author_byline(text: str) -> bool:
+    """A name list with author evidence; shape alone is not enough."""
+    if not _AUTHOR_EVIDENCE_RE.search(text):
+        return False
+    plain = _URL_EMAIL_DOMAIN_RE.sub(" ", _PLACEHOLDER_TOKEN_RE.sub(" ", text))
+    plain = re.sub(r"\{[^{}]*\}", " ", plain)
+    plain = re.sub(r"(?<=[a-z])(?:\d{1,2}|[*†‡§¶]+)", "", plain)
+    return _looks_like_name_list(re.sub(r"[^A-Za-z.,;&' -]", " ", plain))
+
+
+def verbatim_output_allowed(text: str) -> bool:
+    """Whether an unchanged output is a correct "translation" of ``text``:
+    links, identifiers of at most two words, or an evidenced author byline."""
+    return not _looks_like_english_prose(text)
+
+
 def _looks_like_english_prose(text: str) -> bool:
-    words = re.findall(r"[A-Za-z]{2,}", text)
-    return len(words) >= 4 or (len(words) >= 2 and len(text) >= 48)
+    """Whether text (ignoring links/placeholders) must be translated.
+
+    Verbatim output is acceptable only for links, identifiers of at most two
+    words ("HTTP", "Random Forest", "CIC-IDS-2017") and author bylines with
+    evidence (e-mail or affiliation markers). Anything else with two ordinary
+    lowercase words, any English function word (including "a"), or three or
+    more words is prose — e.g. "A Novel Deep Learning Architecture", an
+    all-caps heading or "Neural Network Models, Experimental Results".
+    """
+    if _is_author_byline(text):
+        return False
+    text = _URL_EMAIL_DOMAIN_RE.sub(" ", _PLACEHOLDER_TOKEN_RE.sub(" ", text))
+    if len(_ORDINARY_WORD_RE.findall(text)) >= 2:
+        return True
+    words = [word for word in re.findall(r"[A-Za-z]+", text)
+             if len(word) >= 2 or word.casefold() == "a"]
+    if any(word.casefold() in _ENGLISH_FUNCTION_WORDS for word in words) and len(words) >= 2:
+        return True
+    return len(words) >= 3
 
 
 def _source_english_residue_ratio(source: str, translated: str) -> float:
@@ -705,15 +818,30 @@ def _source_english_residue_ratio(source: str, translated: str) -> float:
 
 
 _ORDINARY_WORD_RE = re.compile(r"(?<![A-Za-z])[a-z]{2,}(?![A-Za-z])")
+# URLs, e-mail addresses (incl. "{a.b, c.d}@host" groups) and bare domains are
+# kept verbatim in a translation; their lowercase pieces are not English prose.
+_URL_EMAIL_DOMAIN_RE = re.compile(
+    r"(?:https?://|ftp://|www\.)\S+"
+    r"|\{[^{}]*\}\s*@\s*[\w.-]+"
+    r"|[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    # Bare domains by shape rather than a fixed TLD list: a path
+    # ("kth.se/research"), several labels ("inf.ethz.ch"), a two-letter country
+    # code ("ethz.ch") or a common generic TLD. A run-together sentence
+    # ("datasets.Researchers") has none of these and is not matched.
+    r"|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,24}/\S*"
+    r"|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+){2,}\b"
+    r"|\b[a-z0-9][a-z0-9-]*\.(?:[a-z]{2}|com|org|net|edu|gov|info|io|ai)\b",
+)
 
 
 def _ordinary_english_words(text: str) -> list[str]:
-    """All-lowercase words of 2+ letters, ignoring placeholder markup.
+    """All-lowercase words of 2+ letters, ignoring placeholders, URLs and e-mails.
 
     The single word rule used by every English-residue check, so the checks
-    cannot disagree (abbreviations, names and identifiers are excluded).
+    cannot disagree (abbreviations, names, identifiers, links are excluded).
     """
-    return _ORDINARY_WORD_RE.findall(_PLACEHOLDER_TOKEN_RE.sub(" ", text or ""))
+    text = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "")
+    return _ORDINARY_WORD_RE.findall(_URL_EMAIL_DOMAIN_RE.sub(" ", text))
 
 
 def _formula_placeholder_nesting(text: str) -> Counter[tuple[str, tuple[str, ...]]]:
@@ -760,9 +888,9 @@ def validate_translation_output(
     # Identical output is fine only for abbreviations, names, numbers and
     # identifiers ("HTTP", "CIC-IDS-2017", a lone "pcap"); two or more ordinary
     # lowercase words ("of the system") mean the text was simply not translated.
-    if " ".join(output.split()) == " ".join(source.split()) and (
-        has_ordinary_words or _looks_like_english_prose(source)
-    ):
+    identical = " ".join(output.split()) == " ".join(source.split())
+    verbatim_ok = identical and verbatim_output_allowed(source)
+    if identical and not verbatim_ok:
         checks["identical_english"] = True
         return {"usable": False, "reason": "模型返回了未翻译的英文原文，已进入合并补译。", "checks": checks}
 
@@ -773,7 +901,8 @@ def validate_translation_output(
     # No Chinese at all and every ordinary source word still there: an English
     # echo, even if only punctuation or spacing was changed.
     if (
-        has_ordinary_words
+        not verbatim_ok
+        and has_ordinary_words
         and not re.search("[㐀-鿿]", plain_output)
         and all(word in output_words for word in source_words)
     ):
@@ -783,7 +912,7 @@ def validate_translation_output(
             "reason": "译文仍是英文原句，已进入合并补译。",
             "checks": checks,
         }
-    if residue_ratio >= 0.72:
+    if not verbatim_ok and residue_ratio >= 0.72:
         return {
             "usable": False,
             "reason": "译文仍保留大部分英文原句，已进入合并补译。",
@@ -879,7 +1008,10 @@ def validate_translation_output(
             "checks": checks,
         }
 
-    if not _is_fragment_item(item):
+    # Confirmed verbatim content (links, short identifiers, evidenced bylines)
+    # is identical by design; the length/edit-distance heuristics do not apply.
+    # Placeholder checks above still ran.
+    if not _is_fragment_item(item) and not verbatim_ok:
         try:
             input_tokens = max(1, int(token_counter(source)))
             output_tokens = max(0, int(token_counter(output)))
@@ -2471,6 +2603,7 @@ def _install_min_request_patches(
                         "actual_output_tokens": None,
                         "finish_reason": None,
                         "error": log_safe_error(error, api_key),
+                        "provider_message": provider_message_for_log(error, api_key, prompt_text),
                         "items": request_items_log,
                     },
                     api_key,

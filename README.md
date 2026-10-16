@@ -1,6 +1,6 @@
 # Translate Files for Zotero
 
-当前版本：**0.2.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.2.2**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -175,5 +175,10 @@ python tests/test_min_requests.py
 - 每个任务会在 Zotero 数据目录的 `zotero-translate-files/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
 
 设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
+
+## 0.2.2 改进
+
+- 网址、邮箱、域名、两个词以内的标识符（如 "HTTP"、"CIC-IDS-2017"），以及带有作者证据（邮箱，或紧贴姓名的单位标记，如 `Liu{v1}`、`Liu1`、`Liu*`）的作者署名行，可以原样保留（仍检查占位符），不再被当成"未翻译"而送去补译。标题（如 "II. BACKGROUND AND RELATED WORK"、"A Novel Deep Learning Architecture"）和普通英文句子仍必须翻译。
+- 接口返回错误时，日志的 `provider_message` 字段只记录一个固定的诊断类别：`quota_or_rate_limit`、`context_or_max_tokens`、`model_unavailable`、`authentication`、`json_mode_unsupported`、`content_filtered`、`timeout`、`invalid_request` 或 `unclassified`。服务端返回的原文一律不写入日志，因为其中可能包含被回显的文档内容。
 
 真实 PDF 回归应使用 `ztest/samples/liu2022/original.pdf` 和 `ztest/samples/P01.pdf`，以 `tests/mock_openai_server.py --bad-fragments` 提供故意错误的跨段输出。检查 JSONL 中的主请求数、片段条目数和补译请求数；用 PyMuPDF 比较每页正文中同一原始字号组的最小/最大字号；并确认页眉、页脚、下载戳和参考文献文本与原文逐字节一致，输出文本中没有 `{v…}` 占位符。

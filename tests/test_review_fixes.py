@@ -396,7 +396,87 @@ def test_body_text_near_the_page_top_is_not_a_stamp():
     assert runner._paragraph_is_marginal_or_stamp(doi, page)
 
 
+def test_urls_emails_and_author_lines_may_stay_verbatim():
+    words = lambda text: max(1, len(re.findall(r"[A-Za-z]+", text)) + len(re.findall("[一-鿿]", text)))
+    for text in (
+        "distrinet-research.be/CNS2022",
+        "{v1}https://intrusion-detection.distrinet-research.be/ CNS2022/",
+        "Lisa Liu{v1}, Gints Engelen{v2}, Timothy Lynar {l.liu, t.lynar, d.essam}@adfa.edu.au",
+    ):
+        result = runner.validate_translation_output(text, text, {}, words)
+        assert result["usable"], (text, result)
+    # Ordinary prose next to a URL is still checked.
+    prose = "see the project page at https://example.org for the data and the code"
+    assert not runner.validate_translation_output(prose, prose, {}, words)["usable"]
+    # Headings / titles must still be translated, with or without function words.
+    for heading in (
+        "II. BACKGROUND AND RELATED WORK",
+        "A Novel Deep Learning Architecture",
+        "NEURAL NETWORK BASED INTRUSION DETECTION",
+    ):
+        assert not runner.validate_translation_output(heading, heading, {}, words)["usable"], heading
+    # Bare domains outside any fixed TLD list.
+    for domain in ("inf.ethz.ch", "kth.se/research/data", "data.example.us"):
+        assert runner.validate_translation_output(domain, domain, {}, words)["usable"], domain
+
+
+class _ProviderBadRequest(Exception):
+    status_code = 400
+
+    def __init__(self, message, body):
+        super().__init__(message)
+        self.body = body
+
+
+def test_provider_message_is_only_a_fixed_category():
+    key = "sk-diag-0123456789abcdef"
+    request = "Translate this: Patient name Alice Smith.\nThe labelling logic was reverse engineered."
+    cases = {
+        "max_tokens is too large for this model": "context_or_max_tokens",
+        "Rate limit reached for requests": "quota_or_rate_limit",
+        "The model `gpt-x` does not exist": "model_unavailable",
+        "Invalid input: Alice Smith": "invalid_request",
+        "Incorrect API key provided: " + key: "authentication",
+        "something odd happened": "unclassified",
+    }
+    for message, category in cases.items():
+        error = _ProviderBadRequest("Error code: 400", {"error": {"message": message}})
+        assert runner.provider_message_for_log(error, key, request) == category, message
+    # Whatever the provider says, no part of it reaches the log record.
+    with tempfile.TemporaryDirectory() as temp:
+        log_path = Path(temp) / "job.jsonl"
+        echo = _ProviderBadRequest("Error code: 400", {"error": {"message": "Invalid input: Alice Smith\\nThe labelling"}})
+        runner._write_job_log(
+            {"job_log_path": str(log_path)},
+            {"event": "request", "error": runner.log_safe_error(echo, key),
+             "provider_message": runner.provider_message_for_log(echo, key, request)},
+            key,
+        )
+        content = log_path.read_text(encoding="utf-8")
+    assert "Alice" not in content and "labelling" not in content and key not in content
+
+
+def test_author_bylines_need_evidence_and_skip_edit_distance():
+    long_counter = lambda text: max(1, len(text) // 2)  # > 20 tokens like the real tokenizer (36)
+    byline = "Lisa Liu{v1}, Gints Engelen{v2}, Timothy Lynar {l.liu, t.lynar, d.essam}@adfa.edu.au"
+    assert long_counter(byline) > 20
+    result = runner.validate_translation_output(byline, byline, {}, long_counter)
+    assert result["usable"], result
+    for marked in ("John Smith1 and Jane Doe2", "A. Smith*, B. Jones†"):
+        assert runner.validate_translation_output(marked, marked, {}, long_counter)["usable"], marked
+    # Shape alone is not author evidence: title-cased headings must be translated.
+    for heading in ("Neural Network Models, Experimental Results", "John Smith and Jane Doe"):
+        assert not runner.validate_translation_output(heading, heading, {}, long_counter)["usable"], heading
+    # Placeholder checks still apply to verbatim bylines.
+    item = {"required_placeholders": [{"token": "{v1}", "count": 1}, {"token": "{v2}", "count": 1}]}
+    dropped = "Lisa Liu, Gints Engelen{v2}, Timothy Lynar {l.liu, t.lynar, d.essam}@adfa.edu.au"
+    assert not runner.validate_translation_output(byline, dropped, item, long_counter)["usable"]
+
+
 if __name__ == "__main__":
+    test_author_bylines_need_evidence_and_skip_edit_distance()
+    test_urls_emails_and_author_lines_may_stay_verbatim()
+    test_provider_message_is_only_a_fixed_category()
     test_body_text_near_the_page_top_is_not_a_stamp()
     test_fatal_error_log_uses_the_fixed_summary()
     test_punctuation_only_english_echo_is_rejected_everywhere()
