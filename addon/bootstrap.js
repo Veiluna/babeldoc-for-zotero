@@ -6,7 +6,7 @@ var startupGeneration = 0;
 
 function log(message) {
   if (typeof Zotero !== "undefined" && Zotero.debug) {
-    Zotero.debug("Zotero 中文 PDF 翻译: " + message);
+    Zotero.debug("Translate Files for Zotero: " + message);
   }
 }
 

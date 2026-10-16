@@ -28,12 +28,81 @@ var ZoteroTranslateFilesPreferences = (function () {
   }
 
   function getHTTPStatus(responseOrError) {
-    var status = responseOrError && responseOrError.status;
-    if (!status && responseOrError && responseOrError.xhr) {
-      status = responseOrError.xhr.status;
+    var candidates = [
+      responseOrError && responseOrError.status,
+      responseOrError && responseOrError.xhr && responseOrError.xhr.status,
+      responseOrError && responseOrError.xmlhttp && responseOrError.xmlhttp.status,
+      responseOrError && responseOrError.response && responseOrError.response.status,
+    ];
+    for (var candidate of candidates) {
+      var status = Number(candidate);
+      if (Number.isFinite(status) && status > 0) return status;
     }
-    status = Number(status);
-    return Number.isFinite(status) && status > 0 ? status : 0;
+    return 0;
+  }
+
+  function getHTTPResponseText(responseOrError) {
+    var xhr = responseOrError && (
+      responseOrError.xhr || responseOrError.xmlhttp || responseOrError.response
+    );
+    var responseText = xhr && xhr.responseText;
+    if (responseText == null && responseOrError) responseText = responseOrError.responseText;
+    return String(responseText == null ? "" : responseText);
+  }
+
+  function urlContainsAPIKey(url, apiKey) {
+    var endpoint = String(url == null ? "" : url);
+    var key = String(apiKey == null ? "" : apiKey);
+    if (!key) return false;
+
+    if (endpoint.indexOf(key) !== -1) return true;
+
+    // Zotero's HTTP layer may log the request URL before this pane can redact it.
+    // Check both common encoded forms and decoded URLs before handing it off.
+    var encodedKeys = [encodeURIComponent(key), encodeURI(key)];
+    encodedKeys.push(encodeURIComponent(key).replace(/%20/g, "+"));
+    var normalizedEndpoint = endpoint.replace(/%[0-9a-f]{2}/gi, function (escape) {
+      return escape.toUpperCase();
+    });
+    for (var encodedKey of encodedKeys) {
+      var normalizedKey = encodedKey.replace(/%[0-9a-f]{2}/gi, function (escape) {
+        return escape.toUpperCase();
+      });
+      if (normalizedEndpoint.indexOf(normalizedKey) !== -1) return true;
+    }
+
+    var decodedEndpoint = endpoint;
+    for (var pass = 0; pass < 3; pass++) {
+      var nextEndpoint;
+      try {
+        nextEndpoint = decodeURIComponent(decodedEndpoint.replace(/\+/g, "%20"));
+      } catch (error) {
+        break;
+      }
+      if (nextEndpoint === decodedEndpoint) break;
+      if (nextEndpoint.indexOf(key) !== -1) return true;
+      decodedEndpoint = nextEndpoint;
+    }
+
+    return false;
+  }
+
+  function isTimeoutError(error) {
+    var TimeoutException = typeof Zotero !== "undefined" && Zotero.HTTP &&
+      Zotero.HTTP.TimeoutException;
+    if (typeof TimeoutException === "function" && error instanceof TimeoutException) {
+      return true;
+    }
+    var name = error && error.name ? String(error.name) : "";
+    var message = error && error.message ? String(error.message) : "";
+    return /timeout|timed out/i.test(name + " " + message);
+  }
+
+  function setHTTPError(document, statusID, responseOrError, apiKey) {
+    setMessage(document, statusID, "zotero-translate-files-pref-api-http-error", {
+      status: getHTTPStatus(responseOrError) || "?",
+      body: shortErrorBody(getHTTPResponseText(responseOrError), apiKey),
+    });
   }
 
   function redactString(value, apiKey) {
@@ -110,54 +179,83 @@ var ZoteroTranslateFilesPreferences = (function () {
       return;
     }
 
-    var controller = new window.AbortController();
-    var timeoutID = window.setTimeout(function () {
-      controller.abort();
-    }, 30000);
+    var endpoint = ZoteroTranslateFilesConfig.chatCompletionsURL(settings.baseURL);
+    if (urlContainsAPIKey(endpoint, settings.apiKey)) {
+      setMessage(document, statusID, "zotero-translate-files-pref-api-key-in-url");
+      return;
+    }
 
     try {
-      var response = await window.fetch(
-        ZoteroTranslateFilesConfig.chatCompletionsURL(
-          ZoteroTranslateFilesConfig.openAIBaseURLForBabelDOC(settings.baseURL)
-        ),
+      var response = await Zotero.HTTP.request(
+        "POST",
+        endpoint,
         {
-          method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: "Bearer " + settings.apiKey,
+            "api-key": settings.apiKey,
           },
           body: JSON.stringify({
             model: settings.model,
             messages: [{ role: "user", content: "ping" }],
             max_tokens: 1,
           }),
-          signal: controller.signal,
-          credentials: "omit",
+          responseType: "text",
+          successCodes: false,
+          timeout: 30000,
         }
       );
       var status = getHTTPStatus(response);
-      if (status >= 200 && status < 300) {
+      if (status === 0) {
+        setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
+      } else if (status >= 200 && status < 300) {
         setMessage(document, statusID, "zotero-translate-files-pref-api-success", {
           status: status,
         });
       } else {
-        var body = "";
-        try {
-          body = await response.text();
-        } catch (error) {
-          // Keep the HTTP status visible even if its short error body cannot be read.
-        }
-        setMessage(document, statusID, "zotero-translate-files-pref-api-http-error", {
-          status: status || "?",
-          body: shortErrorBody(body, settings.apiKey),
-        });
+        setHTTPError(document, statusID, response, settings.apiKey);
       }
     } catch (error) {
-      // Avoid exception messages here because request details can contain the API key.
-      setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
-    } finally {
-      window.clearTimeout(timeoutID);
+      var status = getHTTPStatus(error);
+      if (status) {
+        setHTTPError(document, statusID, error, settings.apiKey);
+      } else if (isTimeoutError(error)) {
+        setMessage(document, statusID, "zotero-translate-files-pref-api-timeout");
+      } else {
+        // Avoid exception messages here because request details can contain the API key.
+        setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
+      }
     }
+  }
+
+  async function getPreferencePaneLabel(data) {
+    var mainWindow = null;
+    try {
+      if (typeof Zotero.getMainWindow === "function") mainWindow = Zotero.getMainWindow();
+    } catch (error) {
+      mainWindow = null;
+    }
+
+    if (mainWindow && !mainWindow.closed && mainWindow.document && mainWindow.document.l10n &&
+        typeof mainWindow.document.l10n.formatValue === "function") {
+      try {
+        if (mainWindow.MozXULElement &&
+            typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
+          mainWindow.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+        }
+        var label = await mainWindow.document.l10n.formatValue(
+          "zotero-translate-files-pref-pane-label"
+        );
+        if (label) return label;
+      } catch (error) {
+        // A localization lookup failure must not prevent the pane from registering.
+      }
+    }
+
+    if (Zotero.Plugins && typeof Zotero.Plugins.getName === "function") {
+      return Zotero.Plugins.getName(data.id);
+    }
+    return "Translate Files for Zotero";
   }
 
   async function pickBabelDOCPath(document, window) {
@@ -211,21 +309,21 @@ var ZoteroTranslateFilesPreferences = (function () {
     init: function (data) {
       // Zotero unregisters this pane when the plugin shuts down.
       try {
-        var registration = Zotero.PreferencePanes.register({
-          pluginID: data.id,
-          src: data.rootURI + "content/preferences.xhtml",
-          label: "Zotero 中文 PDF 翻译",
-          image: data.rootURI + "content/icons/icon.svg",
-          scripts: [
-            data.rootURI + "content/modules/config.js",
-            data.rootURI + "content/preferences.js",
-          ],
-        });
-        if (registration && typeof registration.catch === "function") {
-          registration.catch(function (error) {
-            ZoteroTranslateFiles.log("preference pane registration failed: " + error);
+        var registration = getPreferencePaneLabel(data).then(function (label) {
+          return Zotero.PreferencePanes.register({
+            pluginID: data.id,
+            src: data.rootURI + "content/preferences.xhtml",
+            label: label,
+            image: data.rootURI + "content/icons/icon.svg",
+            scripts: [
+              data.rootURI + "content/modules/config.js",
+              data.rootURI + "content/preferences.js",
+            ],
           });
-        }
+        });
+        registration.catch(function (error) {
+          ZoteroTranslateFiles.log("preference pane registration failed: " + error);
+        });
       } catch (error) {
         ZoteroTranslateFiles.log("preference pane registration failed: " + error);
       }

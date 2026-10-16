@@ -108,6 +108,16 @@ var ZoteroTranslateFilesRunner = (function () {
         throw new Error("请先填写 API Base URL、模型名和 BabelDOC 路径。");
       }
 
+      var normalizedEndpoint = ZoteroTranslateFilesConfig.chatCompletionsURL(settings.baseURL);
+      if (normalizedEndpoint.indexOf("?") !== -1) {
+        throw new Error(
+          "BabelDOC 不支持包含查询参数的 API 地址。请移除 URL 查询参数后再翻译。"
+        );
+      }
+      var babeldocBaseURL = ZoteroTranslateFilesConfig.openAIBaseURLForBabelDOC(
+        normalizedEndpoint
+      );
+
       var inputPath;
       try {
         inputPath = await attachmentItem.getFilePathAsync();
@@ -156,7 +166,7 @@ var ZoteroTranslateFilesRunner = (function () {
         "--working-dir", workingDir,
         "--openai",
         "--openai-model", settings.model,
-        "--openai-base-url", ZoteroTranslateFilesConfig.openAIBaseURLForBabelDOC(settings.baseURL),
+        "--openai-base-url", babeldocBaseURL,
         "--lang-in", "en",
         "--lang-out", "zh",
         "--no-dual",

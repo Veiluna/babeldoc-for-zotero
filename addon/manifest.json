@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "Zotero 中文 PDF 翻译",
-  "version": "0.1.1",
-  "description": "将 PDF 翻译为保留版式的简体中文译本。",
+  "name": "Translate Files for Zotero",
+  "version": "0.1.2",
+  "description": "Translate PDF attachments into Simplified Chinese while preserving layout.",
   "author": "Veiluna",
   "icons": {
     "48": "content/icons/icon.svg"

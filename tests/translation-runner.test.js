@@ -147,7 +147,7 @@ function makeHarness(options = {}) {
         get(name) {
           const prefix = "extensions.zotero-translate-files.";
           const values = {
-            baseURL: "https://api.example.test/v1/chat/completions",
+            baseURL: options.baseURL || "https://api.example.test/v1/chat/completions",
             apiKey,
             model: "test-model",
             babeldocPath: "C:\\babeldoc\\Scripts\\babeldoc.exe",
@@ -218,6 +218,18 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
 
   await result.cleanup();
   assert.deepEqual(harness.removedDirectories, ["C:\\Temp\\zotero-translate-files-test-job-id"]);
+}
+
+async function rejectsQueryURLsBeforeStartingBabelDOC() {
+  const harness = makeHarness({
+    baseURL: "https://api.example.test/v1/chat/completions?tenant=demo",
+  });
+  await assert.rejects(
+    harness.runner.translate(harness.item, {}),
+    /BabelDOC 不支持包含查询参数的 API 地址/,
+  );
+  assert.equal(harness.calls.length, 0, "query URLs must fail before starting BabelDOC");
+  assert.equal(harness.createdDirectories.length, 0, "query URLs must fail before creating a job directory");
 }
 
 async function errorsAreUsefulAndKeyFree() {
@@ -307,6 +319,7 @@ async function abortKillsTheChildAndCleansUp() {
 
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
+  await rejectsQueryURLsBeforeStartingBabelDOC();
   await errorsAreUsefulAndKeyFree();
   await parsesAndRedactsPartialFailureWarning();
   await nonZeroExitFailsAndRedactsStderr();

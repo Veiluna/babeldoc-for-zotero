@@ -306,6 +306,7 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
     ["model_not_found", "接口地址或模型名不正确"],
     ["HTTP 429 Too Many Requests", "请求过于频繁或额度不足"],
     ["insufficient_quota", "请求过于频繁或额度不足"],
+    ["BabelDOC 不支持包含查询参数的 API 地址", "BabelDOC 不支持包含查询参数的接口地址"],
     ["ConnectError: ECONNREFUSED", "无法连接到接口地址"],
     ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
     ["python.exe not found", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],

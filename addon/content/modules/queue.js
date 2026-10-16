@@ -15,7 +15,7 @@ var ZoteroTranslateFilesQueue = (function () {
     if (ZoteroTranslateFiles && typeof ZoteroTranslateFiles.log === "function") {
       ZoteroTranslateFiles.log("queue: " + message);
     } else if (Zotero && typeof Zotero.debug === "function") {
-      Zotero.debug("Zotero 中文 PDF 翻译 queue: " + message);
+      Zotero.debug("Translate Files for Zotero queue: " + message);
     }
   }
 
@@ -58,6 +58,9 @@ var ZoteroTranslateFilesQueue = (function () {
     }
     if (/\b429\b|rate.?limit|too many requests|quota.{0,20}(?:exceeded|insufficient)|insufficient[_ -]+quota/i.test(text)) {
       return "请求过于频繁或额度不足";
+    }
+    if (/BabelDOC.{0,40}(?:查询参数|query parameters?)/i.test(text)) {
+      return "BabelDOC 不支持包含查询参数的接口地址";
     }
     if (/PDF.{0,50}(?:不存在|不可用|未下载|尚未下载|not found|missing)|附件.{0,50}(?:不存在|无法读取|not found|missing)/i.test(text)) {
       return "PDF 文件不存在（可能尚未下载）";
@@ -140,7 +143,7 @@ var ZoteroTranslateFilesQueue = (function () {
   function showNotice(descriptions) {
     try {
       var progress = new Zotero.ProgressWindow({ closeOnClick: true });
-      progress.changeHeadline("Zotero 中文 PDF 翻译");
+      progress.changeHeadline("Translate Files for Zotero");
       for (var description of descriptions) progress.addDescription(description);
       progress.show();
       progress.startCloseTimer(4000);
@@ -219,7 +222,7 @@ var ZoteroTranslateFilesQueue = (function () {
     if (!missing.length) return null;
 
     return new Error(
-      "请先打开 Zotero 设置 → Zotero 中文 PDF 翻译，填写：" + missing.join("、") + "。"
+      "请先打开 Zotero 设置 → Translate Files for Zotero，填写：" + missing.join("、") + "。"
     );
   }
 
@@ -516,7 +519,7 @@ var ZoteroTranslateFilesQueue = (function () {
       scheduleFailureAlert(failure.message);
       try {
         if (Zotero && typeof Zotero.debug === "function") {
-          Zotero.debug("Zotero 中文 PDF 翻译: " + failure.logMessage);
+          Zotero.debug("Translate Files for Zotero: " + failure.logMessage);
         } else {
           log(failure.logMessage);
         }

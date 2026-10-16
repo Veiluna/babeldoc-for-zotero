@@ -1,6 +1,6 @@
-# Zotero 中文 PDF 翻译
+# Translate Files for Zotero
 
-当前版本：**0.1.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.1.2**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -74,9 +74,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 
 ### 5. 填写插件设置
 
-打开 Zotero **设置 → Zotero 中文 PDF 翻译**，填写：
+打开 Zotero **设置 → Translate Files for Zotero**，填写：
 
-1. **接口地址**：例如 `https://api.example.com/v1`。插件会在其后请求 `/chat/completions`。
+1. **接口地址**：例如 `https://api.example.com/v1`。插件会把根地址归一化为 Chat Completions endpoint，例如 `https://api.example.com/v1/chat/completions`。主机根地址会补成 `/v1/chat/completions`；版本路径（如 `/v1`）和 `/v1beta/openai` 会补上 `/chat/completions`；已填写完整的 `/chat/completions` endpoint 保持不变。
 2. **API key**：接口服务提供的密钥。
 3. **模型名**：接口服务支持的模型名称。
 4. **BabelDOC 路径**：粘贴安装脚本输出的路径。可填写环境中的 `Scripts\babeldoc.exe`，也可填写环境根目录下的 `python.exe`。
@@ -102,7 +102,9 @@ API key 保存在 Zotero 的 `prefs.js` 偏好设置文件中，**以明文存�
 
 ### 接口地址应该怎么填？
 
-通常填写接口的 API 根地址，例如 `https://api.example.com/v1`，不要在末尾重复添加 `/chat/completions`。测试连接会请求 `https://api.example.com/v1/chat/completions`。
+通常填写接口的 API 根地址，例如 `https://api.example.com/v1`。测试连接会按归一化后的完整地址发送请求。完整的 `/chat/completions` endpoint 也可直接填写；带 `?query` 的地址会原样用于测试连接。
+
+翻译任务由 BabelDOC 的 OpenAI 客户端构造请求，它会在 base URL 后追加 `/chat/completions`。因此，未被识别为主机根地址或版本路径的自定义地址会按原样当作 base URL 使用；如果它其实是另一个完整 endpoint，翻译可能无法连接。BabelDOC 不支持在 base URL 中保留查询参数，带 `?query` 的地址可以测试连接，但翻译任务会在启动前报错；请将必要参数改由接口服务配置提供，并移除 URL 查询部分。
 
 ### HTTP 401、404 或 429 怎么办？
 

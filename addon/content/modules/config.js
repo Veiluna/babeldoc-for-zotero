@@ -47,19 +47,33 @@ var ZoteroTranslateFilesConfig = (function () {
       .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[已隐藏 API key]");
   }
 
-  // The test endpoint is appended to the user's base URL unless already present.
-  function chatCompletionsURL(baseURL) {
-    var url = String(baseURL || "").trim().replace(/\/+$/, "");
-    if (!url || /\/chat\/completions$/i.test(url)) return url;
-    return url + "/chat/completions";
+  // Normalize OpenAI-compatible roots while preserving concrete endpoints and query URLs.
+  function chatCompletionsURL(endpoint) {
+    var raw = String(endpoint || "").trim();
+    if (!raw || raw.indexOf("?") !== -1) return raw;
+
+    var base = raw.replace(/\/+$/, "");
+    var path = base.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
+    var resource = "/chat/completions";
+    if (!path) return base + "/v1" + resource;
+
+    var lastSegment = path.split("/").pop();
+    if (lastSegment === "openai" || /^v\d+[a-z0-9]*$/i.test(lastSegment)) {
+      return base + resource;
+    }
+    return raw;
   }
 
-  // BabelDOC expects the OpenAI base URL, so remove a full chat endpoint if supplied.
-  function openAIBaseURLForBabelDOC(baseURL) {
-    return String(baseURL || "")
-      .trim()
-      .replace(/\/+$/, "")
-      .replace(/\/chat\/completions$/i, "");
+  // BabelDOC's OpenAI client appends /chat/completions to this base URL.
+  // Keep query text here for diagnostics/tests; translation rejects it because BabelDOC
+  // cannot preserve query parameters when it builds its own request URLs.
+  function openAIBaseURLForBabelDOC(normalizedEndpoint) {
+    var endpoint = String(normalizedEndpoint || "").trim();
+    var queryIndex = endpoint.indexOf("?");
+    var path = queryIndex === -1 ? endpoint : endpoint.slice(0, queryIndex);
+    var query = queryIndex === -1 ? "" : endpoint.slice(queryIndex);
+    path = path.replace(/\/+$/, "");
+    return path.replace(/\/chat\/completions$/i, "") + query;
   }
 
   // BabelDOC's Windows launcher lives in env\Scripts; Python is one directory above.
