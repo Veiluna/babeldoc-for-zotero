@@ -182,6 +182,30 @@ var ZoteroTranslateFilesQueue = (function () {
     };
   }
 
+  async function formatLogPath(path) {
+    var fallback = "Diagnostic log: " + String(path || "");
+    if (!path) return "";
+    try {
+      var mainWindow = typeof Zotero.getMainWindow === "function"
+        ? Zotero.getMainWindow()
+        : null;
+      var document = mainWindow && !mainWindow.closed && mainWindow.document;
+      if (document && document.l10n && typeof document.l10n.formatValue === "function") {
+        if (mainWindow.MozXULElement &&
+            typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
+          mainWindow.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+        }
+        return await document.l10n.formatValue(
+          "zotero-translate-files-log-path",
+          { path: String(path) },
+        ) || fallback;
+      }
+    } catch (error) {
+      // Keep the local path useful when localization is unavailable.
+    }
+    return fallback;
+  }
+
   function showNotice(descriptions) {
     try {
       var progress = new Zotero.ProgressWindow({ closeOnClick: true });
@@ -354,7 +378,7 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
-  function closeProgressWindow(job, succeeded, aborted, warning, completedTitle, requestCount) {
+  function closeProgressWindow(job, succeeded, aborted, warning, completedTitle, requestCount, logPath) {
     if (!currentProgress || currentProgress.job !== job) return;
     var entry = currentProgress;
     currentProgress = null;
@@ -373,6 +397,13 @@ var ZoteroTranslateFilesQueue = (function () {
           completionText += "（共请求 " + Math.floor(totalRequests) + " 次）";
         }
         entry.itemProgress.setText(completionText);
+        if (logPath) {
+          formatLogPath(logPath).then(function (label) {
+            if (!entry.window.closed && entry.itemProgress) {
+              entry.itemProgress.setText(completionText + "\n" + label);
+            }
+          });
+        }
       } else if (aborted) {
         entry.itemProgress.setText("翻译已取消。");
       } else {
@@ -391,6 +422,7 @@ var ZoteroTranslateFilesQueue = (function () {
     var translationResult = null;
     var translationWarning = null;
     var translationRequestCount = null;
+    var translationLogPath = null;
     var completedTitle = null;
     var succeeded = false;
     var skipped = false;
@@ -418,6 +450,8 @@ var ZoteroTranslateFilesQueue = (function () {
         signal: controller.signal,
       });
       translationWarning = translationResult && translationResult.warning;
+      translationLogPath = translationResult && translationResult.logPath;
+      if (translationLogPath) job.logPath = translationLogPath;
       var rawRequestCount = translationResult && translationResult.requestCount;
       var reportedRequestCount = rawRequestCount == null ? NaN : Number(rawRequestCount);
       if (Number.isFinite(reportedRequestCount)) {
@@ -452,6 +486,7 @@ var ZoteroTranslateFilesQueue = (function () {
       succeeded = true;
     } catch (error) {
       failure = error;
+      if (error && error.logPath) job.logPath = error.logPath;
     } finally {
       if (translationResult && typeof translationResult.cleanup === "function") {
         try {
@@ -475,6 +510,7 @@ var ZoteroTranslateFilesQueue = (function () {
         translationWarning,
         completedTitle,
         translationRequestCount,
+        translationLogPath || job.logPath,
       );
     }
   }
@@ -577,7 +613,13 @@ var ZoteroTranslateFilesQueue = (function () {
 
     onJobFailed: function (job, error) {
       var failure = failureMessage(job, error);
-      scheduleFailureAlert(failure.message);
+      if (job && job.logPath) {
+        formatLogPath(job.logPath).then(function (label) {
+          scheduleFailureAlert(failure.message + "\n" + label);
+        });
+      } else {
+        scheduleFailureAlert(failure.message);
+      }
       try {
         if (Zotero && typeof Zotero.debug === "function") {
           Zotero.debug("Translate Files for Zotero: " + failure.logMessage);

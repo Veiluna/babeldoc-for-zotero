@@ -9,6 +9,8 @@ var ZoteroTranslateFilesConfig = (function () {
     babeldocPath: "extensions.zotero-translate-files.babeldocPath",
     maxOutputTokens: "extensions.zotero-translate-files.maxOutputTokens",
     maxRequests: "extensions.zotero-translate-files.maxRequests",
+    repairFailed: "extensions.zotero-translate-files.repairFailed",
+    translateReferences: "extensions.zotero-translate-files.translateReferences",
   };
 
   function getSettings() {
@@ -27,6 +29,16 @@ var ZoteroTranslateFilesConfig = (function () {
       return number;
     }
 
+    function readBoolean(name, fallback) {
+      var value = Zotero.Prefs.get(preferences[name], true);
+      if (value == null) return fallback;
+      if (typeof value === "boolean") return value;
+      var normalized = String(value).trim().toLowerCase();
+      if (["true", "1", "yes", "on"].indexOf(normalized) !== -1) return true;
+      if (["false", "0", "no", "off"].indexOf(normalized) !== -1) return false;
+      throw new Error(name + " 必须是布尔值。");
+    }
+
     return {
       baseURL: read("baseURL"),
       apiKey: read("apiKey"),
@@ -39,6 +51,8 @@ var ZoteroTranslateFilesConfig = (function () {
         "模型单次最大输出 token 数"
       ),
       maxRequests: readInteger("maxRequests", 20, 1, "单篇最多请求次数"),
+      repairFailed: readBoolean("repairFailed", true),
+      translateReferences: readBoolean("translateReferences", false),
     };
   }
 

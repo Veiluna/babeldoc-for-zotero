@@ -106,6 +106,9 @@ function makeHarness(options = {}) {
           : "ZTF_RESULT " + JSON.stringify(Object.assign(
             { mono: outputPath },
             options.requestCount == null ? {} : { requests: options.requestCount },
+            options.repairRequestCount == null ? {} : { repair_request_count: options.repairRequestCount },
+            options.fragmentItemCount == null ? {} : { fragment_item_count: options.fragmentItemCount },
+            options.logPath == null ? {} : { log_path: options.logPath },
           )) + "\r\n";
       const warningLine = options.warning
         ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
@@ -185,6 +188,7 @@ function makeHarness(options = {}) {
     waitGate,
     get killCount() { return killCount; },
     item: {
+      key: "ABCD1234",
       getFilePathAsync: async () => inputPath,
       getField: () => "Paper title",
     },
@@ -202,7 +206,8 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
   assert.ok(harness.createdDirectories.includes("C:\\Zotero\\zotero-translate-files"));
-  assert.equal(harness.createdDirectories.length, 3, "data, job, and BabelDOC working directories should be created");
+  assert.ok(harness.createdDirectories.includes("C:\\Zotero\\zotero-translate-files\\logs"));
+  assert.equal(harness.createdDirectories.length, 4, "data, logs, job, and BabelDOC working directories should be created");
 
   const call = harness.calls[0];
   const args = call.arguments;
@@ -210,11 +215,14 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.ok(args.includes("--no-dual"));
   assert.ok(args.includes("--no-auto-extract-glossary"));
   assert.ok(args.includes("--disable-same-text-fallback"));
-  const promptIndex = args.indexOf("--custom-system-prompt");
-  assert.ok(promptIndex >= 0);
-  assert.match(args[promptIndex + 1], /technical terms, abbreviations, and named entities consistently/);
+  // The prompt is owned by the Python runner (ensure_runner_options); passing
+  // a copy from JS previously replaced the runner's fragment rules.
+  assert.equal(args.indexOf("--custom-system-prompt"), -1);
   assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, "8192");
   assert.equal(call.environment.ZTF_MAX_REQUESTS, "20");
+  assert.equal(call.environment.ZTF_REPAIR_FAILED, "1");
+  assert.equal(call.environment.ZTF_TRANSLATE_REFERENCES, "0");
+  assert.match(call.environment.ZTF_JOB_LOG_PATH, /\\logs\\.*-ABCD1234\.jsonl$/);
   const workingDir = args[args.indexOf("--working-dir") + 1];
   assert.equal(workingDir, "C:\\Temp\\zotero-translate-files-test-job-id\\babeldoc-work");
   assert.ok(workingDir.startsWith("C:\\Temp\\zotero-translate-files-test-job-id\\"));
@@ -239,6 +247,9 @@ async function reportsRequestCountsInProgressAndResult() {
   const harness = makeHarness({
     progressRequests: { requests: 2, planned: 3 },
     requestCount: 3,
+    repairRequestCount: 1,
+    fragmentItemCount: 2,
+    logPath: "C:\\Zotero\\zotero-translate-files\\logs\\job.jsonl",
   });
   const result = await harness.runner.translate(harness.item, {
     onProgress: value => harness.progress.push(value),
@@ -255,6 +266,9 @@ async function reportsRequestCountsInProgressAndResult() {
     },
   );
   assert.equal(result.requestCount, 3);
+  assert.equal(result.repairRequestCount, 1);
+  assert.equal(result.fragmentItemCount, 2);
+  assert.equal(result.logPath, "C:\\Zotero\\zotero-translate-files\\logs\\job.jsonl");
   await result.cleanup();
 }
 

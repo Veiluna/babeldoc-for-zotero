@@ -23,6 +23,7 @@ import importlib.util
 import json
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 from typing import Any
 import urllib.error
 import urllib.request
@@ -141,6 +142,15 @@ def test_runner_always_disables_extra_llm_calls() -> None:
     assert "first occurrence" in prompt
     assert "placeholders unchanged" in prompt
     assert "JSON array" in prompt
+    assert "fragment_part" in prompt
+
+    # An older plugin build passing its own prompt must not drop the fragment rules.
+    stale = runner.ensure_runner_options(
+        ["runner.py", "--openai", "--custom-system-prompt", "old prompt without fragments"]
+    )
+    assert stale.count("--custom-system-prompt") == 1
+    assert "old prompt without fragments" not in stale
+    assert stale[stale.index("--custom-system-prompt") + 1] == runner.CONSISTENCY_SYSTEM_PROMPT
 
 
 def test_input_heading_inside_document_text_is_not_a_prompt_delimiter() -> None:
@@ -1028,6 +1038,384 @@ def test_html_api_error_is_summarized_without_markup() -> None:
     assert body_summary == summary, "HTML response bodies must be inspected even if exception text omits them"
 
 
+def test_fragment_validation_and_placeholder_integrity() -> None:
+    source = (
+        "While both methods are model agnostic, this paragraph contains many words "
+        "that should normally trigger the output length and edit distance checks."
+    )
+    fragment_result = runner.validate_translation_output(
+        source,
+        "短译文",
+        {"continues_in": "next-fragment"},
+        len,
+    )
+    assert fragment_result["usable"], "short, non-empty fragment translations skip length checks"
+
+    empty_result = runner.validate_translation_output(
+        source,
+        "",
+        {"continues_in": "next-fragment"},
+        len,
+    )
+    assert not empty_result["usable"] and not empty_result["checks"]["non_empty"]
+
+    identical_result = runner.validate_translation_output(source, source, {}, len)
+    assert not identical_result["usable"]
+    assert identical_result["checks"]["identical_english"]
+
+    placeholder_item = {"required_placeholders": [{"token": "{v1}", "count": 1}]}
+    missing = runner.validate_translation_output("formula {v1}", "公式", placeholder_item, len)
+    assert not missing["usable"]
+    assert missing["checks"]["placeholder_issues"]
+    duplicated = runner.validate_translation_output(
+        "formula {v1}", "公式{v1}{v1}", placeholder_item, len
+    )
+    assert not duplicated["usable"]
+    assert duplicated["checks"]["placeholder_issues"][0]["actual"] == 2
+
+    active_tokenizer = SimpleNamespace(calc_token_count=lambda value: len(value) + 3)
+    assert runner._active_translator_token_counter(
+        {"active_llm_translator": active_tokenizer}
+    )("text") == 7
+    assert runner._active_translator_token_counter({})("text") == 4
+
+    style_pair_a = SimpleNamespace(
+        placeholder=None,
+        left_placeholder="<style id='span-a'>",
+        right_placeholder="</style>",
+    )
+    style_pair_b = SimpleNamespace(
+        placeholder=None,
+        left_placeholder="<style id='span-b'>",
+        right_placeholder="</style>",
+    )
+    translate_input = SimpleNamespace(
+        original_placeholder_tokens={
+            "<style id='span-a'>": 1,
+            "<style id='span-b'>": 1,
+            "</style>": 2,
+        },
+        placeholders=[style_pair_a, style_pair_b],
+    )
+    assert runner._expected_placeholder_counts(translate_input)["</style>"] == 2
+    style_item = {
+        "continues_in": "next-fragment",
+        "required_placeholders": [
+            {"token": "<style id='span-a'>", "count": 1},
+            {"token": "<style id='span-b'>", "count": 1},
+            {"token": "</style>", "count": 2},
+        ],
+    }
+    valid_style_output = runner.validate_translation_output(
+        "A fragment with two rich text style spans.",
+        "璇戞枃<style id='span-a'>鐢茬敳< / STYLE ><style id='span-b'>涔欎箼</ STYLE >",
+        style_item,
+        len,
+    )
+    assert valid_style_output["usable"], valid_style_output
+
+    unsupported_style_output = runner.validate_translation_output(
+        "A fragment with a style span.",
+        '璇戞枃<style id="span-a">鐢茬敳</style>',
+        {
+            "continues_in": "next-fragment",
+            "required_placeholders": [
+                {"token": "<style id='span-a'>", "count": 1},
+                {"token": "</style>", "count": 1},
+            ],
+        },
+        len,
+    )
+    assert not unsupported_style_output["usable"]
+    assert any(
+        issue.get("reason") == "unsupported_style_opener"
+        for issue in unsupported_style_output["checks"]["placeholder_issues"]
+    ), "unsupported openers must be rejected before BabelDOC can restore them into PDF text"
+
+    unknown_style = runner.validate_translation_output(
+        "A source fragment that should be translated.",
+        "中文<style id='unknown'>未配对</style>",
+        {"continues_in": "next-fragment"},
+        len,
+    )
+    assert not unknown_style["usable"]
+    assert unknown_style["checks"]["placeholder_issues"]
+
+    missing_shared_close = runner.validate_translation_output(
+        "A fragment with two style spans.",
+        "<style id='span-a'>甲</style><style id='span-b'>乙",
+        style_item,
+        len,
+    )
+    assert not missing_shared_close["usable"]
+    assert any(
+        issue["token"] == "</style>" and issue["actual"] == 1
+        for issue in missing_shared_close["checks"]["placeholder_issues"]
+    )
+
+    merged_group = [
+        {
+            "id": 0,
+            "input": "Several interesting observations can be made from this first fragment.",
+            "fragment_id": "g1",
+            "continues_in": "p2",
+        },
+        {
+            "id": 1,
+            "input": "Finally, while both methods remain model agnostic, this is the continuation.",
+            "fragment_id": "g1",
+            "continued_from": "p1",
+        },
+    ]
+    bad_group_outputs = [
+        {
+            "id": 0,
+            "output": mock_server._synthetic_translation(
+                " ".join(item["input"] for item in merged_group), 0
+            ),
+        },
+        {"id": 1, "output": ""},
+    ]
+    assert "g1" in runner._fragment_group_output_issues(
+        merged_group, bad_group_outputs, len, {"g1": 2}
+    )
+
+    short_fragment_group = [
+        {
+            "id": 0,
+            "input": "A short first.",
+            "fragment_id": "short-g",
+            "continues_in": "short-p2",
+        },
+        {
+            "id": 1,
+            "input": "Short next.",
+            "fragment_id": "short-g",
+            "continued_from": "short-p1",
+        },
+    ]
+    long_chinese_outputs = [
+        "第一段的中文译文较长，并用完整句子说明原文的内容与上下文。" * 8,
+        "后续片段的中文译文较长，并用另一组完整句子说明其内容。" * 8,
+    ]
+    short_group_outputs = [
+        {"id": index, "output": output}
+        for index, output in enumerate(long_chinese_outputs)
+    ]
+    for item, output in zip(short_fragment_group, long_chinese_outputs):
+        assert runner.validate_translation_output(item["input"], output, item, len)[
+            "usable"
+        ]
+    assert not runner._fragment_group_output_issues(
+        short_fragment_group, short_group_outputs, len, {"short-g": 2}
+    ), "valid short fragments may have long translations"
+
+    group_outcomes: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] = {}
+    first_batch = [{**merged_group[0], "id": 0}]
+    second_batch = [{**merged_group[1], "id": 0}]
+    assert not runner._fragment_group_output_issues(
+        first_batch,
+        [{"id": 0, "output": mock_server._synthetic_translation(first_batch[0]["input"], 0)}],
+        len,
+        {"g1": 2},
+        group_outcomes,
+        {"0": "paragraph-a"},
+    )
+    assert len(group_outcomes["g1"]) == 1
+    assert not runner._fragment_group_output_issues(
+        second_batch,
+        [{"id": 0, "output": mock_server._synthetic_translation(second_batch[0]["input"], 1)}],
+        len,
+        {"g1": 2},
+        group_outcomes,
+        {"0": "paragraph-b"},
+    ), "a valid linked pair split across requests must not be repaired"
+    assert len(group_outcomes["g1"]) == 2
+
+    failed_group_outcomes: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] = {}
+    assert not runner._fragment_group_output_issues(
+        first_batch,
+        [{"id": 0, "output": mock_server._synthetic_translation(first_batch[0]["input"], 0)}],
+        len,
+        {"g1": 2},
+        failed_group_outcomes,
+        {"0": "paragraph-a"},
+    )
+    empty_sibling_issue = runner._fragment_group_output_issues(
+        second_batch,
+        [{"id": 0, "output": ""}],
+        len,
+        {"g1": 2},
+        failed_group_outcomes,
+        {"0": "paragraph-b"},
+    )
+    assert "g1" in empty_sibling_issue, "an invalid split sibling must invalidate the whole group"
+
+
+def test_final_fragment_group_rollback_counts_prior_request_successes() -> None:
+    first = SimpleNamespace(
+        unicode="first source",
+        pdf_paragraph_composition=["first original composition"],
+    )
+    second = SimpleNamespace(
+        unicode="second source",
+        pdf_paragraph_composition=["second original composition"],
+    )
+    first_composition = first.pdf_paragraph_composition
+    second_composition = second.pdf_paragraph_composition
+    snapshots = {
+        id(first): (first, first.unicode, first_composition),
+        id(second): (second, second.unicode, second_composition),
+    }
+    first.unicode = "first translated"
+    group_members = [{"paragraph": first}, {"paragraph": second}]
+    request_state = {
+        "document_paragraph_snapshots": snapshots,
+        "translated_paragraph_ids": {id(first)},
+    }
+    policy = runner.TranslationPolicy()
+    policy._record_attempt(first)
+    policy._record_attempt(second)
+
+    linked_items = [
+        {
+            "id": 0,
+            "input": "Several observations can be made from the first paragraph fragment.",
+            "fragment_id": "split-group",
+            "continues_in": "second-box",
+        },
+        {
+            "id": 1,
+            "input": "Finally, while both methods remain model agnostic, this is the continuation.",
+            "fragment_id": "split-group",
+            "continued_from": "first-box",
+        },
+    ]
+    outcomes: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] = {}
+    first_request = [linked_items[0]]
+    assert not runner._fragment_group_output_issues(
+        first_request,
+        [{"id": 0, "output": mock_server._synthetic_translation(first_request[0]["input"])}],
+        len,
+        {"split-group": 2},
+        outcomes,
+        {"0": str(id(first))},
+    )
+    assert request_state["translated_paragraph_ids"] == {id(first)}
+
+    second_request = [linked_items[1]]
+    issues = runner._fragment_group_output_issues(
+        second_request,
+        [{"id": 0, "output": ""}],
+        len,
+        {"split-group": 2},
+        outcomes,
+        {"0": str(id(second))},
+    )
+    assert "split-group" in issues
+
+    restored_ids = runner.rollback_fragment_group(
+        policy, request_state, group_members, issues["split-group"]
+    )
+    assert restored_ids == {id(first), id(second)}
+    assert first.unicode == "first source" and second.unicode == "second source"
+    assert first.pdf_paragraph_composition is first_composition
+    assert second.pdf_paragraph_composition is second_composition
+    assert not request_state["translated_paragraph_ids"]
+    assert request_state["final_fragment_failure_ids"] == restored_ids
+    assert policy.failed_paragraphs == 2
+    assert policy.decision()["kind"] == "translation_failed"
+
+
+def test_references_margins_and_body_font_scale_policy() -> None:
+    body = SimpleNamespace(layout_label="text", unicode="A body paragraph")
+    heading = SimpleNamespace(layout_label="title", unicode="References")
+    reference = SimpleNamespace(layout_label="reference_entry", unicode="[1] Author, title")
+    document = SimpleNamespace(
+        page=[SimpleNamespace(pdf_paragraph=[body, heading, reference])]
+    )
+    reference_ids = runner.collect_reference_paragraph_ids(document, False)
+    assert id(body) not in reference_ids
+    assert id(heading) in reference_ids and id(reference) in reference_ids
+    assert runner.collect_reference_paragraph_ids(document, True) == set()
+
+    appendix = SimpleNamespace(
+        layout_label="title", unicode="Appendix A: Supplementary results"
+    )
+    appendix_body = SimpleNamespace(layout_label="text", unicode="Additional results")
+    after_references = SimpleNamespace(
+        page=[
+            SimpleNamespace(
+                pdf_paragraph=[
+                    SimpleNamespace(layout_label="title", unicode="References"),
+                    SimpleNamespace(layout_label="reference_entry", unicode="[1] Author"),
+                    appendix,
+                    appendix_body,
+                ]
+            )
+        ]
+    )
+    appendix_reference_ids = runner.collect_reference_paragraph_ids(after_references, False)
+    assert id(appendix) not in appendix_reference_ids
+    assert id(appendix_body) not in appendix_reference_ids
+
+    page = SimpleNamespace(
+        cropbox=SimpleNamespace(box=SimpleNamespace(y=0, y2=1000)),
+        mediabox=None,
+    )
+    header = SimpleNamespace(layout_label="header", unicode="Journal title")
+    license_stamp = SimpleNamespace(
+        layout_label="text",
+        unicode="Authorized licensed use limited to: Example University",
+    )
+    page_number = SimpleNamespace(layout_label="text", unicode="Page 3 of 10")
+    margin_doi = SimpleNamespace(
+        layout_label="text",
+        unicode="DOI: 10.1000/example",
+        box=SimpleNamespace(y=10, y2=20),
+    )
+    regular_body = SimpleNamespace(
+        layout_label="text",
+        unicode="A body paragraph with DOI: 10.1000/example",
+        box=SimpleNamespace(y=400, y2=430),
+    )
+    assert runner._paragraph_is_marginal_or_stamp(header, page)
+    assert runner._paragraph_is_marginal_or_stamp(license_stamp, page)
+    assert runner._paragraph_is_marginal_or_stamp(page_number, page)
+    assert runner._paragraph_is_marginal_or_stamp(margin_doi, page)
+    assert not runner._paragraph_is_marginal_or_stamp(regular_body, page)
+
+    common, final_scales, overflow_count = runner.body_font_scale_plan([0.94, 0.9, 0.87])
+    assert common == 0.87 and final_scales == [0.87, 0.87, 0.87]
+    assert overflow_count == 0
+    common, final_scales, overflow_count = runner.body_font_scale_plan([0.92, 0.65, 0.84])
+    # Only individually overflowing paragraphs (raw optimum below the 0.8 floor)
+    # are exempt; all other paragraphs use the class's common floor scale.
+    assert common == 0.8 and final_scales == [0.8, 0.65, 0.8]
+    assert overflow_count == 1
+
+    inline_formula = SimpleNamespace(
+        layout_label="text",
+        pdf_paragraph_composition=[
+            SimpleNamespace(pdf_formula=None),
+            SimpleNamespace(pdf_formula=object()),
+        ],
+    )
+    independent_formula = SimpleNamespace(
+        layout_label="text",
+        pdf_paragraph_composition=[SimpleNamespace(pdf_formula=object())],
+    )
+    figure_caption = SimpleNamespace(layout_label="figure_caption")
+    table_text = SimpleNamespace(layout_label="table")
+    formula_block = SimpleNamespace(layout_label="formula")
+    assert runner._is_body_text_paragraph(inline_formula)
+    assert not runner._is_independent_formula_paragraph(inline_formula)
+    assert runner._is_independent_formula_paragraph(independent_formula)
+    assert not runner._is_body_text_paragraph(figure_caption)
+    assert not runner._is_body_text_paragraph(table_text)
+    assert not runner._is_body_text_paragraph(formula_block)
+
+
 def test_request_cap_stops_before_an_extra_call() -> None:
     items = [{"id": index, "input": f"p{index}"} for index in range(4)]
     calls = 0
@@ -1258,6 +1646,9 @@ if __name__ == "__main__":
     test_bad_leaf_does_not_discard_successful_siblings()
     test_partial_output_validation_and_original_composition_restore()
     test_html_api_error_is_summarized_without_markup()
+    test_fragment_validation_and_placeholder_integrity()
+    test_final_fragment_group_rollback_counts_prior_request_successes()
+    test_references_margins_and_body_font_scale_policy()
     test_request_cap_stops_before_an_extra_call()
     test_attempt_and_failure_counts_follow_submitted_batches()
     test_request_cap_does_not_count_unsubmitted_paragraphs_as_successes()

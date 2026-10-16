@@ -114,6 +114,9 @@ var ZoteroTranslateFilesRunner = (function () {
     var settings = ZoteroTranslateFilesConfig.getSettings();
     var apiKey = settings.apiKey;
     var workDir = null;
+    var logPath = null;
+    var repairRequestCount = null;
+    var fragmentItemCount = null;
     var abortListener = null;
     var proc = null;
 
@@ -165,6 +168,12 @@ var ZoteroTranslateFilesRunner = (function () {
         "zotero-translate-files"
       );
       await Zotero.File.createDirectoryIfMissingAsync(dataDir);
+      var logDir = PathUtils.join(dataDir, "logs");
+      await Zotero.File.createDirectoryIfMissingAsync(logDir);
+      var attachmentKey = String(attachmentItem.key || attachmentItem.id || "attachment")
+        .replace(/[^A-Za-z0-9_.-]/g, "-");
+      var timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      logPath = PathUtils.join(logDir, timestamp + "-" + attachmentKey + ".jsonl");
 
       var runnerURI = ZoteroTranslateFiles.rootURI + "content/python/" + RUNNER_FILENAME;
       var runnerContents = await Zotero.File.getContentsFromURL(runnerURI);
@@ -195,8 +204,8 @@ var ZoteroTranslateFilesRunner = (function () {
         "--no-dual",
         "--no-auto-extract-glossary",
         "--disable-same-text-fallback",
-        "--custom-system-prompt",
-        "Translate the complete document as one unit. Translate technical terms, abbreviations, and named entities consistently across every item. Use the translation chosen at the first occurrence again for later occurrences. Keep abbreviations, formulas, citations, and placeholders unchanged. Return exactly the JSON array format required by the surrounding prompt, with one output item for each input item and no extra text.",
+        // The translation prompt (terminology consistency, fragment rules) is
+        // owned by ztf_babeldoc_runner.py so it cannot drift out of sync here.
         "--watermark-output-mode", "no_watermark",
         "--report-interval", "0.5",
       ];
@@ -213,6 +222,9 @@ var ZoteroTranslateFilesRunner = (function () {
           ZTF_OPENAI_API_KEY: apiKey,
           ZTF_MAX_OUTPUT_TOKENS: String(settings.maxOutputTokens),
           ZTF_MAX_REQUESTS: String(settings.maxRequests),
+          ZTF_REPAIR_FAILED: settings.repairFailed ? "1" : "0",
+          ZTF_TRANSLATE_REFERENCES: settings.translateReferences ? "1" : "0",
+          ZTF_JOB_LOG_PATH: logPath,
           PYTHONUTF8: "1",
           PYTHONIOENCODING: "utf-8",
           NO_COLOR: "1",
@@ -287,6 +299,11 @@ var ZoteroTranslateFilesRunner = (function () {
           if (event.mono) resultPath = String(event.mono);
           var resultRequests = event.requests == null ? NaN : Number(event.requests);
           if (Number.isFinite(resultRequests)) requestCount = Math.max(0, Math.floor(resultRequests));
+          var repairRequests = event.repair_request_count == null ? NaN : Number(event.repair_request_count);
+          if (Number.isFinite(repairRequests)) repairRequestCount = Math.max(0, Math.floor(repairRequests));
+          var fragmentItems = event.fragment_item_count == null ? NaN : Number(event.fragment_item_count);
+          if (Number.isFinite(fragmentItems)) fragmentItemCount = Math.max(0, Math.floor(fragmentItems));
+          if (event.log_path) logPath = String(event.log_path);
         } else if (marker === "ZTF_ERROR ") {
           var errorDetail = event.message || event.error || "BabelDOC 报告了错误。";
           if (ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function") {
@@ -366,6 +383,9 @@ var ZoteroTranslateFilesRunner = (function () {
         outputPath: resultPath,
         warning: warning,
         requestCount: requestCount,
+        repairRequestCount: repairRequestCount,
+        fragmentItemCount: fragmentItemCount,
+        logPath: logPath,
         cleanup: cleanup,
       };
     } catch (error) {
@@ -376,6 +396,7 @@ var ZoteroTranslateFilesRunner = (function () {
       }
       var wrappedError = new Error(redact(error && error.message ? error.message : error, apiKey));
       if (error && error.kind) wrappedError.kind = error.kind;
+      if (logPath) wrappedError.logPath = logPath;
       throw wrappedError;
     } finally {
       if (signal && abortListener) signal.removeEventListener("abort", abortListener);

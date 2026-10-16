@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
 import functools
 import html
 import json
@@ -15,6 +16,8 @@ import re
 import sys
 import threading
 import traceback
+from collections import Counter
+from difflib import SequenceMatcher
 from typing import Any
 
 
@@ -25,9 +28,69 @@ CONSISTENCY_SYSTEM_PROMPT = (
     "Translate the complete document as one unit. Translate technical terms, "
     "abbreviations, and named entities consistently across every item. Use the "
     "translation chosen at the first occurrence again for later occurrences. Keep "
-    "abbreviations, formulas, citations, and placeholders unchanged. Return exactly "
-    "the JSON array format required by the surrounding prompt, with one output "
-    "item for each input item and no extra text."
+    "abbreviations, formulas, citations, and placeholders unchanged. An item with "
+    "fragment_id is one part (fragment_part first or second) of a sentence split across "
+    "a column or page break; continues_in / continued_from give the id of the other part "
+    "when it is in the same request. Translate only that item's own fragment, so that "
+    "each output covers exactly its own source text: do not move content between items, "
+    "and never return an empty output. Return exactly the JSON array format required by the "
+    "surrounding prompt, with one output item for each input item and no extra text."
+)
+
+_PLACEHOLDER_TOKEN_RE = re.compile(
+    r"<\s*style\b(?=[^>]*\bid\s*=)[^>]*>|<\s*/\s*style\s*>|"
+    r"\{\s*v\s*\d+\s*\}|\{[A-Za-z][A-Za-z0-9_]*\}|"
+    r"%[sdif]|\[\[[^\]\r\n]+\]\]|%%[^%\r\n]+%%",
+    re.I,
+)
+_STYLE_OPEN_PLACEHOLDER_RE = re.compile(
+    r"<\s*style\b(?=[^>]*\bid\s*=)[^>]*>", re.I
+)
+_STYLE_OPEN_SUPPORTED_RE = re.compile(r"<style id='(?P<id>[^']+)'>")
+_STYLE_ID_RE = re.compile(
+    r"\bid\s*=\s*(?:'(?P<single>[^']+)'|\"(?P<double>[^\"]+)\"|(?P<bare>[^\s>]+))",
+    re.I,
+)
+_STYLE_CLOSE_PLACEHOLDER_RE = re.compile(r"<\s*/\s*style\s*>", re.I)
+_ANY_STYLE_TAG_RE = re.compile(r"<\s*/?\s*style\b[^>]*>", re.I)
+_FORMULA_PLACEHOLDER_RE = re.compile(r"\{\s*v\s*(?P<id>\d+)\s*\}", re.I)
+_REFERENCE_HEADING_RE = re.compile(
+    # Section numbers may be Arabic ("7."), Roman ("VIII.", "VII") or a letter ("A.").
+    r"^\s*(?:(?:\d+(?:\.\d+)*|[IVXLCDM]{1,8}|[A-Z])\s*[.)]?\s*)?"
+    r"(?:references|bibliography|works\s+cited|参考文献|文献目录)\s*[:.]?\s*$",
+    re.I,
+)
+_REFERENCE_LAYOUT_RE = re.compile(r"reference|bibliograph", re.I)
+_REFERENCE_END_LAYOUT_RE = re.compile(
+    r"appendix|acknowledg|author.?bio|biograph|about.?the.?author", re.I
+)
+# Section number prefix shared by start and end headings: "7.", "VIII.", "A.".
+_SECTION_NUMBER_PREFIX = r"(?:(?:\d+(?:\.\d+)*|[IVXLCDM]{1,8}|[A-Z])\s*[.)]?\s+)?"
+_REFERENCE_END_HEADING_RE = re.compile(
+    r"^\s*" + _SECTION_NUMBER_PREFIX
+    + r"(?:(?:appendix|appendices)(?:\s+[A-Z0-9一二三四五六七八九十]+)?(?:\s*[:.\-–—]?\s*[^\r\n]{0,120})?"
+    r"|(?:acknowledgments?|acknowledgements?|author biographies|about the authors?|"
+    r"biograph(?:y|ies)|附录|致谢|作者简介)(?:\s+[A-Z0-9一二三四五六七八九十]+)?\s*[:.]?)\s*$",
+    re.I,
+)
+_REFERENCE_END_HEADING_DETAIL_RE = re.compile(
+    r"^\s*" + _SECTION_NUMBER_PREFIX + r"(?:appendix|appendices|acknowledgments?|acknowledgements?|"
+    r"author biographies|about the authors?|biography|biographies)\b"
+    r"[^\r\n]{0,160}[:.)-]\s*\S",
+    re.I,
+)
+_BODY_TEXT_LAYOUT_LABELS = {"text", "plain text", "paragraph_hybrid"}
+_PRESERVED_LAYOUT_RE = re.compile(
+    r"header|footer|page.?number|running.?head|license|copyright|watermark|stamp|marginalia",
+    re.I,
+)
+# Unambiguous licence-stamp sentences: preserved wherever they appear. Weaker
+# phrases ("IEEE Xplore", "Downloaded on", "all rights reserved") also occur in
+# body text, so they only count inside the page edge band (see below).
+_LICENSE_STAMP_RE = re.compile(
+    r"authorized\s+licensed\s+use\s+limited\s+to|personal\s+use\s+is\s+permitted,?\s+but|"
+    r"permission\s+for\s+republication|licensed\s+for\s+use\s+by",
+    re.I,
 )
 
 
@@ -318,6 +381,674 @@ def _failed_json_items(
     return failed
 
 
+_LOG_ERROR_MAX_CHARS = 160
+# Provider errors: fixed summary. Reasons: our own messages, which may have a
+# provider detail appended, so they are bounded and cut before any body.
+_LOG_ERROR_FIELDS = ("error",)
+_LOG_REASON_FIELDS = ("reason", "repair_reason")
+
+
+def _bounded_log_reason(value: Any, api_key: str) -> str:
+    text = _mask_api_key(" ".join(str(value if value is not None else "").split()), api_key)
+    body_start = re.search(r"[\[{<]", text)
+    if body_start:
+        text = text[: body_start.start()].rstrip(" -:;；，,") + " …"
+    return text[:_LOG_ERROR_MAX_CHARS]
+
+
+def _api_key_variants(api_key: str) -> list[str]:
+    """The key as it may appear after JSON, repr or URL escaping by an SDK or server."""
+    if not api_key:
+        return []
+    variants = {
+        api_key,
+        json.dumps(api_key)[1:-1],
+        repr(api_key)[1:-1],
+        api_key.replace("/", "\\/"),
+    }
+    try:
+        from urllib.parse import quote
+
+        variants.add(quote(api_key, safe=""))
+    except Exception:
+        pass
+    return sorted((variant for variant in variants if variant), key=len, reverse=True)
+
+
+def _mask_api_key(text: str, api_key: str) -> str:
+    for variant in _api_key_variants(api_key):
+        text = text.replace(variant, "[已隐藏]")
+    return re.sub(r"(?i)\b(bearer)\s+\S+", r"\1 [已隐藏]", text)
+
+
+_LOG_SAFE_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9._:-]{1,80}")
+_LOG_FREE_TEXT_MAX_CHARS = 80
+
+
+def _safe_log_identifier(value: Any, api_key: str) -> str:
+    """An id/type/code value, redacted, kept only if it looks like an identifier."""
+    if not isinstance(value, str) or not value:
+        return ""
+    masked = _mask_api_key(value, api_key)
+    if masked != value or not _LOG_SAFE_IDENTIFIER_RE.fullmatch(masked):
+        # Anything that contained the key or is not a plain identifier may be
+        # an echo of request content; record that it existed, not its value.
+        return "[omitted]"
+    return masked
+
+
+def log_safe_error(value: Any, api_key: str = "") -> str:
+    """Controlled, bounded error summary for the diagnostics log.
+
+    Provider responses may echo the request (document text, headers, key), in
+    any field. Only a fixed summary is logged: HTTP status, identifier-shaped
+    type/code/request id, and — for transport errors without an HTTP status
+    and without any body — a short redacted message such as "Connection error.".
+    Every value is redacted before it is combined or truncated.
+    """
+    status = _provider_status(value) if not isinstance(value, str) else None
+    raw = _mask_api_key(str(value if value is not None else ""), api_key)
+    if status is None:
+        status_match = re.search(
+            r"\b(?:HTTP(?:/\d(?:\.\d)?)?\s+|Error code:\s*|status(?:_code)?\s*[=: ]\s*)(\d{3})\b",
+            raw,
+            re.I,
+        )
+        if status_match:
+            status = int(status_match.group(1))
+
+    parts: list[str] = []
+    if status:
+        parts.append(f"HTTP {status}")
+    for attribute in ("type", "code"):
+        detail = _safe_log_identifier(getattr(value, attribute, None), api_key)
+        if detail:
+            parts.append(f"{attribute}={detail}")
+    request_id = _safe_log_identifier(getattr(value, "request_id", None), api_key)
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    if _HTML_ERROR_MARKER.search(raw) or _embedded_html_error(value):
+        # The HTML summary keeps only the page title and its request id.
+        parts.append(_mask_api_key(sanitize_provider_error(value, status), api_key))
+    elif status is None:
+        first_line = next((line.strip() for line in raw.splitlines() if line.strip()), "")
+        body_like = bool(re.search(r"[\[{<]", first_line))
+        if first_line and not body_like and len(first_line) <= _LOG_FREE_TEXT_MAX_CHARS:
+            parts.append(first_line)
+        elif first_line:
+            parts.append("provider error body omitted")
+    if not isinstance(value, str):
+        parts.append(type(value).__name__)
+    text = "; ".join(part for part in parts if part) or "error"
+    return text[:_LOG_ERROR_MAX_CHARS]
+
+
+_PLACEHOLDER_DIAGNOSTIC_MAX_CHARS = 40
+
+
+def _truncate_placeholder_diagnostics(record: Any) -> Any:
+    """Shorten placeholder issue values for the log — after redaction, so a key
+    inside a returned tag is masked in full before anything is cut."""
+    def shorten(issues: Any) -> Any:
+        if not isinstance(issues, list):
+            return issues
+        return [
+            {
+                key: value[:_PLACEHOLDER_DIAGNOSTIC_MAX_CHARS] if isinstance(value, str) else value
+                for key, value in issue.items()
+            }
+            if isinstance(issue, dict)
+            else issue
+            for issue in issues
+        ]
+
+    if isinstance(record, dict):
+        if "placeholder_issues" in record:
+            record["placeholder_issues"] = shorten(record["placeholder_issues"])
+        checks = record.get("checks")
+        if isinstance(checks, dict) and "placeholder_issues" in checks:
+            checks["placeholder_issues"] = shorten(checks["placeholder_issues"])
+    return record
+
+
+def _write_job_log(request_state: dict[str, Any], value: dict[str, Any], api_key: str = "") -> None:
+    """Append one redacted JSONL record without allowing diagnostics to break translation."""
+    log_path = request_state.get("job_log_path")
+    if not log_path:
+        return
+    try:
+        record = dict(value)
+        for field in _LOG_ERROR_FIELDS:
+            if record.get(field) is not None:
+                record[field] = log_safe_error(str(record[field]), api_key)
+        for field in _LOG_REASON_FIELDS:
+            if record.get(field) is not None:
+                record[field] = _bounded_log_reason(record[field], api_key)
+        record.setdefault("timestamp", datetime.datetime.now(datetime.timezone.utc).isoformat())
+        safe_record = _truncate_placeholder_diagnostics(_redact_payload(record, api_key))
+        with open(str(log_path), "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(safe_record, ensure_ascii=False, default=str) + "\n")
+    except Exception:
+        # A full disk or an unavailable profile path must not abort the PDF job.
+        return
+
+
+def _text_preview(value: Any, api_key: str = "") -> str:
+    # Redact before truncating so a key straddling the cut cannot leak in part.
+    text = _mask_api_key(" ".join(str(value or "").split()), api_key)
+    return text[:80]
+
+
+def _expected_placeholder_counts(translate_input: Any) -> dict[str, int]:
+    expected = Counter(
+        getattr(translate_input, "original_placeholder_tokens", {}) or {}
+    )
+    placeholder_counts: Counter[str] = Counter()
+    for placeholder in getattr(translate_input, "placeholders", ()) or ():
+        token = getattr(placeholder, "placeholder", None)
+        if token:
+            placeholder_counts[token] += 1
+        for attribute in ("left_placeholder", "right_placeholder"):
+            token = getattr(placeholder, attribute, None)
+            if token:
+                placeholder_counts[token] += 1
+    for token, count in placeholder_counts.items():
+        expected[token] = max(expected[token], count)
+    return {str(token): int(count) for token, count in expected.items() if count > 0}
+
+
+def _active_translator_token_counter(
+    request_state: dict[str, Any], fallback: Any = len
+) -> Any:
+    translator = request_state.get("active_llm_translator")
+    token_counter = getattr(translator, "calc_token_count", None)
+    return token_counter if callable(token_counter) else fallback
+
+
+def _canonical_placeholder_token(token: str) -> str:
+    """Identify BabelDOC markers semantically, allowing harmless tag spacing/case."""
+    if _STYLE_CLOSE_PLACEHOLDER_RE.fullmatch(token):
+        return "style-close"
+    if _STYLE_OPEN_PLACEHOLDER_RE.fullmatch(token):
+        match = _STYLE_OPEN_SUPPORTED_RE.fullmatch(token)
+        if match:
+            return "style-open:" + match.group("id").strip().casefold()
+        # BabelDOC 0.6.4 only restores the exact single-quoted opener. Keep
+        # other syntactically similar tags distinct so validation rejects them.
+        style_id = _STYLE_ID_RE.search(token)
+        if style_id:
+            identifier = next(
+                value for value in style_id.groupdict().values() if value is not None
+            )
+            return "unsupported-style-open:" + identifier.strip().casefold()
+    formula_match = _FORMULA_PLACEHOLDER_RE.fullmatch(token)
+    if formula_match:
+        return "formula:v" + formula_match.group("id")
+    return "literal:" + token
+
+
+def _fragment_group_output_issues(
+    input_items: list[dict[str, Any]],
+    output_items: list[dict[str, Any]],
+    token_counter: Any,
+    expected_group_sizes: dict[str, int],
+    group_outcomes: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] | None = None,
+    member_keys_by_item_id: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Accumulate fragment outcomes across requests and reject only actual failures."""
+    if group_outcomes is None:
+        group_outcomes = {}
+    if member_keys_by_item_id is None:
+        member_keys_by_item_id = {}
+    outputs_by_id = {
+        str(item.get("id")): item
+        for item in output_items
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in input_items:
+        group_id = str(item.get("fragment_id") or "")
+        if group_id:
+            groups.setdefault(group_id, []).append(item)
+
+    issues: dict[str, str] = {}
+    for group_id, items in groups.items():
+        failed = False
+        for item in items:
+            output = outputs_by_id.get(str(item.get("id")), {})
+            translated = output.get("output")
+            if output.get("_ztf_deferred"):
+                # Continuation repacking will submit this item again; it is not
+                # a missing translation outcome yet.
+                continue
+            if output.get("_ztf_failed"):
+                failed = True
+                break
+            quality = validate_translation_output(
+                str(item.get("input", "")), translated, item, token_counter
+            )
+            if not quality["usable"]:
+                failed = True
+                break
+            member_key = member_keys_by_item_id.get(
+                str(item.get("id")), str(item.get("id", ""))
+            )
+            stored_input = dict(item)
+            stored_output = dict(output)
+            stored_input["id"] = member_key
+            stored_output["id"] = member_key
+            group_outcomes.setdefault(group_id, {})[member_key] = (
+                stored_input,
+                stored_output,
+            )
+        if failed:
+            issues[group_id] = "关联片段中存在空白或无效译文，已合并补译整组。"
+            continue
+
+        outcomes = group_outcomes.get(group_id, {})
+        expected_size = expected_group_sizes.get(group_id, len(outcomes))
+        if len(outcomes) < expected_size:
+            continue
+        # A complete group is accepted based on its per-item checks above.
+        # Short fragments can legitimately expand, so output length alone does
+        # not indicate that the model merged neighboring content.
+    return issues
+
+
+def _link_fragment_items(entries: list[tuple[dict[str, Any], Any, dict[str, Any]]]) -> None:
+    """Point continues_in/continued_from at the sibling's item id in this request.
+
+    ``entries`` holds (request item, paragraph key, metadata) for one request.
+    The metadata carries the fragment group and the sibling's paragraph key;
+    when the sibling is not part of the same request (main-pass split or a
+    repair batch boundary), the link is omitted and only the part is stated.
+    """
+    item_id_by_key = {key: item.get("id") for item, key, _ in entries}
+    for item, _key, metadata in entries:
+        for field in ("continues_in", "continued_from", "fragment_part"):
+            item.pop(field, None)
+        if not metadata.get("fragment"):
+            continue
+        item["fragment_id"] = str(metadata.get("fragment_id"))
+        part = metadata.get("fragment_part")
+        if part:
+            item["fragment_part"] = part
+        sibling_id = item_id_by_key.get(metadata.get("fragment_sibling_paragraph"))
+        if sibling_id is None:
+            continue
+        item["continues_in" if part == "first" else "continued_from"] = sibling_id
+
+
+def _is_fragment_item(item: dict[str, Any]) -> bool:
+    return bool(
+        item.get("fragment_id") or item.get("continues_in") or item.get("continued_from")
+    )
+
+
+def _looks_like_english_prose(text: str) -> bool:
+    words = re.findall(r"[A-Za-z]{2,}", text)
+    return len(words) >= 4 or (len(words) >= 2 and len(text) >= 48)
+
+
+def _source_english_residue_ratio(source: str, translated: str) -> float:
+    """Share of the source's ordinary English words that survive in the output.
+
+    Only all-lowercase words count: abbreviations (HTTP, DNS), capitalized names
+    and identifiers are legitimately kept verbatim in a Chinese translation, while
+    an untranslated sentence still shows up through its ordinary words.
+    """
+    source_words = _ordinary_english_words(source)
+    if len(source_words) < 8:
+        return 0.0
+    output_words = set(_ordinary_english_words(translated))
+    return sum(word in output_words for word in source_words) / len(source_words)
+
+
+_ORDINARY_WORD_RE = re.compile(r"(?<![A-Za-z])[a-z]{2,}(?![A-Za-z])")
+
+
+def _ordinary_english_words(text: str) -> list[str]:
+    """All-lowercase words of 2+ letters, ignoring placeholder markup.
+
+    The single word rule used by every English-residue check, so the checks
+    cannot disagree (abbreviations, names and identifiers are excluded).
+    """
+    return _ORDINARY_WORD_RE.findall(_PLACEHOLDER_TOKEN_RE.sub(" ", text or ""))
+
+
+def _formula_placeholder_nesting(text: str) -> Counter[tuple[str, tuple[str, ...]]]:
+    """Map each formula placeholder to the style spans that enclose it.
+
+    BabelDOC 0.6.4 drops a formula when its placeholder is moved into (or out of)
+    a <style id='…'>…</style> span, even though every token is still present once.
+    """
+    nesting: Counter[tuple[str, tuple[str, ...]]] = Counter()
+    stack: list[str] = []
+    for match in _PLACEHOLDER_TOKEN_RE.finditer(text or ""):
+        canonical = _canonical_placeholder_token(match.group(0))
+        if canonical.startswith(("style-open:", "unsupported-style-open:")):
+            stack.append(canonical.split(":", 1)[1])
+        elif canonical == "style-close":
+            if stack:
+                stack.pop()
+        elif canonical.startswith("formula:"):
+            nesting[(canonical, tuple(stack))] += 1
+    return nesting
+
+
+def validate_translation_output(
+    source: str,
+    translated: Any,
+    item: dict[str, Any],
+    token_counter: Any,
+) -> dict[str, Any]:
+    """Check output before BabelDOC can pass it to placeholder restoration/typesetting."""
+    checks: dict[str, Any] = {
+        "non_empty": isinstance(translated, str) and bool(translated.strip()),
+        "identical_english": False,
+        "source_english_residue_ratio": 0.0,
+        "length_ratio": None,
+        "edit_distance": None,
+        "placeholder_issues": [],
+    }
+    if not checks["non_empty"]:
+        return {"usable": False, "reason": "模型返回空译文，已进入合并补译。", "checks": checks}
+
+    output = str(translated)
+    source_words = _ordinary_english_words(source)
+    has_ordinary_words = len(source_words) >= 2
+    # Identical output is fine only for abbreviations, names, numbers and
+    # identifiers ("HTTP", "CIC-IDS-2017", a lone "pcap"); two or more ordinary
+    # lowercase words ("of the system") mean the text was simply not translated.
+    if " ".join(output.split()) == " ".join(source.split()) and (
+        has_ordinary_words or _looks_like_english_prose(source)
+    ):
+        checks["identical_english"] = True
+        return {"usable": False, "reason": "模型返回了未翻译的英文原文，已进入合并补译。", "checks": checks}
+
+    residue_ratio = _source_english_residue_ratio(source, output)
+    checks["source_english_residue_ratio"] = round(residue_ratio, 4)
+    plain_output = _PLACEHOLDER_TOKEN_RE.sub(" ", output)
+    output_words = set(_ordinary_english_words(output))
+    # No Chinese at all and every ordinary source word still there: an English
+    # echo, even if only punctuation or spacing was changed.
+    if (
+        has_ordinary_words
+        and not re.search("[㐀-鿿]", plain_output)
+        and all(word in output_words for word in source_words)
+    ):
+        checks["source_english_residue_ratio"] = 1.0
+        return {
+            "usable": False,
+            "reason": "译文仍是英文原句，已进入合并补译。",
+            "checks": checks,
+        }
+    if residue_ratio >= 0.72:
+        return {
+            "usable": False,
+            "reason": "译文仍保留大部分英文原句，已进入合并补译。",
+            "checks": checks,
+        }
+
+    expected = item.get("required_placeholders") or []
+    expected_counts: Counter[str] = Counter()
+    expected_spellings: dict[str, str] = {}
+    for entry in expected:
+        token = str(entry.get("token", "")) if isinstance(entry, dict) else str(entry)
+        count = int(entry.get("count", 1)) if isinstance(entry, dict) else 1
+        if token:
+            canonical = _canonical_placeholder_token(token)
+            expected_counts[canonical] += count
+            expected_spellings.setdefault(canonical, token)
+    # Literal look-alikes in the source text ("%s", "{Alice}", "[[0]]") are not
+    # BabelDOC placeholders and are not in required_placeholders; keeping them
+    # verbatim is correct, so the source's own count is also expected.
+    for token in _PLACEHOLDER_TOKEN_RE.findall(source):
+        canonical = _canonical_placeholder_token(token)
+        source_count = sum(
+            1
+            for other in _PLACEHOLDER_TOKEN_RE.findall(source)
+            if _canonical_placeholder_token(other) == canonical
+        )
+        if source_count > expected_counts.get(canonical, 0):
+            expected_counts[canonical] = source_count
+            expected_spellings.setdefault(canonical, token)
+    actual_counts: Counter[str] = Counter()
+    actual_spellings: dict[str, str] = {}
+    for token in _PLACEHOLDER_TOKEN_RE.findall(output):
+        canonical = _canonical_placeholder_token(token)
+        actual_counts[canonical] += 1
+        actual_spellings.setdefault(canonical, token)
+        if _STYLE_OPEN_PLACEHOLDER_RE.fullmatch(token):
+            expected_spelling = expected_spellings.get(canonical)
+            if token != expected_spelling:
+                checks["placeholder_issues"].append(
+                    {
+                        "token": token,
+                        "expected_spelling": expected_spelling,
+                        "actual_spelling": token,
+                        "reason": "unsupported_style_opener",
+                    }
+                )
+    for canonical in expected_counts.keys() | actual_counts.keys():
+        expected_count = expected_counts.get(canonical, 0)
+        actual_count = actual_counts.get(canonical, 0)
+        if actual_count != expected_count:
+            checks["placeholder_issues"].append(
+                {
+                    "token": expected_spellings.get(canonical) or actual_spellings.get(canonical) or canonical,
+                    "expected": expected_count,
+                    "actual": actual_count,
+                }
+            )
+    # A bare or malformed tag ("<style>", "<style class=x>") is not a BabelDOC
+    # placeholder, so the token scan above misses it; BabelDOC would typeset it
+    # as literal text. Any style tag beyond the source's own count is an issue.
+    required_style_tags = sum(
+        int(entry.get("count", 1)) if isinstance(entry, dict) else 1
+        for entry in expected
+        if _ANY_STYLE_TAG_RE.fullmatch(
+            str(entry.get("token", "")) if isinstance(entry, dict) else str(entry)
+        )
+    )
+    extra_style_tags = len(_ANY_STYLE_TAG_RE.findall(output)) - max(
+        len(_ANY_STYLE_TAG_RE.findall(source)), required_style_tags
+    )
+    if extra_style_tags > 0:
+        checks["placeholder_issues"].append(
+            {"reason": "unexpected_style_tag", "extra": extra_style_tags}
+        )
+    if not checks["placeholder_issues"]:
+        source_nesting = _formula_placeholder_nesting(source)
+        output_nesting = _formula_placeholder_nesting(output)
+        if source_nesting != output_nesting:
+            for (canonical, enclosing), _ in (output_nesting - source_nesting).items():
+                checks["placeholder_issues"].append(
+                    {
+                        "token": canonical,
+                        "reason": "formula_nesting_changed",
+                        "enclosing_styles": list(enclosing),
+                    }
+                )
+            if not checks["placeholder_issues"]:
+                checks["placeholder_issues"].append({"reason": "formula_nesting_changed"})
+    if checks["placeholder_issues"]:
+        return {
+            "usable": False,
+            "reason": "译文中的占位符缺失、重复、被改写或移动了位置，已进入合并补译。",
+            "checks": checks,
+        }
+
+    if not _is_fragment_item(item):
+        try:
+            input_tokens = max(1, int(token_counter(source)))
+            output_tokens = max(0, int(token_counter(output)))
+            ratio = output_tokens / input_tokens
+            checks["length_ratio"] = ratio
+            # For labels like "CSV Volume" (2 tokens) a correct translation can
+            # easily exceed 3x; the ratio only means something for real text.
+            if input_tokens > 4 and not (0.3 < ratio < 3.0):
+                return {
+                    "usable": False,
+                    "reason": "译文长度异常，已进入合并补译。",
+                    "checks": checks,
+                }
+        except Exception:
+            pass
+
+        if len(source) <= 4000 and len(output) <= 4000:
+            similarity = SequenceMatcher(None, source, output, autojunk=False).ratio()
+            distance = int(round((1.0 - similarity) * max(len(source), len(output))))
+            checks["edit_distance"] = distance
+            if distance < 5 and int(token_counter(source)) > 20:
+                return {
+                    "usable": False,
+                    "reason": "译文与原文差异过小，已进入合并补译。",
+                    "checks": checks,
+                }
+
+    return {"usable": True, "reason": "", "checks": checks}
+
+
+def _paragraph_layout_label(paragraph: Any) -> str:
+    return str(getattr(paragraph, "layout_label", "") or "").strip()
+
+
+def _is_body_text_paragraph(paragraph: Any) -> bool:
+    return _paragraph_layout_label(paragraph).lower() in _BODY_TEXT_LAYOUT_LABELS
+
+
+def _is_independent_formula_paragraph(paragraph: Any) -> bool:
+    """Exclude paragraphs made only of formula compositions; include inline formulas."""
+    compositions = list(getattr(paragraph, "pdf_paragraph_composition", ()) or ())
+    return bool(compositions) and all(
+        getattr(composition, "pdf_formula", None) is not None
+        for composition in compositions
+    )
+
+
+def _paragraph_is_reference_heading(paragraph: Any) -> bool:
+    return bool(_REFERENCE_HEADING_RE.match(str(getattr(paragraph, "unicode", "") or "")))
+
+
+def collect_reference_paragraph_ids(document: Any, translate_references: bool) -> set[int]:
+    """Keep a detected bibliography region out of translation unless opted in."""
+    if translate_references:
+        return set()
+    references_started = False
+    reference_ids: set[int] = set()
+    for page in getattr(document, "page", ()) or ():
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            label = _paragraph_layout_label(paragraph)
+            heading = str(getattr(paragraph, "unicode", "") or "")
+            if references_started and (
+                _REFERENCE_END_LAYOUT_RE.search(label)
+                or _REFERENCE_END_HEADING_RE.match(heading)
+                or _REFERENCE_END_HEADING_DETAIL_RE.match(heading)
+            ):
+                references_started = False
+            if _REFERENCE_LAYOUT_RE.search(label) or _paragraph_is_reference_heading(paragraph):
+                references_started = True
+            if references_started:
+                reference_ids.add(id(paragraph))
+    return reference_ids
+
+
+def _is_in_page_edge_band(paragraph: Any, page: Any, band: float = 0.12) -> bool:
+    """True when the whole paragraph lies within the top or bottom ``band``.
+
+    Merely touching the band is not enough: a body paragraph that starts near
+    the top of a column must not be treated as a running header or stamp.
+    """
+    box = getattr(paragraph, "box", None)
+    page_box = getattr(getattr(page, "cropbox", None), "box", None) or getattr(
+        getattr(page, "mediabox", None), "box", None
+    )
+    try:
+        low = float(getattr(page_box, "y", 0.0))
+        high = float(getattr(page_box, "y2"))
+        height = high - low
+        if height <= 0 or box is None:
+            return False
+        # PDF y grows upward: box.y is the paragraph's lower edge, box.y2 its upper edge.
+        inside_bottom_band = (float(box.y2) - low) / height <= band
+        inside_top_band = (high - float(box.y)) / height <= band
+        return inside_bottom_band or inside_top_band
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def _normalized_margin_text(text: str) -> str:
+    # Page numbers and dates differ per page; compare the rest of the line.
+    return re.sub(r"\d+", "#", " ".join(text.split()).casefold())
+
+
+def collect_repeated_marginal_ids(document: Any, min_pages: int = 2) -> set[int]:
+    """Find running headers/footers that BabelDOC labels as ordinary body text.
+
+    Short text in the top/bottom edge band whose digit-normalized form appears
+    on at least ``min_pages`` different pages is a running header or footer.
+    """
+    pages_by_text: dict[str, set[int]] = {}
+    candidates: list[tuple[str, int]] = []
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            text = str(getattr(paragraph, "unicode", "") or "")
+            if not text.strip() or len(text) > 200:
+                continue
+            if not _is_in_page_edge_band(paragraph, page):
+                continue
+            key = _normalized_margin_text(text)
+            pages_by_text.setdefault(key, set()).add(page_index)
+            candidates.append((key, id(paragraph)))
+    return {
+        paragraph_id
+        for key, paragraph_id in candidates
+        if len(pages_by_text.get(key, ())) >= min_pages
+    }
+
+
+_EDGE_STAMP_PHRASE_RE = re.compile(
+    r"\bdoi\s*:\s*\S|\bisbn(?:-1[03])?\s*:?\s*[\d-]{10,}|©|\(c\)\s*\d{4}|"
+    r"\bcopyright\s+(?:©|\(c\)|\d{4})|\ball rights reserved\b|"
+    r"\bdownloaded\s+on\s+\w+\s+\d|\bfrom\s+ieee\s+xplore\b|\brestrictions\s+apply\b|"
+    r"\bauthorized\s+licensed\s+use\b",
+    re.I,
+)
+
+
+def _paragraph_is_marginal_or_stamp(paragraph: Any, page: Any) -> bool:
+    text = " ".join(str(getattr(paragraph, "unicode", "") or "").split())
+    label = _paragraph_layout_label(paragraph)
+    if _PRESERVED_LAYOUT_RE.search(label):
+        return True
+    if not text:
+        return False
+    if _LICENSE_STAMP_RE.search(text):
+        return True
+
+    edge_text = _is_in_page_edge_band(paragraph, page)
+
+    if re.fullmatch(r"(?:page\s*)?\d{1,4}(?:\s*(?:of|/)\s*\d{1,4})?", text, re.I):
+        return True
+    # Only stamp phrasing, not single words: "We downloaded the datasets…" or
+    # "We searched IEEE Xplore…" near a page edge is still body text.
+    if edge_text and len(text) <= 280 and _EDGE_STAMP_PHRASE_RE.search(text):
+        return True
+    return False
+
+
+def body_font_scale_plan(raw_scales: list[float]) -> tuple[float, list[float], int]:
+    """Give a font-size class one common scale, keeping below-floor overflow individual."""
+    if not raw_scales:
+        return 1.0, [], 0
+    normalized = [float(scale) for scale in raw_scales]
+    common_scale = min(max(0.8, min(1.0, scale)) for scale in normalized)
+    final_scales = [scale if scale < 0.8 else common_scale for scale in normalized]
+    overflow_count = sum(scale < 0.8 for scale in normalized)
+    return common_scale, final_scales, overflow_count
+
+
 def _has_cut_off_json_prefix(text: str, error: json.JSONDecodeError) -> bool:
     """Recognize an unfinished JSON array, without treating empty or bad JSON as cut off."""
     prefix = text.strip()
@@ -489,6 +1220,32 @@ def restore_paragraph_snapshots(
         paragraph.pdf_paragraph_composition = original_composition
 
 
+def rollback_fragment_group(
+    policy: Any,
+    request_state: dict[str, Any],
+    group_members: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    reason: str,
+) -> set[int]:
+    """Restore and count every linked fragment when its rollback is final."""
+    paragraph_ids = {
+        id(member["paragraph"])
+        for member in group_members
+        if member.get("paragraph") is not None
+    }
+    restore_paragraph_snapshots(
+        request_state.get("document_paragraph_snapshots", {}), paragraph_ids
+    )
+    request_state.setdefault("translated_paragraph_ids", set()).difference_update(
+        paragraph_ids
+    )
+    request_state.setdefault("final_fragment_failure_ids", set()).update(paragraph_ids)
+    for member in group_members:
+        paragraph = member.get("paragraph")
+        if paragraph is not None:
+            policy.record_failure(paragraph, reason)
+    return paragraph_ids
+
+
 def record_submitted_paragraphs(
     policy: Any,
     input_items: list[dict[str, Any]],
@@ -532,6 +1289,9 @@ def translate_json_items_with_splitting(
     repack_remaining: Any = None,
     defer_remaining: Any = None,
     on_zero_prefix: Any = None,
+    stop_when_capped: bool = False,
+    single_pass: bool = False,
+    on_batch_error: Any = None,
 ) -> list[dict[str, Any]]:
     """Translate from one ordered queue, returning only unconfirmed items to its head.
 
@@ -540,6 +1300,12 @@ def translate_json_items_with_splitting(
     together with all later paragraphs. Without it, this function drives that same
     queue itself. A zero-prefix truncation only sets a half-size cap for the next
     request; it never sends both halves as pre-formed child batches.
+
+    ``single_pass`` (repair): every item is submitted at most once — after a
+    truncated response the unconfirmed items are failed, never re-sent.
+    ``on_batch_error`` (repair): a request error fails only that batch and the
+    loop continues, so earlier batches keep their results; the callback gets
+    the exception. A request-cap stop still ends the loop.
     """
 
     def item_key(item: dict[str, Any], index: int) -> str:
@@ -594,9 +1360,45 @@ def translate_json_items_with_splitting(
             batch = pending[:1]
         next_item_limit = None
 
+        if budget.requests >= budget.max_requests and stop_when_capped:
+            results_by_id.update(
+                {
+                    str(result.get("id")): result
+                    for result in _failed_json_items(
+                        pending, "请求上限已用完，补译未发送，已保留原文。"
+                    )
+                }
+            )
+            break
         if budget.planned <= budget.requests:
             budget.add_additional_requests(1)
-        response = request_once(budget, lambda: request(batch))
+        if on_batch_error is None:
+            response = request_once(budget, lambda: request(batch))
+        else:
+            try:
+                response = request_once(budget, lambda: request(batch))
+            except RequestCapExceeded:
+                results_by_id.update(
+                    {
+                        str(result.get("id")): result
+                        for result in _failed_json_items(
+                            pending, "请求上限已用完，补译未发送，已保留原文。"
+                        )
+                    }
+                )
+                break
+            except Exception as error:
+                on_batch_error(error)
+                results_by_id.update(
+                    {
+                        str(result.get("id")): result
+                        for result in _failed_json_items(
+                            batch, "该批补译请求失败，已保留原文。"
+                        )
+                    }
+                )
+                pending = pending[len(batch) :]
+                continue
         content, finish_reason = response[0], response[1]
         refusal = response[2] if len(response) > 2 else None
         finish_reason = str(finish_reason or "").lower()
@@ -687,6 +1489,21 @@ def translate_json_items_with_splitting(
         )
         unresolved_request_items = batch[len(confirmed_outputs) :]
 
+        if single_pass:
+            # Repair sends each item once: what the truncated answer did not
+            # confirm keeps its original text instead of being re-sent.
+            results_by_id.update(
+                {
+                    str(result.get("id")): result
+                    for result in _failed_json_items(
+                        unresolved_request_items,
+                        "补译输出被截断，未确认的段落保留原文。",
+                    )
+                }
+            )
+            pending = pending[len(batch) :]
+            continue
+
         if not confirmed_outputs and len(batch) == 1:
             failed = _failed_json_items(
                 batch, "模型输出被截断，单段无法继续拆分，已保留原文。"
@@ -725,7 +1542,9 @@ def translate_json_items_with_splitting(
 
 def _redact(value: Any, api_key: str) -> str:
     text = str(value if value is not None else "")
-    return text.replace(api_key, "[已隐藏]") if api_key else text
+    for variant in _api_key_variants(api_key):
+        text = text.replace(variant, "[已隐藏]")
+    return text
 
 
 def _redact_payload(value: Any, api_key: str) -> Any:
@@ -1057,14 +1876,41 @@ def _read_integer_setting(name: str, default: int, minimum: int) -> int:
     return value
 
 
+def _read_boolean_setting(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value.")
+
+
 def ensure_runner_options(arguments: list[str]) -> list[str]:
-    """Always disable extra glossary/fallback calls and supply a consistency prompt."""
-    result = list(arguments)
+    """Always disable extra glossary/fallback calls and use this runner's prompt.
+
+    The consistency + fragment prompt is owned here; any --custom-system-prompt
+    passed by the caller (e.g. an older plugin build) is replaced, never kept,
+    so the fragment rules cannot be lost.
+    """
+    result: list[str] = []
+    skip_next = False
+    for argument in arguments:
+        if skip_next:
+            skip_next = False
+            continue
+        if argument == "--custom-system-prompt":
+            skip_next = True
+            continue
+        if argument.startswith("--custom-system-prompt="):
+            continue
+        result.append(argument)
     for flag in ("--no-auto-extract-glossary", "--disable-same-text-fallback"):
         if flag not in result:
             result.append(flag)
-    if "--custom-system-prompt" not in result:
-        result.extend(["--custom-system-prompt", CONSISTENCY_SYSTEM_PROMPT])
+    result.extend(["--custom-system-prompt", CONSISTENCY_SYSTEM_PROMPT])
     return result
 
 
@@ -1091,15 +1937,365 @@ def _install_min_request_patches(
     request_budget: RequestBudget,
     request_state: dict[str, Any],
     max_output_tokens: int,
+    repair_failed: bool,
+    translate_references: bool,
+    api_key: str,
 ) -> None:
     """Batch the complete document, count requests, and suppress fallback calls."""
     import openai
     import babeldoc.format.pdf.document_il.midend.il_translator_llm_only as llm_module
     import babeldoc.translator.translator as translator_module
     from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
+    from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
     from babeldoc.translator.translator import OpenAITranslator
 
     original_openai = openai.OpenAI
+
+    original_post_translate_paragraph = ILTranslator.post_translate_paragraph
+
+    def log_applied(paragraph: Any, overridden: bool) -> None:
+        accepted = request_state.get("accepted_outputs", {}).pop(id(paragraph), None)
+        if accepted is None:
+            return
+        metadata = accepted.get("metadata") or {}
+        _write_job_log(
+            request_state,
+            {
+                "event": "item_outcome",
+                "phase": "main",
+                "id": accepted.get("item_id"),
+                "outcome": "translated",
+                "reason": "",
+                "babeldoc_check_overridden": overridden,
+                "fragment": bool(metadata.get("fragment")),
+                "fragment_type": metadata.get("fragment_type"),
+                "fragment_id": metadata.get("fragment_id"),
+                "preview": _text_preview(accepted.get("source", ""), api_key),
+                "output_preview": _text_preview(accepted.get("text", ""), api_key),
+            },
+            api_key,
+        )
+
+    @functools.wraps(original_post_translate_paragraph)
+    def post_translate_paragraph_with_log(instance: Any, paragraph: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original_post_translate_paragraph(instance, paragraph, *args, **kwargs)
+        log_applied(paragraph, overridden=False)
+        return result
+
+    ILTranslator.post_translate_paragraph = post_translate_paragraph_with_log
+
+    def apply_accepted_after_babeldoc_rejection(owner: Any, args: tuple[Any, ...]) -> bool:
+        """BabelDOC re-checks length after our validation and hands rejected
+        paragraphs to its fallback translator. Our checks are authoritative
+        (e.g. "Recall" → "召回率" is 1→3 tokens, valid but rejected by BabelDOC),
+        so apply the accepted text directly; if that fails, queue repair.
+        Returns True when the paragraph was handled here."""
+        paragraph = args[0] if args else None
+        accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
+        if paragraph is None or accepted is None:
+            return False
+        tracker = args[3] if len(args) > 3 else accepted.get("tracker")
+        pbar = args[2] if len(args) > 2 else None
+        try:
+            original_post_translate_paragraph(
+                owner, paragraph, tracker, accepted["translate_input"], accepted["text"]
+            )
+        except Exception as error:
+            request_state.get("accepted_outputs", {}).pop(id(paragraph), None)
+            queue_unapplied_for_repair(paragraph, accepted, error)
+        else:
+            log_applied(paragraph, overridden=True)
+        if pbar is not None and hasattr(pbar, "advance"):
+            pbar.advance(1)
+        return True
+
+    def queue_unapplied_for_repair(paragraph: Any, accepted: dict[str, Any], error: Exception) -> None:
+        reason = "译文无法应用到段落，已进入合并补译。" if repair_failed else "译文无法应用到段落，已保留原文。"
+        metadata = accepted.get("metadata") or {}
+        request_state.get("translated_paragraph_ids", set()).discard(id(paragraph))
+        _write_job_log(
+            request_state,
+            {
+                "event": "item_outcome",
+                "phase": "main",
+                "id": accepted.get("item_id"),
+                "outcome": "needs_repair" if repair_failed else "retained_source",
+                "reason": reason,
+                "checks": {"apply_error": log_safe_error(error, api_key)},
+                "fragment": bool(metadata.get("fragment")),
+                "fragment_type": metadata.get("fragment_type"),
+                "fragment_id": metadata.get("fragment_id"),
+                "preview": _text_preview(accepted.get("source", ""), api_key),
+                "output_preview": "",
+            },
+            api_key,
+        )
+        if not repair_failed or request_state.get("fatal_error"):
+            policy.record_failure(paragraph, reason)
+            return
+        request_state.setdefault("failed_batch_paragraph_ids", set()).add(id(paragraph))
+        request_state.setdefault("repair_records", {})[id(paragraph)] = {
+            "paragraph": paragraph,
+            "translate_input": accepted.get("translate_input"),
+            "tracker": accepted.get("tracker"),
+            "source": accepted.get("source", ""),
+            "reason": reason,
+            "checks": {"apply_error": True},
+            "metadata": metadata,
+            "layout_label": _paragraph_layout_label(paragraph),
+            "fragment": bool(metadata.get("fragment")),
+            "repair_status": "pending",
+        }
+        group_id = metadata.get("fragment_id")
+        if group_id:
+            # A fragment pair is one unit: undo an already-applied sibling so the
+            # repair pass (which adds every member of an invalid group) rewrites both.
+            request_state.setdefault("invalid_fragment_groups", {}).setdefault(str(group_id), reason)
+            member_ids = {
+                id(member["paragraph"])
+                for member in request_state.get("fragment_group_members", {}).get(str(group_id), ())
+            }
+            restore_paragraph_snapshots(
+                request_state.get("document_paragraph_snapshots", {}), member_ids
+            )
+            request_state.get("translated_paragraph_ids", set()).difference_update(member_ids)
+            for member_id in member_ids:
+                request_state.get("accepted_outputs", {}).pop(member_id, None)
+
+    def _font_policy_body(paragraph: Any) -> bool:
+        if id(paragraph) not in request_state.get("translated_paragraph_ids", set()):
+            return False
+        if not _is_body_text_paragraph(paragraph):
+            return False
+        return not _is_independent_formula_paragraph(paragraph)
+
+    original_layout_typesetting_units = Typesetting._layout_typesetting_units
+
+    @functools.wraps(original_layout_typesetting_units)
+    def layout_with_body_line_spacing(
+        instance: Any,
+        typesetting_units: Any,
+        box: Any,
+        scale: float,
+        line_skip: float,
+        paragraph: Any,
+        use_english_line_break: bool = True,
+    ) -> Any:
+        if not _font_policy_body(paragraph):
+            return original_layout_typesetting_units(
+                instance,
+                typesetting_units,
+                box,
+                scale,
+                line_skip,
+                paragraph,
+                use_english_line_break,
+            )
+        candidate = float(line_skip)
+        last_result = None
+        while candidate >= 1.05:
+            result = original_layout_typesetting_units(
+                instance,
+                typesetting_units,
+                box,
+                scale,
+                candidate,
+                paragraph,
+                use_english_line_break,
+            )
+            last_result = result
+            if len(result) > 1 and result[1]:
+                request_state.setdefault("body_line_spacing", {})[id(paragraph)] = candidate
+                return result
+            candidate = round(candidate - 0.05, 4)
+        return last_result if last_result is not None else original_layout_typesetting_units(
+            instance,
+            typesetting_units,
+            box,
+            scale,
+            line_skip,
+            paragraph,
+            use_english_line_break,
+        )
+
+    Typesetting._layout_typesetting_units = layout_with_body_line_spacing
+
+    original_get_optimal_scale = Typesetting._get_optimal_scale
+
+    @functools.wraps(original_get_optimal_scale)
+    def get_optimal_scale_with_capture(
+        instance: Any,
+        paragraph: Any,
+        page: Any,
+        typesetting_units: Any,
+        use_english_line_break: bool = True,
+    ) -> float:
+        scale = original_get_optimal_scale(
+            instance,
+            paragraph,
+            page,
+            typesetting_units,
+            use_english_line_break,
+        )
+        request_state.setdefault("body_raw_scales", {})[id(paragraph)] = float(scale)
+        return scale
+
+    Typesetting._get_optimal_scale = get_optimal_scale_with_capture
+
+    original_preprocess_document = Typesetting.preprocess_document
+
+    @functools.wraps(original_preprocess_document)
+    def preprocess_document_with_body_scale_classes(
+        instance: Any, document: Any, pbar: Any
+    ) -> Any:
+        result = original_preprocess_document(instance, document, pbar)
+        # BabelDOC clamps every paragraph to a document-wide mode scale. Restore
+        # each paragraph's independent pre-clamp result first so the custom body
+        # policy does not change captions, tables, formulas, or other layout types.
+        # The common per-class body scale is applied later, against the final
+        # paragraph boxes (see typesetting_document_two_phase).
+        raw_scales = request_state.get("body_raw_scales", {})
+        for page in getattr(document, "page", ()) or ():
+            for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+                paragraph.optimal_scale = float(raw_scales.get(id(paragraph), 1.0))
+        return result
+
+    Typesetting.preprocess_document = preprocess_document_with_body_scale_classes
+
+    original_render_page = Typesetting.render_page
+
+    def apply_common_body_scales(
+        instance: Any, deferred: list[tuple[Any, Any, Any]]
+    ) -> None:
+        """Measure body paragraphs in their final boxes and give each font-size
+        class one scale (floored at 0.8; below-floor overflow stays individual)."""
+        groups: dict[float, list[tuple[Any, float]]] = {}
+        for paragraph, page, fonts in deferred:
+            if not _font_policy_body(paragraph):
+                continue
+            try:
+                font_size = round(float(paragraph.pdf_style.font_size), 1)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            try:
+                units = instance.create_typesetting_units(paragraph, fonts)
+                if all(unit.can_passthrough for unit in units):
+                    continue
+                raw_scale = float(instance._get_optimal_scale(paragraph, page, units))
+            except Exception:
+                continue
+            groups.setdefault(font_size, []).append((paragraph, raw_scale))
+
+        class_summary = []
+        for font_size, members in sorted(groups.items()):
+            common_scale, final_scales, overflow_count = body_font_scale_plan(
+                [raw for _, raw in members]
+            )
+            for (paragraph, _), final_scale in zip(members, final_scales):
+                paragraph.optimal_scale = final_scale
+            class_summary.append(
+                {
+                    "original_font_size": font_size,
+                    "paragraph_count": len(members),
+                    "common_scale": round(common_scale, 4),
+                    "overflow_paragraphs": overflow_count,
+                }
+            )
+        request_state["body_font_class_summary"] = class_summary
+
+    def typesetting_document_two_phase(instance: Any, document: Any) -> None:
+        """BabelDOC's render_page shrinks paragraph boxes to resolve overlaps and
+        then re-typesets each paragraph independently, which undid a scale
+        chosen on the original boxes. Run its box adjustment first with
+        rendering deferred, fix the body scales on the final boxes, then render."""
+
+        def run(pbar: Any) -> None:
+            instance.preprocess_document(document, pbar)
+            deferred_by_page: list[list[tuple[Any, Any, Any]]] = []
+            for page in document.page:
+                instance.translation_config.raise_if_cancelled()
+                page_deferred: list[tuple[Any, Any, Any]] = []
+                instance.render_paragraph = (
+                    lambda paragraph, owner, fonts, _sink=page_deferred: _sink.append(
+                        (paragraph, owner, fonts)
+                    )
+                )
+                try:
+                    original_render_page(instance, page)
+                finally:
+                    del instance.render_paragraph
+                deferred_by_page.append(page_deferred)
+            apply_common_body_scales(
+                instance, [entry for page_entries in deferred_by_page for entry in page_entries]
+            )
+            for page_entries in deferred_by_page:
+                instance.translation_config.raise_if_cancelled()
+                for paragraph, page, fonts in page_entries:
+                    instance.render_paragraph(paragraph, page, fonts)
+                if pbar is not None:
+                    pbar.advance()
+
+        monitor = getattr(instance.translation_config, "progress_monitor", None)
+        if monitor:
+            with monitor.stage_start(instance.stage_name, len(document.page) * 2) as pbar:
+                run(pbar)
+        else:
+            run(None)
+
+    original_typesetting_document = Typesetting.typesetting_document
+
+    @functools.wraps(original_typesetting_document)
+    def typesetting_document_with_scale_log(
+        instance: Any, document: Any
+    ) -> Any:
+        result = typesetting_document_two_phase(instance, document)
+        by_page: dict[int, list[float]] = {}
+        by_class: dict[float, list[float]] = {}
+        for page_index, page in enumerate(getattr(document, "page", ()) or (), start=1):
+            for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+                if not _font_policy_body(paragraph):
+                    continue
+                scale = getattr(paragraph, "scale", None)
+                if scale is None:
+                    scale = getattr(paragraph, "optimal_scale", None)
+                try:
+                    final_scale = float(scale)
+                    font_size = round(float(paragraph.pdf_style.font_size), 1)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                by_page.setdefault(page_index, []).append(final_scale)
+                by_class.setdefault(font_size, []).append(final_scale)
+        summary = {
+            "classes": [
+                {
+                    "original_font_size": font_size,
+                    "count": len(scales),
+                    "min_scale": round(min(scales), 4),
+                    "max_scale": round(max(scales), 4),
+                }
+                for font_size, scales in sorted(by_class.items())
+            ],
+            "pages": {
+                str(page): {
+                    "min_scale": round(min(scales), 4),
+                    "max_scale": round(max(scales), 4),
+                }
+                for page, scales in sorted(by_page.items())
+            },
+            "line_spacing_adjusted_paragraphs": len(
+                request_state.get("body_line_spacing", {})
+            ),
+            "class_policy": request_state.get("body_font_class_summary", []),
+        }
+        request_state["body_font_scale_summary"] = summary
+        _write_job_log(
+            request_state,
+            {"event": "body_font_scale_summary", **summary},
+            api_key,
+        )
+        return result
+
+    Typesetting.typesetting_document = typesetting_document_with_scale_log
 
     @functools.wraps(original_openai)
     def openai_without_retries(*args: Any, **kwargs: Any) -> Any:
@@ -1148,6 +2344,7 @@ def _install_min_request_patches(
             request_state["fatal_kind"] = "api_error"
         if not request_state.get("fatal_error"):
             request_state["fatal_error"] = sanitize_provider_error(error) or type(error).__name__
+            request_state["fatal_error_log"] = log_safe_error(error, api_key)
 
     def completion_options(instance: Any, rate_limit_params: Any) -> tuple[dict[str, Any], dict[str, str]]:
         options: dict[str, Any] = {}
@@ -1189,38 +2386,124 @@ def _install_min_request_patches(
 
         def request_batch(
             batch: list[dict[str, Any]],
+            *,
+            prefix_override: str | None = None,
+            phase: str = "main",
         ) -> tuple[str, str | None, Any]:
             nonlocal request_index
             wait_for_split_request(request_index)
             request_index += 1
-            record_submitted_paragraphs(
-                policy,
-                batch,
-                request_state.get("prepared_paragraphs") or [],
-                request_state.setdefault("submitted_paragraph_ids", set()),
+            if phase == "main":
+                record_submitted_paragraphs(
+                    policy,
+                    batch,
+                    request_state.get("prepared_paragraphs") or [],
+                    request_state.setdefault("submitted_paragraph_ids", set()),
+                )
+                # A continuation request may carry only part of a fragment
+                # pair; rebuild the links against the items really sent.
+                prepared = request_state.get("prepared_paragraphs") or []
+                metadata_by_paragraph = request_state.get("validation_metadata", {})
+                linked_batch = [dict(item) for item in batch]
+                entries = []
+                for item in linked_batch:
+                    try:
+                        paragraph = prepared[int(item.get("id"))]
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                    metadata = metadata_by_paragraph.get(id(paragraph))
+                    if metadata:
+                        entries.append((item, id(paragraph), metadata))
+                _link_fragment_items(entries)
+                batch = linked_batch
+            prompt_prefix = (
+                prefix_override
+                if prefix_override is not None
+                else parsed_prompt[0] if parsed_prompt else ""
             )
-            prompt_prefix = parsed_prompt[0] if parsed_prompt else ""
             prompt_text = (
                 prompt_prefix + json.dumps(batch, ensure_ascii=False, indent=2)
                 if parsed_prompt
                 else text
             )
-            response = instance.client.chat.completions.create(
-                model=instance.model,
-                **options,
-                max_tokens=max_output_tokens,
-                messages=[{"role": "user", "content": prompt_text}],
-                extra_headers=extra_headers,
-                extra_body=instance.extra_body,
+            active_translator = request_state.get("active_llm_translator")
+            token_counter = getattr(active_translator, "calc_token_count", None)
+            estimated_output_tokens = (
+                sum(
+                    estimate_output_tokens(
+                        int(token_counter(str(item.get("input", ""))))
+                    )
+                    for item in batch
+                )
+                if callable(token_counter)
+                else None
             )
+            request_items_log = [
+                {
+                    "id": item.get("id"),
+                    "preview": _text_preview(item.get("input", ""), api_key),
+                    "fragment": _is_fragment_item(item),
+                }
+                for item in batch
+            ]
+            if phase == "repair":
+                request_state["repair_request_count"] = int(
+                    request_state.get("repair_request_count", 0)
+                ) + 1
+            try:
+                response = instance.client.chat.completions.create(
+                    model=instance.model,
+                    **options,
+                    max_tokens=max_output_tokens,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    extra_headers=extra_headers,
+                    extra_body=instance.extra_body,
+                )
+            except Exception as error:
+                _write_job_log(
+                    request_state,
+                    {
+                        "event": "request",
+                        "phase": phase,
+                        "request_index": request_budget.requests,
+                        "item_count": len(batch),
+                        "estimated_output_tokens": estimated_output_tokens,
+                        "actual_output_tokens": None,
+                        "finish_reason": None,
+                        "error": log_safe_error(error, api_key),
+                        "items": request_items_log,
+                    },
+                    api_key,
+                )
+                raise
             instance.update_token_count(response)
             choice = response.choices[0]
             message = choice.message
+            usage = getattr(response, "usage", None)
+            actual_output_tokens = getattr(usage, "completion_tokens", None)
+            finish_reason = getattr(choice, "finish_reason", None)
+            _write_job_log(
+                request_state,
+                {
+                    "event": "request",
+                    "phase": phase,
+                    "request_index": request_budget.requests,
+                    "item_count": len(batch),
+                    "estimated_output_tokens": estimated_output_tokens,
+                    "actual_output_tokens": actual_output_tokens,
+                    "finish_reason": finish_reason,
+                    "items": request_items_log,
+                },
+                api_key,
+            )
             return (
                 message.content or "",
-                getattr(choice, "finish_reason", None),
+                finish_reason,
                 getattr(message, "refusal", None),
             )
+
+        request_state["request_batch_callback"] = request_batch
+        request_state["openai_translator"] = instance
 
         try:
             if parsed_prompt:
@@ -1308,6 +2591,104 @@ def _install_min_request_patches(
                         1, previous_request_item_count // 2
                     )
 
+                prepared_paragraphs = request_state.get("prepared_paragraphs") or []
+                packed_items_by_paragraph = {
+                    id(item["paragraph"]): item
+                    for item in request_state.get("current_packed_items") or []
+                }
+                all_prepared_items = request_state.get("all_prepared_items") or []
+                positions_by_paragraph = {
+                    id(item["paragraph"]): index
+                    for index, item in enumerate(all_prepared_items)
+                }
+                validation_metadata = request_state.setdefault(
+                    "validation_metadata", {}
+                )
+                fragment_paragraph_ids = request_state.setdefault(
+                    "fragment_paragraph_ids", set()
+                )
+
+                def metadata_for_packed_item(
+                    packed_item: dict[str, Any],
+                ) -> tuple[Any, dict[str, Any]]:
+                    paragraph = packed_item["paragraph"]
+                    prepared_result = packed_item.get("prepared_result") or ()
+                    translate_input = (
+                        prepared_result[1] if len(prepared_result) > 1 else None
+                    )
+                    expected_placeholders = _expected_placeholder_counts(
+                        translate_input
+                    )
+                    fragment_type = packed_item.get("fragment_type")
+                    fragment_group = packed_item.get("fragment_group")
+                    fragment_sibling = packed_item.get("fragment_sibling_id")
+                    fragment_index = packed_item.get("fragment_index")
+                    position = positions_by_paragraph.get(id(paragraph))
+                    previous_context = ""
+                    next_context = ""
+                    if position is not None:
+                        if position > 0:
+                            previous_context = str(
+                                (all_prepared_items[position - 1].get("prepared_result") or ("",))[0]
+                            )
+                        if position + 1 < len(all_prepared_items):
+                            next_context = str(
+                                (all_prepared_items[position + 1].get("prepared_result") or ("",))[0]
+                            )
+                    metadata = {
+                        "required_placeholders": [
+                            {"token": token, "count": count}
+                            for token, count in sorted(expected_placeholders.items())
+                        ],
+                        "fragment": bool(fragment_type),
+                        "fragment_type": fragment_type,
+                        "fragment_id": fragment_group,
+                        "fragment_part": (
+                            ("first" if fragment_index == 0 else "second")
+                            if fragment_type
+                            else None
+                        ),
+                        "fragment_sibling_paragraph": packed_item.get(
+                            "fragment_sibling_paragraph"
+                        ),
+                        # Resolved per request to the sibling's item id; see
+                        # _link_fragment_items. Never a debug id.
+                        "continues_in": None,
+                        "continued_from": None,
+                        "previous_context": previous_context,
+                        "next_context": next_context,
+                    }
+                    packed_item["validation_metadata"] = metadata
+                    return translate_input, metadata
+
+                request_entries: list[tuple[dict[str, Any], Any, dict[str, Any]]] = []
+                for item_index, input_item in enumerate(parsed_prompt[1]):
+                    try:
+                        paragraph_index = int(input_item.get("id", item_index))
+                    except (TypeError, ValueError):
+                        continue
+                    if not (0 <= paragraph_index < len(prepared_paragraphs)):
+                        continue
+                    paragraph = prepared_paragraphs[paragraph_index]
+                    packed_item = packed_items_by_paragraph.get(id(paragraph), {})
+                    _, metadata = metadata_for_packed_item(packed_item)
+                    if metadata["required_placeholders"]:
+                        input_item["required_placeholders"] = metadata[
+                            "required_placeholders"
+                        ]
+                    request_entries.append((input_item, paragraph, metadata))
+
+                _link_fragment_items(
+                    [
+                        (input_item, id(paragraph), metadata)
+                        for input_item, paragraph, metadata in request_entries
+                    ]
+                )
+                for input_item, paragraph, metadata in request_entries:
+                    if metadata["fragment"]:
+                        fragment_paragraph_ids.add(id(paragraph))
+                    validation_metadata[id(paragraph)] = metadata
+
                 outputs = translate_json_items_with_splitting(
                     parsed_prompt[1],
                     request_batch,
@@ -1316,12 +2697,142 @@ def _install_min_request_patches(
                     defer_remaining=defer_unconfirmed_suffix,
                     on_zero_prefix=cap_next_request_after_empty_prefix,
                 )
-                prepared_paragraphs = request_state.get("prepared_paragraphs") or []
+                group_sizes = {
+                    group_id: len(members)
+                    for group_id, members in request_state.get(
+                        "fragment_group_members", {}
+                    ).items()
+                }
+                member_keys_by_item_id: dict[str, str] = {}
+                for item_index, input_item in enumerate(parsed_prompt[1]):
+                    try:
+                        paragraph_index = int(input_item.get("id", item_index))
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= paragraph_index < len(prepared_paragraphs):
+                        member_keys_by_item_id[str(input_item.get("id", item_index))] = str(
+                            id(prepared_paragraphs[paragraph_index])
+                        )
+                fragment_group_issues = _fragment_group_output_issues(
+                    parsed_prompt[1],
+                    outputs,
+                    _active_translator_token_counter(request_state),
+                    group_sizes,
+                    request_state.setdefault("fragment_group_outcomes", {}),
+                    member_keys_by_item_id,
+                )
+                invalid_fragment_groups = request_state.setdefault(
+                    "invalid_fragment_groups", {}
+                )
+                repair_records = request_state.setdefault("repair_records", {})
+                main_group_diagnostic_ids: set[int] = set()
+                final_fragment_failure_ids = request_state.setdefault(
+                    "final_fragment_failure_ids", set()
+                )
+                for group_id, reason in fragment_group_issues.items():
+                    first_group_failure = group_id not in invalid_fragment_groups
+                    invalid_fragment_groups.setdefault(group_id, reason)
+                    group_members = request_state.get(
+                        "fragment_group_members", {}
+                    ).get(group_id, ())
+                    group_member_ids = {
+                        id(member["paragraph"])
+                        for member in group_members
+                    }
+                    final_group_failure = (
+                        not repair_failed or bool(request_state.get("fatal_error"))
+                    )
+                    if final_group_failure:
+                        group_member_ids = rollback_fragment_group(
+                            policy, request_state, group_members, reason
+                        )
+                    else:
+                        restore_paragraph_snapshots(
+                            request_state.get("document_paragraph_snapshots", {}),
+                            group_member_ids,
+                        )
+                        request_state.get("translated_paragraph_ids", set()).difference_update(
+                            group_member_ids
+                        )
+                    main_group_diagnostic_ids.update(group_member_ids)
+                    if not final_group_failure:
+                        for group_member in group_members:
+                            member_paragraph = group_member["paragraph"]
+                            member_key = id(member_paragraph)
+                            if member_key in repair_records:
+                                continue
+                            member_translate_input, member_metadata = (
+                                metadata_for_packed_item(group_member)
+                            )
+                            member_prepared_result = group_member.get(
+                                "prepared_result"
+                            ) or ()
+                            repair_records[member_key] = {
+                                "paragraph": member_paragraph,
+                                "translate_input": member_translate_input,
+                                "tracker": group_member.get("tracker"),
+                                "source": str(
+                                    member_prepared_result[0]
+                                    if member_prepared_result
+                                    else member_paragraph.unicode or ""
+                                ),
+                                "reason": reason,
+                                "checks": {"fragment_group_invalid": True},
+                                "metadata": member_metadata,
+                                "layout_label": _paragraph_layout_label(
+                                    member_paragraph
+                                ),
+                                "fragment": True,
+                                "repair_status": "pending",
+                            }
+
+                    if not first_group_failure:
+                        continue
+                    for group_member in group_members:
+                        member_paragraph = group_member["paragraph"]
+                        member_prepared_result = group_member.get(
+                            "prepared_result"
+                        ) or ()
+                        member_metadata = group_member.get(
+                            "validation_metadata", {}
+                        )
+                        member_source = str(
+                            member_prepared_result[0]
+                            if member_prepared_result
+                            else member_paragraph.unicode or ""
+                        )
+                        main_group_diagnostic_ids.add(id(member_paragraph))
+                        _write_job_log(
+                            request_state,
+                            {
+                                "event": "item_outcome",
+                                "phase": "main",
+                                "id": group_member.get("paragraph_index"),
+                                "outcome": "retained_source"
+                                if final_group_failure
+                                else "needs_repair",
+                                "reason": reason,
+                                "checks": {"fragment_group_invalid": True},
+                                "fragment": True,
+                                "fragment_type": group_member.get("fragment_type"),
+                                "fragment_id": group_id,
+                                "placeholder_issues": [],
+                                "preview": _text_preview(member_source, api_key),
+                                "output_preview": "",
+                            },
+                            api_key,
+                        )
                 active_translator = request_state.get("active_llm_translator")
                 failed_paragraph_ids = request_state.get(
                     "failed_batch_paragraph_ids", set()
                 )
+                records_by_paragraph = {
+                    id(record["paragraph"]): record
+                    for record in repair_records.values()
+                    if record.get("paragraph") is not None
+                }
                 normalized_outputs = []
+                request_state["fragment_translation_pairs"] = []
                 for item_index, input_item in enumerate(parsed_prompt[1]):
                     output_index = int(input_item.get("id", item_index))
                     output_item = outputs[item_index] if item_index < len(outputs) else None
@@ -1340,30 +2851,116 @@ def _install_min_request_patches(
                     else:
                         paragraph = prepared_paragraphs[output_index]
 
-                    if was_deferred and paragraph is not None:
-                        # BabelDOC applies the source placeholder as a no-op result.
-                        # Restore the untouched paragraph before its queued retry.
-                        failed_paragraph_ids.add(id(paragraph))
-                    if failure_message:
+                    packed_item = packed_items_by_paragraph.get(id(paragraph), {}) if paragraph else {}
+                    prepared_result = packed_item.get("prepared_result") or ()
+                    translate_input = prepared_result[1] if len(prepared_result) > 1 else None
+                    metadata = validation_metadata.get(id(paragraph), {}) if paragraph else {}
+                    fragment_group_failure = (
+                        invalid_fragment_groups.get(str(metadata.get("fragment_id")))
+                        if metadata.get("fragment_id")
+                        else None
+                    )
+                    checks: dict[str, Any] = {}
+                    item_reason = str(failure_message or "")
+                    usable = False
+                    if was_deferred:
+                        # Truncated suffix items are requeued in document order;
+                        # the next main request, not the repair pass, owns them.
                         if paragraph is not None:
                             failed_paragraph_ids.add(id(paragraph))
-                        policy.record_failure(
-                            paragraph,
-                            str(failure_message),
+                    elif fragment_group_failure:
+                        checks = {"fragment_group_invalid": True}
+                        item_reason = fragment_group_failure
+                    elif not failure_message and isinstance(source_text, str):
+                        quality = validate_translation_output(
+                            source_text,
+                            translated_text,
+                            input_item,
+                            active_translator.calc_token_count
+                            if active_translator is not None
+                            else len,
                         )
-                    if (
-                        not failure_message
-                        and not was_deferred
-                        and paragraph is not None
-                        and isinstance(source_text, str)
-                        and translated_text == source_text
-                        and active_translator is not None
-                        and active_translator.calc_token_count(source_text) > 10
-                    ):
-                        failed_paragraph_ids.add(id(paragraph))
-                        policy.record_failure(
-                            paragraph,
-                            "模型返回的文本与原文相同，已保留原文。",
+                        usable = bool(quality["usable"])
+                        checks = quality["checks"]
+                        item_reason = quality["reason"]
+                    else:
+                        checks = {"non_empty": False}
+                        item_reason = item_reason or "模型未返回该段的有效译文，已保留原文。"
+
+                    if not was_deferred and not usable:
+                        if paragraph is not None:
+                            failed_paragraph_ids.add(id(paragraph))
+                        if repair_failed and paragraph is not None and not request_state.get("fatal_error"):
+                            paragraph_key = id(paragraph)
+                            existing_record = records_by_paragraph.get(paragraph_key)
+                            if existing_record is None:
+                                record = {
+                                    "paragraph": paragraph,
+                                    "translate_input": translate_input,
+                                    "tracker": packed_item.get("tracker"),
+                                    "source": str(source_text or ""),
+                                    "reason": item_reason,
+                                    "checks": checks,
+                                    "metadata": metadata,
+                                    "layout_label": _paragraph_layout_label(paragraph),
+                                    "fragment": bool(metadata.get("fragment")),
+                                    "repair_status": "pending",
+                                }
+                                repair_records[paragraph_key] = record
+                                records_by_paragraph[paragraph_key] = record
+                        elif (
+                            id(paragraph) not in final_fragment_failure_ids
+                            and (not fragment_group_failure or not repair_failed)
+                        ):
+                            policy.record_failure(paragraph, item_reason)
+                    elif usable and paragraph is not None:
+                        request_state.setdefault("translated_paragraph_ids", set()).add(id(paragraph))
+                        # BabelDOC applies the text later and may still reject it
+                        # with its own length check; keep what we accepted so the
+                        # fallback hook can apply it (or queue repair) and success
+                        # is only logged once the text is really in the paragraph.
+                        request_state.setdefault("accepted_outputs", {})[id(paragraph)] = {
+                            "text": translated_text,
+                            "translate_input": translate_input,
+                            "source": str(source_text or ""),
+                            "metadata": metadata,
+                            "tracker": packed_item.get("tracker"),
+                            "item_id": input_item.get("id", item_index),
+                        }
+                        if metadata.get("fragment") and isinstance(source_text, str):
+                            normalize_fragment_check_text = lambda value: re.sub(
+                                r"[. 。…，]{20,}", ".", str(value)
+                            )
+                            request_state["fragment_translation_pairs"].append(
+                                (
+                                    normalize_fragment_check_text(source_text),
+                                    normalize_fragment_check_text(translated_text),
+                                )
+                            )
+
+                    if paragraph is None or id(paragraph) not in main_group_diagnostic_ids:
+                        _write_job_log(
+                            request_state,
+                            {
+                                "event": "item_outcome",
+                                "phase": "main",
+                                "id": input_item.get("id", item_index),
+                                # "accepted" = passed our checks; a later
+                                # "translated"/"needs_repair" record says whether
+                                # BabelDOC actually applied it.
+                                "outcome": "deferred" if was_deferred else "accepted" if usable else "needs_repair" if repair_failed else "retained_source",
+                                "reason": "" if usable else item_reason,
+                                "checks": checks,
+                                "fragment": bool(metadata.get("fragment")),
+                                "fragment_type": metadata.get("fragment_type"),
+                                "fragment_id": metadata.get("fragment_id"),
+                                "placeholder_issues": checks.get("placeholder_issues", []),
+                                "preview": _text_preview(source_text, api_key),
+                                "output_preview": _text_preview(translated_text, api_key)
+                                if usable
+                                else "",
+                            },
+                            api_key,
                         )
 
                     # The private marker is consumed here. BabelDOC receives one
@@ -1374,7 +2971,7 @@ def _install_min_request_patches(
                             "id": input_item.get("id", item_index),
                             "output": (
                                 source_text
-                                if failure_message or not isinstance(translated_text, str)
+                                if failure_message or was_deferred or not usable
                                 else translated_text
                             ),
                         }
@@ -1423,6 +3020,411 @@ def _install_min_request_patches(
         except Exception as error:
             record_request_error(error)
             raise
+
+    def perform_repair_pass(document_translator: Any) -> None:
+        """Repair every failed item in one document-wide packed pass at most once."""
+        if request_state.get("repair_pass_ran"):
+            return
+        request_state["repair_pass_ran"] = True
+        repair_records = list(request_state.get("repair_records", {}).values())
+        if not repair_failed or not repair_records:
+            return
+
+        # A fragment group is one translation unit for rollback purposes.
+        # Ensure every original member is represented in the repair request,
+        # even if an earlier per-item failure only queued part of the group.
+        records_by_paragraph = {
+            id(record.get("paragraph")): record
+            for record in repair_records
+            if record.get("paragraph") is not None
+        }
+        repair_records_by_key = request_state.setdefault("repair_records", {})
+        fragment_group_members = request_state.get("fragment_group_members", {})
+        represented_group_ids = {
+            str(record.get("metadata", {}).get("fragment_id"))
+            for record in repair_records
+            if record.get("metadata", {}).get("fragment_id")
+        }
+        for group_id in represented_group_ids:
+            for member in fragment_group_members.get(group_id, ()):
+                paragraph = member["paragraph"]
+                if id(paragraph) in records_by_paragraph:
+                    continue
+                prepared_result = member.get("prepared_result") or ()
+                translate_input = prepared_result[1] if len(prepared_result) > 1 else None
+                expected_placeholders = _expected_placeholder_counts(translate_input)
+                fragment_index = member.get("fragment_index")
+                metadata = member.get("validation_metadata") or {
+                    "required_placeholders": [
+                        {"token": token, "count": count}
+                        for token, count in sorted(expected_placeholders.items())
+                    ],
+                    "fragment": True,
+                    "fragment_type": member.get("fragment_type"),
+                    "fragment_id": group_id,
+                    "fragment_part": "first" if fragment_index == 0 else "second",
+                    "fragment_sibling_paragraph": member.get("fragment_sibling_paragraph"),
+                    "continues_in": None,
+                    "continued_from": None,
+                    "previous_context": "",
+                    "next_context": "",
+                }
+                record = {
+                    "paragraph": paragraph,
+                    "translate_input": translate_input,
+                    "tracker": member.get("tracker"),
+                    "source": str(
+                        prepared_result[0]
+                        if prepared_result
+                        else paragraph.unicode or ""
+                    ),
+                    "reason": request_state.get("invalid_fragment_groups", {}).get(
+                        group_id, "Linked fragment group requires repair."
+                    ),
+                    "checks": {"fragment_group_invalid": True},
+                    "metadata": metadata,
+                    "layout_label": _paragraph_layout_label(paragraph),
+                    "fragment": True,
+                    "repair_status": "pending",
+                }
+                repair_records_by_key[id(paragraph)] = record
+                records_by_paragraph[id(paragraph)] = record
+        repair_records = list(repair_records_by_key.values())
+
+        request_batch_callback = request_state.get("request_batch_callback")
+        if not callable(request_batch_callback) or document_translator is None:
+            for repair_id, record in enumerate(repair_records):
+                record["repair_status"] = "unavailable"
+                record["repair_reason"] = record.get("reason", "补译不可用。")
+                record["repair_checks"] = {"repair_available": False}
+                policy.record_failure(record.get("paragraph"), record["repair_reason"])
+                metadata = record.get("metadata", {})
+                _write_job_log(
+                    request_state,
+                    {
+                        "event": "item_outcome",
+                        "phase": "repair",
+                        "id": repair_id,
+                        "outcome": "retained_source",
+                        "reason": record["repair_reason"],
+                        "checks": record["repair_checks"],
+                        "fragment": record.get("fragment", False),
+                        "fragment_type": metadata.get("fragment_type"),
+                        "fragment_id": metadata.get("fragment_id"),
+                        "placeholder_issues": [],
+                        "preview": _text_preview(record.get("source", ""), api_key),
+                        "output_preview": "",
+                    },
+                    api_key,
+                )
+            _write_job_log(
+                request_state,
+                {"event": "repair_summary", "repair_request_count": 0, "failed_items": len(repair_records)},
+                api_key,
+            )
+            return
+
+        request_state["active_llm_translator"] = document_translator
+        token_counter = document_translator.calc_token_count
+        repair_items: list[dict[str, Any]] = []
+        records_by_repair_id: dict[int, dict[str, Any]] = {}
+        for repair_id, record in enumerate(repair_records):
+            metadata = record.get("metadata", {})
+            repair_item: dict[str, Any] = {
+                "id": repair_id,
+                "input": record.get("source", ""),
+                "layout_label": record.get("layout_label", "text"),
+                "repair_reason": record.get("reason", ""),
+                "required_placeholders": metadata.get("required_placeholders", []),
+                "previous_context": metadata.get("previous_context", ""),
+                "next_context": metadata.get("next_context", ""),
+            }
+            placeholders_hint = getattr(record.get("translate_input"), "get_placeholders_hint", None)
+            if callable(placeholders_hint):
+                hint = placeholders_hint()
+                if hint:
+                    repair_item["formula_placeholders_hint"] = hint
+            records_by_repair_id[repair_id] = record
+            repair_items.append(repair_item)
+        # Repair items are renumbered, so fragment links are rebuilt against the
+        # new ids (main-pass ids would point at unrelated repair items).
+        _link_fragment_items(
+            [
+                (item, id(records_by_repair_id[item["id"]].get("paragraph")),
+                 records_by_repair_id[item["id"]].get("metadata", {}))
+                for item in repair_items
+            ]
+        )
+
+        repair_prompt_prefix = (
+            "Translate each input paragraph into Chinese as an independent fixed unit. "
+            "This is the one packed repair pass for unusable main-pass outputs. "
+            "Do not translate or copy previous_context or next_context; they are read-only "
+            "neighboring context only. Preserve each listed required_placeholders token "
+            "exactly the specified number of times and keep each formula placeholder inside "
+            "the same <style> span as in the input. If fragment_id is present, the item is "
+            "one part (fragment_part) of a sentence split across a column or page break, and "
+            "continues_in / continued_from name the other part's id when it is in this "
+            "request; translate only this item's own fragment; do not move content between "
+            "items and do not return an empty output. Return only a JSON array with one "
+            "{id, output} object per input.\n"
+            "## Here is the input:\n"
+        )
+
+        def pack_repair_items(items: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+            return pack_items_by_output_budget(
+                items,
+                max_output_tokens,
+                lambda item: token_counter(str(item.get("input", ""))),
+                expansion_factor=request_state.get(
+                    "output_expansion_factor", OUTPUT_EXPANSION_FACTOR
+                ),
+            )
+
+        repair_batches = pack_repair_items(repair_items)
+        request_budget.add_additional_requests(len(repair_batches))
+        _write_job_log(
+            request_state,
+            {
+                "event": "repair_started",
+                "item_count": len(repair_items),
+                "planned_requests": len(repair_batches),
+                "main_minimum_requests": request_state.get(
+                    "main_minimum_requests", request_budget.requests
+                ),
+                "main_requests_at_repair": request_budget.requests,
+            },
+            api_key,
+        )
+        def send_repair_batch(batch: list[dict[str, Any]]) -> Any:
+            # Links must only name items inside the request actually sent.
+            linked = [dict(item) for item in batch]
+            _link_fragment_items(
+                [
+                    (
+                        item,
+                        id(records_by_repair_id[item["id"]].get("paragraph")),
+                        records_by_repair_id[item["id"]].get("metadata", {}),
+                    )
+                    for item in linked
+                    if item.get("id") in records_by_repair_id
+                ]
+            )
+            return request_batch_callback(
+                linked,
+                prefix_override=repair_prompt_prefix,
+                phase="repair",
+            )
+
+        def log_repair_batch_error(error: Exception) -> None:
+            # Not fatal: the batch's paragraphs keep their original text and the
+            # remaining repair batches (and earlier results) are unaffected.
+            _write_job_log(
+                request_state,
+                {
+                    "event": "repair_error",
+                    "error": log_safe_error(error, api_key),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                },
+                api_key,
+            )
+
+        try:
+            repaired_outputs = translate_json_items_with_splitting(
+                repair_items,
+                send_repair_batch,
+                request_budget,
+                repack_remaining=pack_repair_items,
+                stop_when_capped=True,
+                single_pass=True,
+                on_batch_error=log_repair_batch_error,
+            )
+        except Exception as error:
+            _write_job_log(
+                request_state,
+                {
+                    "event": "repair_error",
+                    "error": log_safe_error(error, api_key),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                },
+                api_key,
+            )
+            repaired_outputs = []
+
+        # Repair has no later continuation queue. Treat a deferred or missing
+        # completion as failed here so a linked group cannot be partially used.
+        repair_validation_outputs = []
+        for output in repaired_outputs:
+            if not isinstance(output, dict):
+                continue
+            normalized = dict(output)
+            if normalized.pop("_ztf_deferred", False):
+                normalized["_ztf_failed"] = "Repair output was incomplete; original text retained."
+            repair_validation_outputs.append(normalized)
+        outputs_by_id = {
+            int(item.get("id")): item
+            for item in repair_validation_outputs
+            if str(item.get("id", "")).isdigit()
+        }
+        repair_group_sizes = {
+            group_id: sum(
+                1
+                for record in records_by_repair_id.values()
+                if str(record.get("metadata", {}).get("fragment_id") or "")
+                == group_id
+            )
+            for group_id in represented_group_ids
+        }
+        repair_member_keys = {
+            str(repair_id): str(id(record["paragraph"]))
+            for repair_id, record in records_by_repair_id.items()
+        }
+        repair_group_issues = _fragment_group_output_issues(
+            repair_items,
+            repair_validation_outputs,
+            token_counter,
+            repair_group_sizes,
+            {},
+            repair_member_keys,
+        )
+        failed_repair_groups = set(repair_group_issues)
+        for group_id, reason in repair_group_issues.items():
+            rollback_fragment_group(
+                policy,
+                request_state,
+                fragment_group_members.get(group_id, ()),
+                reason,
+            )
+
+        repair_quality_by_id: dict[int, dict[str, Any]] = {}
+        repair_translation_by_id: dict[int, Any] = {}
+        for repair_id, record in records_by_repair_id.items():
+            repair_item = repair_items[repair_id]
+            output_item = outputs_by_id.get(repair_id, {})
+            translated = output_item.get("output")
+            failure_message = output_item.get("_ztf_failed")
+            quality = (
+                validate_translation_output(
+                    repair_item["input"],
+                    translated,
+                    repair_item,
+                    token_counter,
+                )
+                if not failure_message
+                else {"usable": False, "reason": str(failure_message), "checks": {"non_empty": False}}
+            )
+            repair_translation_by_id[repair_id] = translated
+            group_id = str(record.get("metadata", {}).get("fragment_id") or "")
+            if group_id in failed_repair_groups:
+                quality = {
+                    "usable": False,
+                    "reason": repair_group_issues[group_id],
+                    "checks": {"fragment_group_invalid": True},
+                }
+            repair_quality_by_id[repair_id] = quality
+
+        applied_by_id: dict[int, bool] = {}
+        for repair_id, record in records_by_repair_id.items():
+            quality = repair_quality_by_id[repair_id]
+            translated = repair_translation_by_id.get(repair_id)
+            applied = False
+            if quality["usable"]:
+                try:
+                    applied = bool(
+                        document_translator.il_translator.post_translate_paragraph(
+                            record["paragraph"],
+                            record["tracker"],
+                            record["translate_input"],
+                            str(translated),
+                        )
+                    )
+                except Exception as error:
+                    quality = {
+                        "usable": False,
+                        "reason": "补译结果无法应用，已保留原文。",
+                        "checks": quality.get("checks", {}),
+                    }
+                    _write_job_log(
+                        request_state,
+                        {"event": "repair_apply_error", "error": log_safe_error(error, api_key)},
+                        api_key,
+                    )
+            applied_by_id[repair_id] = applied
+            if applied:
+                request_state.setdefault("translated_paragraph_ids", set()).add(
+                    id(record["paragraph"])
+                )
+
+        # post_translate_paragraph mutates in place. If applying one member of
+        # an otherwise-valid group fails, restore and fail every member too.
+        for group_id in represented_group_ids - failed_repair_groups:
+            group_repair_ids = [
+                repair_id
+                for repair_id, record in records_by_repair_id.items()
+                if str(record.get("metadata", {}).get("fragment_id") or "")
+                == group_id
+            ]
+            if any(not applied_by_id.get(repair_id, False) for repair_id in group_repair_ids):
+                reason = "A linked fragment repair could not be applied; the original group was retained."
+                repair_group_issues[group_id] = reason
+                failed_repair_groups.add(group_id)
+                rollback_fragment_group(
+                    policy,
+                    request_state,
+                    fragment_group_members.get(group_id, ()),
+                    reason,
+                )
+
+        for repair_id, record in records_by_repair_id.items():
+            quality = repair_quality_by_id[repair_id]
+            group_id = str(record.get("metadata", {}).get("fragment_id") or "")
+            translated = repair_translation_by_id.get(repair_id)
+            if group_id in failed_repair_groups:
+                applied = False
+                record["repair_status"] = "failed"
+                record["repair_reason"] = repair_group_issues[group_id]
+                record["repair_checks"] = {"fragment_group_invalid": True}
+            else:
+                applied = applied_by_id.get(repair_id, False)
+                if applied:
+                    record["repair_status"] = "repaired"
+                    record["repair_checks"] = quality["checks"]
+                else:
+                    record["repair_status"] = "failed"
+                    record["repair_reason"] = quality.get("reason") or "补译未通过检查，已保留原文。"
+                    record["repair_checks"] = quality.get("checks", {})
+            if not applied:
+                policy.record_failure(record.get("paragraph"), record["repair_reason"])
+
+            _write_job_log(
+                request_state,
+                {
+                    "event": "item_outcome",
+                    "phase": "repair",
+                    "id": repair_id,
+                    "outcome": "repaired" if applied else "retained_source",
+                    "reason": "" if applied else record.get("repair_reason", ""),
+                    "checks": record.get("repair_checks", {}),
+                    "fragment": record.get("fragment", False),
+                    "fragment_type": record.get("metadata", {}).get("fragment_type"),
+                    "fragment_id": record.get("metadata", {}).get("fragment_id"),
+                    "placeholder_issues": record.get("repair_checks", {}).get("placeholder_issues", []),
+                    "preview": _text_preview(record.get("source", ""), api_key),
+                    "output_preview": _text_preview(translated, api_key) if applied else "",
+                },
+                api_key,
+            )
+
+        _write_job_log(
+            request_state,
+            {
+                "event": "repair_summary",
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "repaired_items": sum(record.get("repair_status") == "repaired" for record in repair_records),
+                "failed_items": sum(record.get("repair_status") != "repaired" for record in repair_records),
+            },
+            api_key,
+        )
 
     # Replacing the decorated methods removes BabelDOC's tenacity retries. The
     # OpenAI SDK client is also constructed with max_retries=0 above. Bypassing
@@ -1491,6 +3493,8 @@ def _install_min_request_patches(
                 return None
 
             if getattr(owner, "use_as_fallback", False):
+                if apply_accepted_after_babeldoc_rejection(owner, args):
+                    return None
                 paragraph = args[0] if args else None
                 policy.record_failure(
                     paragraph,
@@ -1511,7 +3515,13 @@ def _install_min_request_patches(
         def _translate_document_batches(self) -> None:
             first_function, first_args, _ = self.tasks[0]
             translator = first_function.__self__
+            request_state["document_translator"] = translator
+            request_state["reference_paragraph_ids"] = collect_reference_paragraph_ids(
+                translator.il_translator.docs, translate_references
+            )
+            request_state["preserved_paragraph_ids"] = set()
             docs = translator.il_translator.docs
+            repeated_marginal_ids = collect_repeated_marginal_ids(docs)
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
@@ -1521,6 +3531,46 @@ def _install_min_request_patches(
             seen_paragraphs: set[int] = set()
             for task_index, (function, args, kwargs) in enumerate(self.tasks):
                 batch = args[0]
+                fragment_kind = None
+                fragment_group = None
+                fragment_siblings: dict[int, tuple[int, str]] = {}
+                fragment_sibling_paragraphs: dict[int, int] = {}
+                if len(getattr(batch, "paragraphs", ())) == 2:
+                    pair = batch.paragraphs
+                    pair_pages = getattr(batch, "pages", ())
+                    if len(pair_pages) == 2 and pair_pages[0] is not pair_pages[1]:
+                        fragment_kind = "cross-page"
+                    elif (
+                        len(pair_pages) == 2
+                        and pair_pages[0] is pair_pages[1]
+                        and all(_is_body_text_paragraph(part) for part in pair)
+                    ):
+                        first_box = getattr(pair[0], "box", None)
+                        second_box = getattr(pair[1], "box", None)
+                        try:
+                            if (
+                                first_box is not None
+                                and second_box is not None
+                                and float(second_box.y2) - float(first_box.y2) > 20
+                            ):
+                                fragment_kind = "cross-column"
+                        except (TypeError, ValueError, AttributeError):
+                            fragment_kind = None
+                    if fragment_kind:
+                        first_id = str(getattr(pair[0], "debug_id", None) or f"{task_index}-0")
+                        second_id = str(getattr(pair[1], "debug_id", None) or f"{task_index}-1")
+                        fragment_group = f"{fragment_kind}:{first_id}:{second_id}"
+                        fragment_siblings = {
+                            id(pair[0]): (0, second_id),
+                            id(pair[1]): (1, first_id),
+                        }
+                        # The model-facing continues_in/continued_from hints must
+                        # name the sibling's item id inside each request, so keep
+                        # the sibling paragraph itself, not only its debug id.
+                        fragment_sibling_paragraphs = {
+                            id(pair[0]): id(pair[1]),
+                            id(pair[1]): id(pair[0]),
+                        }
                 page_font_map = args[2] if len(args) > 2 else {}
                 xobj_font_map = args[3] if len(args) > 3 else {}
                 title_paragraph = args[4] if len(args) > 4 else None
@@ -1549,6 +3599,11 @@ def _install_min_request_patches(
                             "position": page_positions.get(
                                 paragraph_id, (len(docs.page), index)
                             ),
+                            "fragment_type": fragment_kind,
+                            "fragment_group": fragment_group,
+                            "fragment_index": fragment_siblings.get(paragraph_id, (None, None))[0],
+                            "fragment_sibling_id": fragment_siblings.get(paragraph_id, (None, None))[1],
+                            "fragment_sibling_paragraph": fragment_sibling_paragraphs.get(paragraph_id),
                             "source_tokens": translator.calc_token_count(
                                 paragraph.unicode or ""
                             ),
@@ -1567,9 +3622,19 @@ def _install_min_request_patches(
             preprocessed_results: dict[int, Any] = {}
 
             def prepare_paragraph(item: dict[str, Any]) -> Any:
+                paragraph = item["paragraph"]
+                if (
+                    id(paragraph) in request_state["reference_paragraph_ids"]
+                    or id(paragraph) in repeated_marginal_ids
+                    or _paragraph_is_marginal_or_stamp(paragraph, item["page"])
+                ):
+                    request_state["preserved_paragraph_ids"].add(id(paragraph))
+                    if pbar is not None:
+                        pbar.advance(1)
+                    return None, None
                 result = original_pre_translate(
                     translator.il_translator,
-                    item["paragraph"],
+                    paragraph,
                     item["tracker"],
                     item["page_font_map"],
                     item["xobj_font_map"],
@@ -1592,6 +3657,25 @@ def _install_min_request_patches(
             )
             request_budget.set_planned(len(packed))
             request_state["preprocessed_results"] = preprocessed_results
+            request_state["all_prepared_items"] = prepared_items
+            request_state["document_paragraph_snapshots"] = {
+                id(item["paragraph"]): (
+                    item["paragraph"],
+                    item["paragraph"].unicode,
+                    item["paragraph"].pdf_paragraph_composition,
+                )
+                for item in prepared_items
+            }
+            request_state["fragment_group_outcomes"] = {}
+            fragment_group_members: dict[str, list[dict[str, Any]]] = {}
+            for prepared_item in prepared_items:
+                group_id = str(prepared_item.get("fragment_group") or "")
+                if prepared_item.get("fragment_type") and group_id:
+                    fragment_group_members.setdefault(group_id, []).append(
+                        prepared_item
+                    )
+            request_state["fragment_group_members"] = fragment_group_members
+            request_state["main_minimum_requests"] = len(packed)
             request_state["output_expansion_factor"] = OUTPUT_EXPANSION_FACTOR
             pending_items = prepared_items[:]
 
@@ -1647,6 +3731,18 @@ def _install_min_request_patches(
                 request_state["current_packed_items"] = packed_batch
                 request_state["deferred_items"] = []
                 deferred_items: list[dict[str, Any]] = []
+                original_token_counter = translator.calc_token_count
+
+                def fragment_relaxed_token_count(value: str) -> int:
+                    normalized = re.sub(r"[. 。…，]{20,}", ".", str(value))
+                    for source_fragment, translated_fragment in request_state.get(
+                        "fragment_translation_pairs", ()
+                    ):
+                        if normalized == source_fragment or normalized == translated_fragment:
+                            return int(original_token_counter(source_fragment))
+                    return int(original_token_counter(value))
+
+                translator.calc_token_count = fragment_relaxed_token_count
                 try:
                     packed_function(
                         paragraph_batch,
@@ -1668,6 +3764,7 @@ def _install_min_request_patches(
                     )
                     raise
                 finally:
+                    translator.calc_token_count = original_token_counter
                     deferred_items = request_state.pop("deferred_items", [])
                     failed_ids = request_state.get(
                         "failed_batch_paragraph_ids", set()
@@ -1694,6 +3791,7 @@ def _install_min_request_patches(
                     request_state.pop("failed_batch_paragraph_ids", None)
                     request_state.pop("submitted_paragraph_ids", None)
                     request_state.pop("current_packed_items", None)
+                    request_state.pop("fragment_translation_pairs", None)
 
                 if deferred_items and not request_state.get("fatal_error"):
                     # Repack the unconfirmed suffix together with paragraphs that
@@ -1716,9 +3814,13 @@ def _install_min_request_patches(
                     request_budget.requests + len(remaining_batches)
                 )
 
+            if not request_state.get("fatal_error") and request_state.get("repair_records"):
+                perform_repair_pass(translator)
+
             paragraph_font_maps.clear()
             request_state.pop("preprocessed_results", None)
             request_state.pop("output_expansion_factor", None)
+            request_state.pop("all_prepared_items", None)
 
     llm_module.PriorityThreadPoolExecutor = DeferredTranslationExecutor
 
@@ -1743,9 +3845,37 @@ def main() -> int:
             "ZTF_MAX_OUTPUT_TOKENS", 8192, 1024
         )
         max_requests = _read_integer_setting("ZTF_MAX_REQUESTS", 20, 1)
+        repair_failed = _read_boolean_setting("ZTF_REPAIR_FAILED", True)
+        translate_references = _read_boolean_setting(
+            "ZTF_TRANSLATE_REFERENCES", False
+        )
     except ValueError as error:
         print(_redact(error, api_key), file=sys.stderr, flush=True)
         return 2
+
+    job_log_path = os.environ.get("ZTF_JOB_LOG_PATH", "").strip()
+    if job_log_path:
+        try:
+            log_directory = os.path.dirname(job_log_path)
+            if log_directory:
+                os.makedirs(log_directory, exist_ok=True)
+                log_files = sorted(
+                    (
+                        os.path.join(log_directory, name)
+                        for name in os.listdir(log_directory)
+                        if name.lower().endswith(".jsonl")
+                        and os.path.join(log_directory, name) != job_log_path
+                    ),
+                    key=lambda path: os.path.getmtime(path),
+                )
+                for old_path in log_files[:-19]:
+                    try:
+                        os.remove(old_path)
+                    except OSError:
+                        pass
+        except OSError:
+            # Logging is best-effort and never blocks a document translation.
+            job_log_path = ""
 
     state: dict[str, Any] = {
         "error": "",
@@ -1775,7 +3905,23 @@ def main() -> int:
     request_state: dict[str, Any] = {
         "fatal_error": "",
         "fatal_kind": "",
+        "job_log_path": job_log_path,
+        "repair_request_count": 0,
+        "repair_records": {},
+        "translated_paragraph_ids": set(),
+        "fragment_paragraph_ids": set(),
     }
+    _write_job_log(
+        request_state,
+        {
+            "event": "job_started",
+            "repair_failed": repair_failed,
+            "translate_references": translate_references,
+            "max_requests": max_requests,
+            "max_output_tokens": max_output_tokens,
+        },
+        api_key,
+    )
 
     def create_progress_handler(config: Any, show_log: bool = False):
         del config, show_log
@@ -1836,6 +3982,9 @@ def main() -> int:
             request_budget,
             request_state,
             max_output_tokens,
+            repair_failed,
+            translate_references,
+            api_key,
         )
         _configure_logging(api_key, policy)
         _install_synchronous_log_capture(babeldoc_main, policy)
@@ -1875,6 +4024,21 @@ def main() -> int:
         return message
 
     if request_state.get("fatal_error"):
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                # The fatal message may carry a provider body (it is shown,
+                # redacted, in the alert); the log only gets the fixed summary.
+                "error": request_state.get("fatal_error_log")
+                or log_safe_error(request_state["fatal_error"], api_key),
+            },
+            api_key,
+        )
         _emit(
             "ZTF_ERROR ",
             {
@@ -1882,6 +4046,7 @@ def main() -> int:
                 "kind": request_state.get("fatal_kind") or "api_error",
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
+                "log_path": job_log_path or None,
             },
             api_key,
         )
@@ -1890,6 +4055,18 @@ def main() -> int:
     # BabelDOC can swallow paragraph API errors and still emit a PDF and exit 0.
     decision = policy.decision() if "policy" in locals() else None
     if decision and decision["kind"] == "translation_failed":
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "reason": decision["message"],
+            },
+            api_key,
+        )
         _emit(
             "ZTF_ERROR ",
             {
@@ -1898,12 +4075,25 @@ def main() -> int:
                 "failed_paragraphs": decision["failed_paragraphs"],
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
+                "log_path": job_log_path or None,
             },
             api_key,
         )
         return 1
 
     if state["error"]:
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "reason": state["error"],
+            },
+            api_key,
+        )
         _emit(
             "ZTF_ERROR ",
             {
@@ -1911,12 +4101,24 @@ def main() -> int:
                 "kind": state["error_kind"],
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
+                "log_path": job_log_path or None,
             },
             api_key,
         )
         return exit_code or 1
 
     if exit_code != 0 or not state["result"]:
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+            },
+            api_key,
+        )
         return exit_code or 1
 
     if decision and decision["kind"] == "warning":
@@ -1930,12 +4132,32 @@ def main() -> int:
             },
             api_key,
         )
+    _write_job_log(
+        request_state,
+        {
+            "event": "job_finished",
+            "outcome": "warning" if decision and decision["kind"] == "warning" else "success",
+            "requests": request_budget.requests,
+            "planned_requests": request_budget.planned,
+            "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+            "repair_request_count": request_state.get("repair_request_count", 0),
+            "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
+            "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
+        },
+        api_key,
+    )
     _emit(
         "ZTF_RESULT ",
         {
             "mono": state["result"],
             "requests": request_budget.requests,
+            "main_minimum_requests": request_state.get(
+                "main_minimum_requests", request_budget.requests
+            ),
             "planned": request_budget.planned,
+            "log_path": job_log_path or None,
+            "repair_request_count": request_state.get("repair_request_count", 0),
+            "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
         },
         api_key,
     )

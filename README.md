@@ -1,6 +1,6 @@
 # Translate Files for Zotero
 
-当前版本：**0.2.0**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.2.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -10,7 +10,7 @@
 - 结果作为新的已存储文件附件加入 Zotero。同一父条目下的译本标题为“原标题（中文译本）”。
 - 插件没有设置页数上限。多个任务按 FIFO 顺序排队，同一时间处理一个；失败后提示错误并继续下一个任务，不自动重试。
 - 如果本次进入段落翻译的内容没有任何段落成功，任务会按失败处理。部分段落失败时，任务仍可完成，进度窗口会显示失败段数，失败段落保留原文。
-- 整篇文档按阅读顺序合并并尽量用最少的请求翻译；自动术语表提取和失败后的逐段重发已关闭。每篇文档的完成状态会显示实际请求次数。
+- 整篇文档按阅读顺序合并并尽量用最少的请求翻译；自动术语表提取和逐段重发已关闭，失败段落默认会在主请求后进入一次合并补译。每篇文档的完成状态会显示实际请求次数。
 
 ## 系统要求
 
@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 5. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
 6. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
 
-这些设置分别使用 Zotero 偏好键 `extensions.zotero-translate-files.baseURL`、`extensions.zotero-translate-files.apiKey`、`extensions.zotero-translate-files.model`、`extensions.zotero-translate-files.babeldocPath`、`extensions.zotero-translate-files.maxOutputTokens` 和 `extensions.zotero-translate-files.maxRequests`。
+这些设置分别使用 Zotero 偏好键 `extensions.zotero-translate-files.baseURL`、`extensions.zotero-translate-files.apiKey`、`extensions.zotero-translate-files.model`、`extensions.zotero-translate-files.babeldocPath`、`extensions.zotero-translate-files.maxOutputTokens`、`extensions.zotero-translate-files.maxRequests`、`extensions.zotero-translate-files.repairFailed` 和 `extensions.zotero-translate-files.translateReferences`。
 
 点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求，并检查 BabelDOC 可执行文件及对应的 Python 路径是否存在。它不会运行一次完整的 PDF 翻译。
 
@@ -99,7 +99,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 
 插件先完成段落预处理并剔除不需要翻译的内容，再按文档阅读顺序收集段落（包括跨页和跨栏段落），最后按输出 token 预算贪心打包。对正数段落估算值，这种顺序打包会得到最少的连续批次数；整篇文档放得下时只发一个请求。估算值为 `ceil(源文 token 数 × 1.6 + 20)`，批次最多使用配置输出上限的 `90%`，为中文扩展和 JSON 留出余量。截断后会将最后一个解析项视为未确认，只确认此前的完整项，再按观察到的扩展比例重新打包未确认后缀；如果没有完整项，才将剩余批次二分。单段仍被截断时保留原文并计入失败段数。观察到实际输出长度后，插件会更新扩展比例并重新打包尚未发送的段落。
 
-翻译提示词要求整篇文档内的术语、缩写和专名保持一致，并沿用首次出现时的译法。插件不运行额外的自动术语表请求，也不会在批次失败后逐段重发；BabelDOC 的翻译缓存也会绕过，避免失败时保留的原文被后续任务当作译文复用。请求上限统计所有实际发出的 Chat Completions 调用，达到配置上限就停止；HTTP 429 等接口错误只尝试一次。
+翻译提示词要求整篇文档内的术语、缩写和专名保持一致，并沿用首次出现时的译法。插件不运行额外的自动术语表请求，也不会在批次失败后逐段重发；失败段落默认进入一次合并补译流程，BabelDOC 的翻译缓存也会绕过，避免失败时保留的原文被后续任务当作译文复用。请求上限统计所有实际发出的 Chat Completions 调用，达到配置上限就停止；HTTP 429 等接口错误只尝试一次。
 
 ## API key 的处理
 
@@ -160,7 +160,20 @@ python tests/test_min_requests.py
 ```
 
 `tests/test_min_requests.py` 文件头说明了如何启动本地 mock OpenAI 服务，并用已安装的 BabelDOC 环境对一页 PDF 做端到端检查。
+`python tests/test_fragment_repair_e2e.py` 会使用 `ztest/samples/liu2022/original.pdf` 和真实 runner 验证坏片段响应被整组补译；可用 `ZTF_FRAGMENT_REPAIR_PDF` 指定样本文件、用 `ZTF_BABELDOC_PYTHON` 指定 BabelDOC 环境的 Python。显式运行时缺少所需文件会报告路径错误，不会跳过。
 
 ## 许可证与致谢
 
 本项目采用 GNU Affero General Public License v3.0 only（AGPL-3.0-only）；许可证全文见 [LICENSE](LICENSE)（亦可参阅 [GNU 官方文本](https://www.gnu.org/licenses/agpl-3.0.txt)）。感谢开源项目 BabelDOC 提供 PDF 版面解析与翻译引擎。
+
+## 0.2.1 翻译质量与版式控制
+
+- BabelDOC 识别出的跨栏、跨页连续段落会以 `continues_in` / `continued_from` 标记发送给模型。提示词要求模型分别翻译各自的连续片段，不搬动内容，也不返回空文本。片段仍检查空输出、未翻译的英文和占位符；长度与编辑距离检查只对片段放宽。
+- **失败段落合并补译**默认开启。主翻译完成后，所有空输出、缺失项、质量检查失败或占位符不匹配的段落进入一次合并补译流程。补译请求会携带前后段落作为只读上下文；为满足输出 token 上限，补译可能分成多个请求，但都计入“单篇最多请求次数”。补译仍失败的段落保留原文并计入失败数。
+- **翻译参考文献**默认关闭。检测到 References / Bibliography / 参考文献标题或参考文献版面类后，后续文献条目会留在原文。页眉、页脚、页码、IEEE 授权下载戳、DOI、ISBN 与版权边注也会保留原样，不发送给模型；即使版面分析把页眉页脚误标为正文，只要同一段文字（忽略其中的数字）在两页以上的页面顶部或底部重复出现，也会按页眉页脚保留。
+- 正文段落按原始字号分组；同组最终字号比例目标相差不超过 5%。系统先压缩段间距，再使用字号组的共同缩放比例，比例下限为 0.8。只有单段在压缩段间距并缩到 0.8 后仍无法排下时，才允许该段单独低于下限，并记录在日志里。图表、表格和独立公式不应用此正文策略，包含行内公式的正文仍会参与分组。
+- 每个任务会在 Zotero 数据目录的 `zotero-translate-files/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
+
+设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
+
+真实 PDF 回归应使用 `ztest/samples/liu2022/original.pdf` 和 `ztest/samples/P01.pdf`，以 `tests/mock_openai_server.py --bad-fragments` 提供故意错误的跨段输出。检查 JSONL 中的主请求数、片段条目数和补译请求数；用 PyMuPDF 比较每页正文中同一原始字号组的最小/最大字号；并确认页眉、页脚、下载戳和参考文献文本与原文逐字节一致，输出文本中没有 `{v…}` 占位符。
