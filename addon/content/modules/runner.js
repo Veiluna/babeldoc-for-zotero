@@ -76,12 +76,35 @@ var ZoteroTranslateFilesRunner = (function () {
   }
 
   function formatFailure(exitCode, errorText, stderrLines, streamError, apiKey, reason) {
-    var detail = errorText || stderrLines.join("\n") || streamError || "没有收到 BabelDOC 结果文件。";
+    var detail = errorText || firstDiagnosticLine(stderrLines) || streamError || "没有收到 BabelDOC 结果文件。";
+    if (ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function") {
+      detail = ZoteroTranslateFilesConfig.formatHTMLDiagnostic(detail);
+    }
     detail = redact(detail, apiKey).trim();
     if (detail.length > 5000) detail = detail.slice(-5000);
     var codeText = exitCode === 0 ? "" : "（退出码 " + exitCode + "）";
     var reasonText = reason ? reason + (detail ? "\n" + detail : "") : detail;
     return "BabelDOC 翻译失败" + codeText + (reasonText ? "：\n" + reasonText : "。");
+  }
+
+  function firstDiagnosticLine(lines) {
+    var candidates = (lines || []).map(function (line) {
+      return String(line || "").trim();
+    }).filter(Boolean);
+    var errorLine = candidates.find(function (line) {
+      return /\b(?:ERROR|HTTP\s+\d{3}|Error code:\s*\d{3})\b|API(?:Status|Connection|Error)|rate.?limit|too many requests|quota|额度|次数|限流|ContentFilterError/i.test(line);
+    });
+    if (errorLine) return errorLine;
+    for (var index = candidates.length - 1; index >= 0; index--) {
+      if (/^Traceback \(most recent call last\):$/.test(candidates[index])) {
+        var tracebackTail = candidates.slice(index + 1).filter(Boolean);
+        return tracebackTail[tracebackTail.length - 1] || candidates[index];
+      }
+    }
+    var nonInfoLine = candidates.find(function (line) {
+      return !/\bINFO\b|Translation completed\./i.test(line);
+    });
+    return nonInfoLine || candidates[0] || "";
   }
 
   async function translate(attachmentItem, options) {
@@ -170,6 +193,10 @@ var ZoteroTranslateFilesRunner = (function () {
         "--lang-in", "en",
         "--lang-out", "zh",
         "--no-dual",
+        "--no-auto-extract-glossary",
+        "--disable-same-text-fallback",
+        "--custom-system-prompt",
+        "Translate the complete document as one unit. Translate technical terms, abbreviations, and named entities consistently across every item. Use the translation chosen at the first occurrence again for later occurrences. Keep abbreviations, formulas, citations, and placeholders unchanged. Return exactly the JSON array format required by the surrounding prompt, with one output item for each input item and no extra text.",
         "--watermark-output-mode", "no_watermark",
         "--report-interval", "0.5",
       ];
@@ -184,6 +211,8 @@ var ZoteroTranslateFilesRunner = (function () {
         arguments: args,
         environment: {
           ZTF_OPENAI_API_KEY: apiKey,
+          ZTF_MAX_OUTPUT_TOKENS: String(settings.maxOutputTokens),
+          ZTF_MAX_REQUESTS: String(settings.maxRequests),
           PYTHONUTF8: "1",
           PYTHONIOENCODING: "utf-8",
           NO_COLOR: "1",
@@ -211,7 +240,9 @@ var ZoteroTranslateFilesRunner = (function () {
       var stderrLines = [];
       var stderrStreamError = "";
       var resultPath = null;
+      var requestCount = null;
       var eventError = "";
+      var eventErrorKind = "";
       var warning = null;
 
       function handleProtocolLine(rawLine) {
@@ -233,20 +264,36 @@ var ZoteroTranslateFilesRunner = (function () {
         if (marker === "ZTF_PROGRESS ") {
           var overall = Number(event.overall);
           if (!Number.isFinite(overall)) overall = 0;
+          var progress = {
+            overall: Math.max(0, Math.min(100, overall)),
+            stage: String(event.stage || "正在翻译"),
+            current: event.current == null ? null : Number(event.current),
+            total: event.total == null ? null : Number(event.total),
+          };
+          if (event.requests != null) {
+            var requests = Number(event.requests);
+            if (Number.isFinite(requests)) progress.requests = Math.max(0, Math.floor(requests));
+          }
+          if (event.planned != null) {
+            var planned = Number(event.planned);
+            if (Number.isFinite(planned)) progress.planned = Math.max(0, Math.floor(planned));
+          }
           try {
-            onProgress({
-              overall: Math.max(0, Math.min(100, overall)),
-              stage: String(event.stage || "正在翻译"),
-              current: event.current == null ? null : Number(event.current),
-              total: event.total == null ? null : Number(event.total),
-            });
+            onProgress(progress);
           } catch (error) {
             // UI updates must not prevent the child process from being drained.
           }
         } else if (marker === "ZTF_RESULT ") {
           if (event.mono) resultPath = String(event.mono);
+          var resultRequests = event.requests == null ? NaN : Number(event.requests);
+          if (Number.isFinite(resultRequests)) requestCount = Math.max(0, Math.floor(resultRequests));
         } else if (marker === "ZTF_ERROR ") {
-          eventError = redact(event.message || event.error || "BabelDOC 报告了错误。", apiKey);
+          var errorDetail = event.message || event.error || "BabelDOC 报告了错误。";
+          if (ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function") {
+            errorDetail = ZoteroTranslateFilesConfig.formatHTMLDiagnostic(errorDetail);
+          }
+          eventError = redact(errorDetail, apiKey);
+          eventErrorKind = String(event.kind || "");
         } else if (marker === "ZTF_WARNING ") {
           var failedParagraphs = Number(event.failed_paragraphs);
           warning = {
@@ -294,7 +341,11 @@ var ZoteroTranslateFilesRunner = (function () {
       if (signal && signal.aborted) throw new Error("翻译任务已取消。");
 
       var exitCode = exitResult && exitResult.exitCode;
-      if (eventError) throw new Error(eventError);
+      if (eventError) {
+        var eventFailure = new Error(eventError);
+        if (eventErrorKind) eventFailure.kind = eventErrorKind;
+        throw eventFailure;
+      }
       if (exitCode !== 0) {
         throw new Error(formatFailure(exitCode, eventError, stderrLines, stderrStreamError, apiKey));
       }
@@ -314,6 +365,7 @@ var ZoteroTranslateFilesRunner = (function () {
       return {
         outputPath: resultPath,
         warning: warning,
+        requestCount: requestCount,
         cleanup: cleanup,
       };
     } catch (error) {
@@ -322,7 +374,9 @@ var ZoteroTranslateFilesRunner = (function () {
       } catch (cleanupError) {
         // Preserve the original failure; the queue reports cleanup failures after successful imports.
       }
-      throw new Error(redact(error && error.message ? error.message : error, apiKey));
+      var wrappedError = new Error(redact(error && error.message ? error.message : error, apiKey));
+      if (error && error.kind) wrappedError.kind = error.kind;
+      throw wrappedError;
     } finally {
       if (signal && abortListener) signal.removeEventListener("abort", abortListener);
     }

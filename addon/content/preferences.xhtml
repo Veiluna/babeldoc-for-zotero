@@ -35,6 +35,26 @@
   </html:div>
 
   <html:div>
+    <html:label for="zotero-translate-files-preferences-max-output-tokens"
+                data-l10n-id="zotero-translate-files-pref-max-output-tokens" />
+    <html:input id="zotero-translate-files-preferences-max-output-tokens"
+                type="number"
+                min="1024"
+                step="1"
+                preference="extensions.zotero-translate-files.maxOutputTokens" />
+  </html:div>
+
+  <html:div>
+    <html:label for="zotero-translate-files-preferences-max-requests"
+                data-l10n-id="zotero-translate-files-pref-max-requests" />
+    <html:input id="zotero-translate-files-preferences-max-requests"
+                type="number"
+                min="1"
+                step="1"
+                preference="extensions.zotero-translate-files.maxRequests" />
+  </html:div>
+
+  <html:div>
     <html:label for="zotero-translate-files-preferences-babeldoc-path"
                 data-l10n-id="zotero-translate-files-pref-babeldoc-path" />
     <html:input id="zotero-translate-files-preferences-babeldoc-path"
@@ -46,6 +66,7 @@
                  data-l10n-id="zotero-translate-files-pref-browse" />
   </html:div>
 
+  <html:p data-l10n-id="zotero-translate-files-pref-request-help" />
   <html:p data-l10n-id="zotero-translate-files-pref-babeldoc-help" />
   <html:button id="zotero-translate-files-preferences-test"
                type="button"

@@ -38,7 +38,22 @@ var ZoteroTranslateFilesQueue = (function () {
     if (error && error.message != null) text = String(error.message);
     else text = String(error == null ? "翻译失败" : error);
 
-    var status = error && (error.status || error.statusCode);
+    var response = error && error.response;
+    var responseBody = error && (
+      error.responseText
+      || error.body
+      || (response && (response.responseText || response.body || response.text))
+    );
+    if (responseBody != null && /<!doctype\s+html|<html\b|<script\b|<title\b/i.test(String(responseBody))) {
+      text += "\n" + String(responseBody);
+    }
+
+    var status = error && (
+      error.status
+      || error.statusCode
+      || error.status_code
+      || (error.response && (error.response.status || error.response.status_code))
+    );
     if (status && !/\bHTTP\s+\d{3}\b/i.test(text)) text = "HTTP " + status + ": " + text;
     if (error && error.code && text.indexOf(String(error.code)) < 0) {
       text += "\n错误代码：" + String(error.code);
@@ -46,18 +61,28 @@ var ZoteroTranslateFilesQueue = (function () {
     return {
       raw: text,
       redacted: ZoteroTranslateFilesConfig.redact(text),
+      kind: error && (error.kind || error.error_kind) || "",
     };
   }
 
-  function getFailureCause(text) {
+  function getFailureCause(text, kind) {
+    if (kind === "request_cap" || /request_cap|单篇请求上限/i.test(text)) {
+      return "已达到单篇请求次数上限，任务已停止";
+    }
+    if (/必须是大于或等于\s*\d+\s*的整数|(?:设置|配置).{0,12}(?:无效|错误)|invalid (?:setting|configuration)/i.test(text)) {
+      return "翻译设置无效，请检查各项设置的格式";
+    }
     if (/\b(?:401|403)\b|unauthorized|forbidden|invalid[_ -]?api[_ -]?key|incorrect api key|insufficient permission|no permission/i.test(text)) {
       return "API key 无效或无权限";
     }
     if (/\b404\b|model[_ -]+not[_ -]+found|(?:HTTP|endpoint|interface|接口|model|模型).{0,40}(?:not found|does not exist)/i.test(text)) {
       return "接口地址或模型名不正确";
     }
-    if (/\b429\b|rate.?limit|too many requests|quota.{0,20}(?:exceeded|insufficient)|insufficient[_ -]+quota/i.test(text)) {
-      return "请求过于频繁或额度不足";
+    if (/\b429\b|rate.?limit|too many requests|quota|额度|请求次数(?:上限|已达|达到)|(?:API|接口).{0,20}(?:请求)?次数.{0,10}(?:上限|已达|达到)|限流/i.test(text)) {
+      return "请求过于频繁或额度不足（接口可能已达到请求次数上限）";
+    }
+    if (/<!doctype\s+html|<html\b|<script\b|<title\b/i.test(text)) {
+      return "接口返回了网页而不是 API 响应（可能已达到请求次数上限或被拦截）";
     }
     if (/BabelDOC.{0,40}(?:查询参数|query parameters?)/i.test(text)) {
       return "BabelDOC 不支持包含查询参数的接口地址";
@@ -84,10 +109,27 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   function getTechnicalDetail(text) {
-    var lines = String(text || "").split(/\r?\n/)
+    var original = String(text || "");
+    var counts = original.match(/Translation completed\.\s*Total:\s*(\d+)\s*,\s*Successful:\s*(\d+)\s*,\s*Fallback:\s*(\d+)/i);
+    var countSummary = counts
+      ? counts[1] + " 段中 " + counts[2] + " 段成功（" + counts[3] + " 段保留原文）"
+      : "";
+    var formatted = typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function"
+      ? ZoteroTranslateFilesConfig.formatHTMLDiagnostic(original)
+      : original;
+    formatted = ZoteroTranslateFilesConfig.redact(formatted);
+    var lines = String(formatted || "").split(/\r?\n/)
       .map(function (line) { return line.trim(); })
       .filter(Boolean);
-    var detail = lines.slice(-3).join(" | ") || "未提供错误详情";
+    var errorLine = lines.find(function (line) {
+      return /\b(?:ERROR|HTTP\s+\d{3}|Error code:\s*\d{3})\b|API(?:Status|Connection|Error)|rate.?limit|too many requests|quota|额度|次数|限流|ContentFilterError/i.test(line);
+    });
+    var detail = errorLine || lines.find(function (line) {
+      return !/\bINFO\b|Translation completed\./i.test(line);
+    }) || lines[0] || "未提供错误详情";
+    if (countSummary && detail.indexOf(countSummary) < 0) {
+      detail += "；" + countSummary;
+    }
     if (detail.length > 700) detail = "…" + detail.slice(-699);
     return detail;
   }
@@ -130,7 +172,7 @@ var ZoteroTranslateFilesQueue = (function () {
   function failureMessage(job, error) {
     var failureText = getFailureText(error);
     var title = getAttachmentTitle(null, job);
-    var cause = getFailureCause(failureText.raw);
+    var cause = getFailureCause(failureText.raw, failureText.kind);
     var detail = getTechnicalDetail(failureText.redacted);
     var message = title + "\n原因：" + cause + "\n技术详情：" + detail;
     return {
@@ -246,7 +288,15 @@ var ZoteroTranslateFilesQueue = (function () {
     var overall = Number(progress && progress.overall);
     if (!Number.isFinite(overall)) overall = 0;
     overall = Math.max(0, Math.min(100, overall));
-    return stage + " · " + Math.round(overall) + "%（队列中还有 " + queueRemaining + " 篇）";
+    var requestText = "";
+    var requests = Number(progress && progress.requests);
+    var planned = Number(progress && progress.planned);
+    if (Number.isFinite(requests)) {
+      requestText = " · 请求 " + Math.floor(requests);
+      if (Number.isFinite(planned) && planned > 0) requestText += "/" + Math.floor(planned);
+      else requestText += " 次";
+    }
+    return stage + " · " + Math.round(overall) + "%" + requestText + "（队列中还有 " + queueRemaining + " 篇）";
   }
 
   function refreshProgress(job, progress) {
@@ -304,7 +354,7 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
-  function closeProgressWindow(job, succeeded, aborted, warning, completedTitle) {
+  function closeProgressWindow(job, succeeded, aborted, warning, completedTitle, requestCount) {
     if (!currentProgress || currentProgress.job !== job) return;
     var entry = currentProgress;
     currentProgress = null;
@@ -317,6 +367,10 @@ var ZoteroTranslateFilesQueue = (function () {
         var completionText = "已完成：" + String(completedTitle || "中文译本");
         if (Number.isFinite(failedParagraphs) && failedParagraphs > 0) {
           completionText += "（有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文）";
+        }
+        var totalRequests = requestCount == null ? NaN : Number(requestCount);
+        if (Number.isFinite(totalRequests)) {
+          completionText += "（共请求 " + Math.floor(totalRequests) + " 次）";
         }
         entry.itemProgress.setText(completionText);
       } else if (aborted) {
@@ -336,6 +390,7 @@ var ZoteroTranslateFilesQueue = (function () {
     job.attachmentTitle = getAttachmentTitle(null, job);
     var translationResult = null;
     var translationWarning = null;
+    var translationRequestCount = null;
     var completedTitle = null;
     var succeeded = false;
     var skipped = false;
@@ -363,6 +418,11 @@ var ZoteroTranslateFilesQueue = (function () {
         signal: controller.signal,
       });
       translationWarning = translationResult && translationResult.warning;
+      var rawRequestCount = translationResult && translationResult.requestCount;
+      var reportedRequestCount = rawRequestCount == null ? NaN : Number(rawRequestCount);
+      if (Number.isFinite(reportedRequestCount)) {
+        translationRequestCount = Math.max(0, Math.floor(reportedRequestCount));
+      }
 
       if (controller.signal.aborted) return;
       var outputPath = typeof translationResult === "string"
@@ -414,6 +474,7 @@ var ZoteroTranslateFilesQueue = (function () {
         controller.signal.aborted,
         translationWarning,
         completedTitle,
+        translationRequestCount,
       );
     }
   }

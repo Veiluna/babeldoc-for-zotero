@@ -12,6 +12,7 @@ async function testConnection(
   outcome,
   apiKey = "DEMO/SECRET-ONLY",
   baseURL = "https://example.test/v1",
+  settingsError = null,
 ) {
   let testClick;
   const messages = new Map();
@@ -19,6 +20,7 @@ async function testConnection(
   const httpLogs = [];
   const pane = { dataset: {}, addEventListener() {} };
   const button = {
+    disabled: false,
     addEventListener(_event, callback) {
       testClick = callback;
     },
@@ -35,12 +37,19 @@ async function testConnection(
       },
     },
     getElementById(id) {
-      if (!elements[id]) elements[id] = { id };
+      if (!elements[id]) {
+        elements[id] = {
+          id,
+          removeAttribute() {},
+          setAttribute() {},
+        };
+      }
       return elements[id];
     },
   };
   const config = {
     getSettings() {
+      if (settingsError) throw settingsError;
       return { baseURL, apiKey, model: "test-model", babeldocPath: "" };
     },
     chatCompletionsURL(baseURL) {
@@ -73,8 +82,10 @@ async function testConnection(
 
   return {
     status: messages.get("zotero-translate-files-preferences-api-status"),
+    statusElement: elements["zotero-translate-files-preferences-api-status"],
     request: requests[0],
     httpLogs,
+    button,
     TimeoutException,
   };
 }
@@ -140,6 +151,15 @@ async function testConnection(
   const successCase = await testConnection({ response: { status: 204, responseText: "" } }, apiKey);
   assert.equal(successCase.status.messageID, "zotero-translate-files-pref-api-success");
   assert.equal(successCase.status.args.status, 204);
+
+  const invalidSettingsCase = await testConnection(
+    { response: { status: 204, responseText: "" } },
+    apiKey,
+    "https://example.test/v1",
+    new Error("单篇最多请求次数必须是大于或等于 1 的整数。"),
+  );
+  assert.equal(invalidSettingsCase.button.disabled, false, "settings validation must re-enable the test button");
+  assert.match(invalidSettingsCase.statusElement.textContent, /单篇最多请求次数必须是大于或等于 1 的整数/);
 
   const encodedKey = encodeURIComponent(apiKey);
   const encodedKeyLowerHex = encodedKey.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase());

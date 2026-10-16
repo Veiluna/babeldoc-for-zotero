@@ -88,13 +88,13 @@ def test_partial_failures_warn_when_some_paragraphs_succeeded() -> None:
     assert decision is not None
     assert decision["kind"] == "warning"
     assert decision["failed_paragraphs"] == 1
-    assert decision["message"] == "HTTP 429"
+    assert decision["message"].startswith("HTTP 429")
 
 
 def test_first_error_message_excludes_traceback_text() -> None:
     _, decision = run_policy(["Connection error\nTraceback: fake stack"], 0)
     assert decision is not None
-    assert decision["message"] == "Connection error"
+    assert decision["message"].startswith("Connection error")
 
 
 def test_empty_exception_message_counts_failure_and_uses_exception_type() -> None:
@@ -132,7 +132,7 @@ def test_empty_exception_message_counts_failure_and_uses_exception_type() -> Non
     assert decision is not None
     assert decision["kind"] == "translation_failed"
     assert decision["failed_paragraphs"] == 1
-    assert decision["message"] == "StopIteration"
+    assert decision["message"].startswith("StopIteration")
 
 
 def test_exception_is_preferred_to_source_text_containing_error_marker() -> None:
@@ -267,7 +267,7 @@ def test_partial_content_filter_rejections_warn_and_redact_the_reason() -> None:
     assert decision is not None
     assert decision["kind"] == "warning"
     assert decision["failed_paragraphs"] == 1
-    assert decision["message"] == f"rejected {secret}"
+    assert decision["message"].startswith(f"rejected {secret}")
 
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
@@ -287,7 +287,7 @@ def test_all_content_filter_rejections_fail_even_when_tokens_were_used_elsewhere
     assert decision is not None
     assert decision["kind"] == "translation_failed"
     assert decision["failed_paragraphs"] == 2
-    assert decision["message"] == "rejected first"
+    assert decision["message"].startswith("rejected first")
 
 
 def test_policy_captures_logs_before_async_evict_queue_discards_them() -> None:
@@ -376,7 +376,7 @@ def test_policy_captures_logs_before_async_evict_queue_discards_them() -> None:
         decision = policy.decision()
         assert decision is not None
         assert decision["kind"] == "translation_failed"
-        assert decision["message"] == "Connection error"
+        assert decision["message"].startswith("Connection error")
     finally:
         listener_release.set()
         for listener in listeners:
@@ -388,6 +388,31 @@ def test_policy_captures_logs_before_async_evict_queue_discards_them() -> None:
         translator_logger.propagate = original_translator_propagate
 
 
+def test_suppressed_fallback_is_counted_once_and_can_fail_the_job() -> None:
+    policy = runner.TranslationPolicy()
+
+    class FakeParagraph:
+        pass
+
+    paragraph = FakeParagraph()
+    policy.record_failure(paragraph, "Unusable batch output; original retained.")
+    policy.record_failure(paragraph, "Duplicate fallback was suppressed.")
+    policy.handle(
+        logging.LogRecord(
+            "babeldoc.main", logging.INFO, "main.py", 2,
+            "Completion tokens: 24", (), None,
+        )
+    )
+
+    decision = policy.decision()
+    assert policy.paragraph_attempts == 1
+    assert policy.failed_paragraphs == 1
+    assert decision is not None
+    assert decision["kind"] == "translation_failed"
+    assert decision["failed_paragraphs"] == 1
+    assert decision["message"].startswith("Unusable batch output; original retained.")
+
+
 def test_protocol_output_redacts_the_api_key_from_errors() -> None:
     secret = "FAKE_RUNNER_API_KEY"
     _, decision = run_policy([f"Connection error containing {secret}"], 0)
@@ -397,6 +422,85 @@ def test_protocol_output_redacts_the_api_key_from_errors() -> None:
         runner._emit("ZTF_ERROR ", decision, secret)
     assert secret not in output.getvalue()
     assert "Connection error" in output.getvalue()
+
+
+def test_policy_sanitizes_html_provider_errors_and_reports_translation_counts() -> None:
+    page = (
+        '<!DOCTYPE html><html><head><title>Request Limit Exceeded</title></head>'
+        '<body><div id="requestId">rq-1792116551</div>'
+        '<script>document.getElementById("requestId").textContent=t</script></body></html>'
+    )
+
+    class HTTPError(RuntimeError):
+        status_code = 429
+
+    error = HTTPError(page)
+    record = make_record(
+        "babeldoc.format.pdf.document_il.midend.il_translator",
+        "Error translating paragraph. Error: provider returned an HTML page.",
+        error,
+    )
+    detail = runner.TranslationPolicy._underlying_error(
+        record, record.getMessage()
+    )
+    assert detail == "HTTP 429：Request Limit Exceeded（requestId: rq-1792116551）"
+    assert "<script" not in detail
+
+    policy = runner.TranslationPolicy()
+    paragraphs = [object() for _ in range(3)]
+    for paragraph in paragraphs:
+        policy._record_attempt(paragraph)
+    policy.record_failure(paragraphs[0], detail)
+    policy.handle(
+        logging.LogRecord(
+            "babeldoc.format.pdf.document_il.midend.il_translator_llm_only",
+            logging.INFO,
+            "translator.py",
+            1,
+            "Translation completed. Total: 3, Successful: 3, Fallback: 0",
+            (),
+            None,
+        )
+    )
+    decision = policy.decision()
+    assert decision is not None
+    assert "3 段中 2 段成功（1 段保留原文）" in decision["message"]
+
+
+def test_final_count_summary_reports_all_failures_over_babeldoc_successes() -> None:
+    policy = runner.TranslationPolicy()
+    paragraphs = [object(), object()]
+    for paragraph in paragraphs:
+        policy._record_attempt(paragraph)
+        policy.record_failure(paragraph, "Unusable output; original retained.")
+    policy.handle(
+        logging.LogRecord(
+            "babeldoc.main",
+            logging.INFO,
+            "main.py",
+            2,
+            "Completion tokens: 24",
+            (),
+            None,
+        )
+    )
+    policy.handle(
+        logging.LogRecord(
+            "babeldoc.format.pdf.document_il.midend.il_translator_llm_only",
+            logging.INFO,
+            "translator.py",
+            1,
+            "Translation completed. Total: 2, Successful: 2, Fallback: 0",
+            (),
+            None,
+        )
+    )
+
+    decision = policy.decision()
+    assert decision is not None
+    assert decision["kind"] == "translation_failed"
+    assert policy.count_summary() == "2 段中 0 段成功（2 段保留原文）"
+    assert "2 段中 0 段成功（2 段保留原文）" in decision["message"]
 
 
 def test_error_protocol_redacts_keys_with_json_escape_characters_before_encoding() -> None:
@@ -440,7 +544,10 @@ if __name__ == "__main__":
     test_partial_content_filter_rejections_warn_and_redact_the_reason()
     test_all_content_filter_rejections_fail_even_when_tokens_were_used_elsewhere()
     test_policy_captures_logs_before_async_evict_queue_discards_them()
+    test_suppressed_fallback_is_counted_once_and_can_fail_the_job()
     test_protocol_output_redacts_the_api_key_from_errors()
+    test_policy_sanitizes_html_provider_errors_and_reports_translation_counts()
+    test_final_count_summary_reports_all_failures_over_babeldoc_successes()
     test_error_protocol_redacts_keys_with_json_escape_characters_before_encoding()
     test_warning_protocol_redacts_keys_with_json_escape_characters_before_encoding()
     print("runner policy regression cases passed")

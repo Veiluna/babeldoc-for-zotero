@@ -1,6 +1,6 @@
 # Translate Files for Zotero
 
-当前版本：**0.1.2**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.2.0**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -10,6 +10,7 @@
 - 结果作为新的已存储文件附件加入 Zotero。同一父条目下的译本标题为“原标题（中文译本）”。
 - 插件没有设置页数上限。多个任务按 FIFO 顺序排队，同一时间处理一个；失败后提示错误并继续下一个任务，不自动重试。
 - 如果本次进入段落翻译的内容没有任何段落成功，任务会按失败处理。部分段落失败时，任务仍可完成，进度窗口会显示失败段数，失败段落保留原文。
+- 整篇文档按阅读顺序合并并尽量用最少的请求翻译；自动术语表提取和失败后的逐段重发已关闭。每篇文档的完成状态会显示实际请求次数。
 
 ## 系统要求
 
@@ -80,8 +81,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 2. **API key**：接口服务提供的密钥。
 3. **模型名**：接口服务支持的模型名称。
 4. **BabelDOC 路径**：粘贴安装脚本输出的路径。可填写环境中的 `Scripts\babeldoc.exe`，也可填写环境根目录下的 `python.exe`。
+5. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
+6. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
 
-这些设置分别使用 Zotero 偏好键 `extensions.zotero-translate-files.baseURL`、`extensions.zotero-translate-files.apiKey`、`extensions.zotero-translate-files.model` 和 `extensions.zotero-translate-files.babeldocPath`。
+这些设置分别使用 Zotero 偏好键 `extensions.zotero-translate-files.baseURL`、`extensions.zotero-translate-files.apiKey`、`extensions.zotero-translate-files.model`、`extensions.zotero-translate-files.babeldocPath`、`extensions.zotero-translate-files.maxOutputTokens` 和 `extensions.zotero-translate-files.maxRequests`。
 
 点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求，并检查 BabelDOC 可执行文件及对应的 Python 路径是否存在。它不会运行一次完整的 PDF 翻译。
 
@@ -91,6 +94,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 2. 插件会显示入队提示。队列按顺序逐个处理，当前任务会打开进度窗口，显示阶段、进度和排队数量。
 3. 成功后，译本 PDF 会作为新附件导入对应的父条目，标题为“原标题（中文译本）”；原始 PDF 文件不变。
 4. 如果所有进入翻译的段落都失败，任务会显示失败提示且不会导入译本。部分段落失败时，进度窗口的完成状态会提示失败段数。
+
+## 请求次数与术语一致性
+
+插件先完成段落预处理并剔除不需要翻译的内容，再按文档阅读顺序收集段落（包括跨页和跨栏段落），最后按输出 token 预算贪心打包。对正数段落估算值，这种顺序打包会得到最少的连续批次数；整篇文档放得下时只发一个请求。估算值为 `ceil(源文 token 数 × 1.6 + 20)`，批次最多使用配置输出上限的 `90%`，为中文扩展和 JSON 留出余量。截断后会将最后一个解析项视为未确认，只确认此前的完整项，再按观察到的扩展比例重新打包未确认后缀；如果没有完整项，才将剩余批次二分。单段仍被截断时保留原文并计入失败段数。观察到实际输出长度后，插件会更新扩展比例并重新打包尚未发送的段落。
+
+翻译提示词要求整篇文档内的术语、缩写和专名保持一致，并沿用首次出现时的译法。插件不运行额外的自动术语表请求，也不会在批次失败后逐段重发；BabelDOC 的翻译缓存也会绕过，避免失败时保留的原文被后续任务当作译文复用。请求上限统计所有实际发出的 Chat Completions 调用，达到配置上限就停止；HTTP 429 等接口错误只尝试一次。
 
 ## API key 的处理
 
@@ -112,7 +121,7 @@ API key 保存在 Zotero 的 `prefs.js` 偏好设置文件中，**以明文存�
 - **404**：检查接口地址路径和模型名是否符合服务商要求。
 - **429**：检查调用频率限制、账户额度和服务端配额。
 
-插件会在失败提示中给出脱敏后的技术详情；不会在失败时自动重试。
+插件会在失败提示中给出脱敏后的技术详情；HTTP 429 等接口错误只尝试一次，不会自动重试。任何截断响应的最后一个解析段落都视为未确认，并与剩余段落按更新后的输出估算重新打包续传；只有没有完整段落时才会将剩余批次拆分。单段响应仍被截断时会保留原文。续传和拆分请求都会计入“单篇最多请求次数”。
 
 ### 为什么第一次翻译较慢？
 
@@ -147,7 +156,10 @@ node tests/translation-runner.test.js
 
 ```powershell
 python tests/test_runner_policy.py
+python tests/test_min_requests.py
 ```
+
+`tests/test_min_requests.py` 文件头说明了如何启动本地 mock OpenAI 服务，并用已安装的 BabelDOC 环境对一页 PDF 做端到端检查。
 
 ## 许可证与致谢
 

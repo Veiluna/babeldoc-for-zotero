@@ -7,6 +7,8 @@ var ZoteroTranslateFilesConfig = (function () {
     apiKey: "extensions.zotero-translate-files.apiKey",
     model: "extensions.zotero-translate-files.model",
     babeldocPath: "extensions.zotero-translate-files.babeldocPath",
+    maxOutputTokens: "extensions.zotero-translate-files.maxOutputTokens",
+    maxRequests: "extensions.zotero-translate-files.maxRequests",
   };
 
   function getSettings() {
@@ -15,11 +17,28 @@ var ZoteroTranslateFilesConfig = (function () {
       return String(value == null ? "" : value).trim();
     }
 
+    function readInteger(name, fallback, minimum, label) {
+      var value = Zotero.Prefs.get(preferences[name], true);
+      if (value == null || String(value).trim() === "") return fallback;
+      var number = Number(value);
+      if (!Number.isSafeInteger(number) || number < minimum) {
+        throw new Error(label + "必须是大于或等于 " + minimum + " 的整数。");
+      }
+      return number;
+    }
+
     return {
       baseURL: read("baseURL"),
       apiKey: read("apiKey"),
       model: read("model"),
       babeldocPath: read("babeldocPath"),
+      maxOutputTokens: readInteger(
+        "maxOutputTokens",
+        8192,
+        1024,
+        "模型单次最大输出 token 数"
+      ),
+      maxRequests: readInteger("maxRequests", 20, 1, "单篇最多请求次数"),
     };
   }
 
@@ -35,7 +54,9 @@ var ZoteroTranslateFilesConfig = (function () {
     var configuredKey = apiKey;
     if (configuredKey == null) {
       try {
-        configuredKey = getSettings().apiKey;
+        // Redaction must remain available even if an unrelated setting is invalid.
+        configuredKey = Zotero.Prefs.get(preferences.apiKey, true);
+        configuredKey = String(configuredKey == null ? "" : configuredKey).trim();
       } catch (error) {
         configuredKey = "";
       }
@@ -45,6 +66,63 @@ var ZoteroTranslateFilesConfig = (function () {
     return text
       .replace(/Bearer\s+\S+/gi, "Bearer [已隐藏]")
       .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[已隐藏 API key]");
+  }
+
+  function decodeHTMLEntities(value) {
+    return String(value || "").replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (entity, code) {
+      var normalized = code.toLowerCase();
+      if (normalized === "amp") return "&";
+      if (normalized === "lt") return "<";
+      if (normalized === "gt") return ">";
+      if (normalized === "quot") return '"';
+      if (normalized === "apos") return "'";
+      var number = normalized.indexOf("#x") === 0
+        ? parseInt(normalized.slice(2), 16)
+        : parseInt(normalized.slice(1), 10);
+      try {
+        return Number.isFinite(number) ? String.fromCodePoint(number) : entity;
+      } catch (error) {
+        return entity;
+      }
+    });
+  }
+
+  // API providers sometimes send a branded HTML error page instead of JSON.
+  // Keep only its status, title, and request ID for diagnostic display.
+  function formatHTMLDiagnostic(value) {
+    var text;
+    try {
+      text = String(value == null ? "" : value);
+    } catch (error) {
+      return "无法读取错误详情";
+    }
+    if (!/<!doctype\s+html|<html\b|<script\b|<title\b/i.test(text)) return text;
+
+    var statusMatch = text.match(/\b(?:HTTP(?:\/\d(?:\.\d)?)?\s+|Error code:\s*|status(?:_code)?\s*[=: ]\s*)(\d{3})\b/i);
+    var titleMatch = text.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i);
+    var title = titleMatch
+      ? decodeHTMLEntities(titleMatch[1].replace(/<[^>]*>/g, " ")).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()
+      : "";
+
+    var requestID = "";
+    var elementMatch = text.match(/<[^>]*\bid\s*=\s*(['"]?)requestId\1[^>]*>([\s\S]*?)<\/[^>]+>/i);
+    if (elementMatch) {
+      requestID = decodeHTMLEntities(elementMatch[2].replace(/<[^>]*>/g, " ")).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    }
+    if (!requestID) {
+      var requestMatch = text.match(/\brequest[_ -]?id\s*[:=]\s*['"]?([A-Za-z0-9._-]{5,})/i);
+      if (!requestMatch) {
+        requestMatch = text.match(/requestId[\s\S]{0,250}?\b[A-Za-z_$][\w$]*\s*\(\s*['"]([A-Za-z0-9._-]{5,})['"]\s*\)/i);
+      }
+      if (requestMatch) requestID = requestMatch[1];
+    }
+
+    var parts = [];
+    if (statusMatch) parts.push("HTTP " + statusMatch[1]);
+    parts.push(title || "接口返回了网页错误");
+    if (requestID) parts.push("requestId: " + requestID);
+    if (statusMatch) return parts[0] + "：" + parts[1] + (parts[2] ? "（" + parts[2] + "）" : "");
+    return parts.join("；");
   }
 
   // Normalize OpenAI-compatible roots while preserving concrete endpoints and query URLs.
@@ -103,6 +181,7 @@ var ZoteroTranslateFilesConfig = (function () {
   return {
     getSettings: getSettings,
     redact: redact,
+    formatHTMLDiagnostic: formatHTMLDiagnostic,
     chatCompletionsURL: chatCompletionsURL,
     openAIBaseURLForBabelDOC: openAIBaseURLForBabelDOC,
     resolvePythonFromBabelDOCPath: resolvePythonFromBabelDOCPath,

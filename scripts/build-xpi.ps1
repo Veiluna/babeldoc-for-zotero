@@ -60,7 +60,14 @@ try {
         [System.IO.Compression.ZipArchiveMode]::Create
     )
 
-    $files = @(Get-ChildItem -LiteralPath $addonPath -Recurse -File -Force | Sort-Object FullName)
+    $files = @(
+        Get-ChildItem -LiteralPath $addonPath -Recurse -File -Force |
+            Where-Object {
+                $_.Extension -ne '.pyc' -and
+                $_.FullName -notmatch '[\\/]__pycache__[\\/]'
+            } |
+            Sort-Object FullName
+    )
     if ($files.Count -eq 0) {
         throw "No plugin files found in: $addonPath"
     }

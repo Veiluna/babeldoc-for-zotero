@@ -2,3 +2,5 @@ pref("extensions.zotero-translate-files.baseURL", "");
 pref("extensions.zotero-translate-files.apiKey", "");
 pref("extensions.zotero-translate-files.model", "");
 pref("extensions.zotero-translate-files.babeldocPath", "");
+pref("extensions.zotero-translate-files.maxOutputTokens", 8192);
+pref("extensions.zotero-translate-files.maxRequests", 20);

@@ -17,6 +17,14 @@ var ZoteroTranslateFilesPreferences = (function () {
     else element.removeAttribute("data-l10n-args");
   }
 
+  function setPlainText(document, elementID, text) {
+    var element = document.getElementById(elementID);
+    if (!element) return;
+    element.removeAttribute("data-l10n-id");
+    element.removeAttribute("data-l10n-args");
+    element.textContent = String(text || "设置校验失败，请检查输入值。");
+  }
+
   function pathIsFile(path) {
     if (!path) return false;
     try {
@@ -296,9 +304,13 @@ var ZoteroTranslateFilesPreferences = (function () {
       var button = event.currentTarget;
       button.disabled = true;
       setMessage(document, PANE_ID + "-api-status", "zotero-translate-files-pref-api-checking");
-      setPathStatus(document, ZoteroTranslateFilesConfig.getSettings());
       try {
-        await testAPI(document, window, ZoteroTranslateFilesConfig.getSettings());
+        var settings = ZoteroTranslateFilesConfig.getSettings();
+        setPathStatus(document, settings);
+        await testAPI(document, window, settings);
+      } catch (error) {
+        var detail = error && error.message ? String(error.message) : "设置校验失败，请检查输入值。";
+        setPlainText(document, PANE_ID + "-api-status", detail);
       } finally {
         button.disabled = false;
       }

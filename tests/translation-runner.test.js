@@ -91,23 +91,31 @@ function makeHarness(options = {}) {
       const outputPath = outputDirectory + "\\paper.zh.mono.pdf";
       if (options.outputSize !== 0) files.set(outputPath, { exists: true, isFile: true, fileSize: 800 });
 
-      const progressLine = "ZTF_PROGRESS {\"overall\":42.5,\"stage\":\"翻译段落\",\"current\":3,\"total\":10}\r\n";
+      const progressLine = "ZTF_PROGRESS " + JSON.stringify(Object.assign({
+        overall: 42.5,
+        stage: "翻译段落",
+        current: 3,
+        total: 10,
+      }, options.progressRequests || {})) + "\r\n";
       const resultLine = options.errorEvent
         ? "ZTF_ERROR " + JSON.stringify(options.errorEvent === true
           ? { error: "request failed with " + apiKey }
           : options.errorEvent) + "\r\n"
         : options.omitResult
           ? ""
-          : "ZTF_RESULT {\"mono\":" + JSON.stringify(outputPath) + "}\r\n";
+          : "ZTF_RESULT " + JSON.stringify(Object.assign(
+            { mono: outputPath },
+            options.requestCount == null ? {} : { requests: options.requestCount },
+          )) + "\r\n";
       const warningLine = options.warning
         ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
         : "";
       const stdout = makeStream(progressLine + warningLine + resultLine);
-      const stderr = makeStream(
+      const stderr = makeStream(options.stderrText || (
         "diagnostic includes " + apiKey + "\r\n" +
         "scope_Bearer boundary-bearer-secret\r\n" +
         "prefix_sk-1234567890\r\n"
-      );
+      ));
 
       return {
         stdin: { close() {} },
@@ -200,6 +208,13 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   const args = call.arguments;
   assert.equal(call.command, "C:\\babeldoc\\python.exe");
   assert.ok(args.includes("--no-dual"));
+  assert.ok(args.includes("--no-auto-extract-glossary"));
+  assert.ok(args.includes("--disable-same-text-fallback"));
+  const promptIndex = args.indexOf("--custom-system-prompt");
+  assert.ok(promptIndex >= 0);
+  assert.match(args[promptIndex + 1], /technical terms, abbreviations, and named entities consistently/);
+  assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, "8192");
+  assert.equal(call.environment.ZTF_MAX_REQUESTS, "20");
   const workingDir = args[args.indexOf("--working-dir") + 1];
   assert.equal(workingDir, "C:\\Temp\\zotero-translate-files-test-job-id\\babeldoc-work");
   assert.ok(workingDir.startsWith("C:\\Temp\\zotero-translate-files-test-job-id\\"));
@@ -220,6 +235,29 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.deepEqual(harness.removedDirectories, ["C:\\Temp\\zotero-translate-files-test-job-id"]);
 }
 
+async function reportsRequestCountsInProgressAndResult() {
+  const harness = makeHarness({
+    progressRequests: { requests: 2, planned: 3 },
+    requestCount: 3,
+  });
+  const result = await harness.runner.translate(harness.item, {
+    onProgress: value => harness.progress.push(value),
+  });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.progress[0])),
+    {
+      overall: 42.5,
+      stage: "翻译段落",
+      current: 3,
+      total: 10,
+      requests: 2,
+      planned: 3,
+    },
+  );
+  assert.equal(result.requestCount, 3);
+  await result.cleanup();
+}
+
 async function rejectsQueryURLsBeforeStartingBabelDOC() {
   const harness = makeHarness({
     baseURL: "https://api.example.test/v1/chat/completions?tenant=demo",
@@ -236,7 +274,7 @@ async function errorsAreUsefulAndKeyFree() {
   const harness = makeHarness({
     errorEvent: {
       message: "request failed with RUNNER_SECRET_KEY_789",
-      kind: "translation_failed",
+      kind: "request_cap",
       failed_paragraphs: 2,
     },
   });
@@ -246,6 +284,7 @@ async function errorsAreUsefulAndKeyFree() {
       assert.ok(error.message.includes("request failed"));
       assert.ok(!error.message.includes("BabelDOC 翻译失败"));
       assert.ok(!error.message.includes(harness.apiKey));
+      assert.equal(error.kind, "request_cap", "the structured error kind must survive wrapping");
       return true;
     },
   );
@@ -276,6 +315,26 @@ async function nonZeroExitFailsAndRedactsStderr() {
       assert.ok(!error.message.includes(harness.apiKey));
       assert.ok(!error.message.includes("boundary-bearer-secret"));
       assert.ok(!error.message.includes("sk-1234567890"));
+      return true;
+    },
+  );
+}
+
+async function tracebackDiagnosticsShowTheFinalException() {
+  const harness = makeHarness({
+    exitCode: 1,
+    stderrText: [
+      "Traceback (most recent call last):",
+      "  File \"runner.py\", line 10, in <module>",
+      "    raise RuntimeError('provider failed')",
+      "RuntimeError: provider failed",
+    ].join("\r\n"),
+  });
+  await assert.rejects(
+    harness.runner.translate(harness.item, {}),
+    error => {
+      assert.ok(error.message.includes("RuntimeError: provider failed"));
+      assert.ok(!error.message.includes("Traceback (most recent call last):"));
       return true;
     },
   );
@@ -319,10 +378,12 @@ async function abortKillsTheChildAndCleansUp() {
 
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
+  await reportsRequestCountsInProgressAndResult();
   await rejectsQueryURLsBeforeStartingBabelDOC();
   await errorsAreUsefulAndKeyFree();
   await parsesAndRedactsPartialFailureWarning();
   await nonZeroExitFailsAndRedactsStderr();
+  await tracebackDiagnosticsShowTheFinalException();
   await findsOutputWhenNoResultLineWasEmitted();
   await missingOrEmptyOutputFailsEvenAfterExitZero();
   await abortKillsTheChildAndCleansUp();

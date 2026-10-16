@@ -304,8 +304,8 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
     ["invalid_api_key", "API key 无效或无权限"],
     ["HTTP 404 Client Error: Not Found", "接口地址或模型名不正确"],
     ["model_not_found", "接口地址或模型名不正确"],
-    ["HTTP 429 Too Many Requests", "请求过于频繁或额度不足"],
-    ["insufficient_quota", "请求过于频繁或额度不足"],
+    ["HTTP 429 Too Many Requests", "请求过于频繁或额度不足（接口可能已达到请求次数上限）"],
+    ["insufficient_quota", "请求过于频繁或额度不足（接口可能已达到请求次数上限）"],
     ["BabelDOC 不支持包含查询参数的 API 地址", "BabelDOC 不支持包含查询参数的接口地址"],
     ["ConnectError: ECONNREFUSED", "无法连接到接口地址"],
     ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
@@ -331,6 +331,69 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
     assert.match(harness.alerts[index].message, new RegExp(cases[index][1]));
     assert.match(harness.alerts[index].message, /技术详情：/);
   }
+
+  const validationHarness = makeHarness();
+  validationHarness.queue.onJobFailed(
+    { attachmentID: 98, attachmentTitle: "Invalid request limit" },
+    new Error("单篇最多请求次数必须是大于或等于 1 的整数。"),
+  );
+  validationHarness.flushAlerts();
+  assert.match(validationHarness.alerts[0].message, /翻译设置无效/);
+  assert.doesNotMatch(validationHarness.alerts[0].message, /请求过于频繁或额度不足/);
+
+  const requestCapHarness = makeHarness();
+  const requestCapError = new Error("upstream quota response");
+  requestCapError.kind = "request_cap";
+  requestCapHarness.queue.onJobFailed(
+    { attachmentID: 99, attachmentTitle: "Local request cap" },
+    requestCapError,
+  );
+  requestCapHarness.flushAlerts();
+  assert.match(requestCapHarness.alerts[0].message, /已达到单篇请求次数上限/);
+  assert.doesNotMatch(requestCapHarness.alerts[0].message, /请求过于频繁或额度不足/);
+
+  const htmlHarness = makeHarness();
+  const htmlError = [
+    "HTTP 429: <!DOCTYPE html><html><head><title>Request Limit Exceeded</title></head>",
+    '<body><div id="requestId">rq-1792116551</div><script>document.getElementById("requestId").textContent=t</script></body></html>',
+    "2026-10-16 10:09:06,525 INFO babeldoc: Translation completed. Total: 484, Successful: 70, Fallback: 414",
+  ].join("\n");
+  htmlHarness.queue.onJobFailed(
+    { attachmentID: 95, attachmentTitle: "HTML provider failure" },
+    new Error(htmlError),
+  );
+  htmlHarness.flushAlerts();
+  assert.match(htmlHarness.alerts[0].message, /请求过于频繁或额度不足（接口可能已达到请求次数上限）/);
+  assert.match(htmlHarness.alerts[0].message, /HTTP 429：Request Limit Exceeded/);
+  assert.match(htmlHarness.alerts[0].message, /requestId: rq-1792116551/);
+  assert.match(htmlHarness.alerts[0].message, /484 段中 70 段成功（414 段保留原文）/);
+  assert.ok(!htmlHarness.alerts[0].message.includes("<script"), "HTML diagnostics must not expose raw markup");
+  assert.ok(!htmlHarness.alerts[0].message.includes("Translation completed."), "technical details must omit trailing BabelDOC INFO lines");
+
+  const htmlBodyHarness = makeHarness();
+  const bodyOnlyError = new Error("upstream request failed");
+  bodyOnlyError.response = {
+    status: 429,
+    body: '<html><title>Request Limit Exceeded</title><div id="requestId">rq-body-429</div></html>',
+  };
+  htmlBodyHarness.queue.onJobFailed(
+    { attachmentID: 97, attachmentTitle: "HTML response body" },
+    bodyOnlyError,
+  );
+  htmlBodyHarness.flushAlerts();
+  assert.match(htmlBodyHarness.alerts[0].message, /请求过于频繁或额度不足（接口可能已达到请求次数上限）/);
+  assert.match(htmlBodyHarness.alerts[0].message, /HTTP 429：Request Limit Exceeded/);
+  assert.match(htmlBodyHarness.alerts[0].message, /requestId: rq-body-429/);
+  assert.ok(!htmlBodyHarness.alerts[0].message.includes("<html"));
+
+  const genericHTMLHarness = makeHarness();
+  genericHTMLHarness.queue.onJobFailed(
+    { attachmentID: 96, attachmentTitle: "HTML response" },
+    new Error("<!doctype html><html><head><title>Access Denied</title></head></html>"),
+  );
+  genericHTMLHarness.flushAlerts();
+  assert.match(genericHTMLHarness.alerts[0].message, /接口返回了网页而不是 API 响应/);
+  assert.ok(!genericHTMLHarness.alerts[0].message.includes("<html"));
 
   const shutdownHarness = makeHarness();
   shutdownHarness.queue.onJobFailed(
@@ -386,9 +449,10 @@ async function cleanupFollowsImportAndProgressShowsQueuePosition() {
     runner: {
       async translate(item, { onProgress }) {
         if (item.id === 40) {
-          onProgress({ overall: 42.5, stage: "翻译段落" });
+          onProgress({ overall: 42.5, stage: "翻译段落", requests: 2, planned: 2 });
           return {
             outputPath: "first-translation.pdf",
+            requestCount: 2,
             cleanup: async () => { events.push("cleanup"); },
           };
         }
@@ -428,12 +492,20 @@ async function cleanupFollowsImportAndProgressShowsQueuePosition() {
     "the completion window close timer must not require mouse hover",
   );
   assert.ok(
-    harness.progressWindows[0].texts.some(text => text.includes("43%（队列中还有 1 篇）")),
+    harness.progressWindows[0].texts.some(text => text.includes("43% · 请求 2/2（队列中还有 1 篇）")),
     "BabelDOC progress should show the rounded percentage and queued count",
   );
   assert.ok(
-    harness.progressWindows[0].texts.includes("已完成：First paper（中文译本）"),
+    harness.progressWindows[0].texts.some(text => text.includes("请求 2/2")),
+    "translation progress should show actual and planned API request counts",
+  );
+  assert.ok(
+    harness.progressWindows[0].texts.some(text => text.startsWith("已完成：First paper（中文译本）")),
     "the completion progress should name the imported translated attachment",
+  );
+  assert.ok(
+    harness.progressWindows[0].texts.includes("已完成：First paper（中文译本）（共请求 2 次）"),
+    "the completion progress should show the total request count",
   );
 }
 
