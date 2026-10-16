@@ -1,6 +1,6 @@
 # Zotero 中文 PDF 翻译
 
-这是一个面向 Zotero 7 及更新版本的 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.1.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 ## 功能简介
 
@@ -14,7 +14,7 @@
 ## 系统要求
 
 - Windows 和 Windows PowerShell 5.1。
-- Zotero 7 或更新版本。清单声明兼容 Zotero 6.999 至 10.*，主要目标为 Zotero 10。
+- Zotero 7–10。当前主要支持 Zotero 10.0.6（64 位）；插件清单声明的版本范围为 6.999 至 10.*。
 - Miniconda。安装脚本会创建独立的 Python 3.12 环境，不会激活环境，也不会修改 PATH。
 - 一个可用的 OpenAI 兼容 Chat Completions 接口、API key 和模型名。
 
@@ -65,6 +65,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 ```
 
 脚本会把插件打包到 `build\zotero-translate-files-<版本>.xpi`。也可以直接使用已构建的 `.xpi` 文件。
+
+打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。清单中的自动更新地址为 `https://github.com/Veiluna/zotero-translate-files/releases/download/release/updates.json`。由于此 GitHub 仓库目前是私有仓库，Zotero 在仓库或发布资源公开前无法读取更新清单，自动更新检查会静默失败；这不影响从本地 XPI 安装和使用。
 
 ### 4. 在 Zotero 安装插件
 
@@ -134,6 +136,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-babeldoc.ps1 -Force
 
 ```powershell
 node tests/config-redaction.test.js
+node tests/manifest.test.js
 node tests/translation-queue.test.js
 node tests/translation-runner.test.js
 ```

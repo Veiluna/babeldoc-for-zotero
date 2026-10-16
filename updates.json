@@ -1,0 +1,18 @@
+{
+  "addons": {
+    "zotero-translate-files@veiluna.github.io": {
+      "updates": [
+        {
+          "version": "0.1.1",
+          "update_link": "https://github.com/Veiluna/zotero-translate-files/releases/download/v0.1.1/zotero-translate-files-0.1.1.xpi",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "6.999",
+              "strict_max_version": "10.*"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

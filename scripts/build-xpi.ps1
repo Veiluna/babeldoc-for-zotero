@@ -9,6 +9,7 @@ $addonPath = Join-Path $repositoryRoot 'addon'
 $manifestPath = Join-Path $addonPath 'manifest.json'
 $buildPath = Join-Path $repositoryRoot 'build'
 $outputPath = $null
+$updatesOutputPath = $null
 $archive = $null
 
 try {
@@ -25,8 +26,27 @@ try {
         throw "Manifest version cannot be used in an output filename: $version"
     }
 
+    $zoteroApplication = $manifest.applications.zotero
+    $addonID = [string]$zoteroApplication.id
+    $strictMinVersion = [string]$zoteroApplication.strict_min_version
+    $strictMaxVersion = [string]$zoteroApplication.strict_max_version
+    $updateURL = [string]$zoteroApplication.update_url
+    $updateURLSuffix = '/releases/download/release/updates.json'
+    if ([string]::IsNullOrWhiteSpace($addonID) -or
+        [string]::IsNullOrWhiteSpace($strictMinVersion) -or
+        [string]::IsNullOrWhiteSpace($strictMaxVersion)) {
+        throw 'The Zotero application entry must include id and version bounds.'
+    }
+    if (-not $updateURL.StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase) -or
+        -not $updateURL.EndsWith($updateURLSuffix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "The Zotero update_url must end with $updateURLSuffix and use HTTPS."
+    }
+    $releaseRoot = $updateURL.Substring(0, $updateURL.Length - $updateURLSuffix.Length)
+    $updateLink = "$releaseRoot/releases/download/v$version/zotero-translate-files-$version.xpi"
+
     $null = New-Item -Path $buildPath -ItemType Directory -Force
     $outputPath = Join-Path $buildPath "zotero-translate-files-$version.xpi"
+    $updatesOutputPath = Join-Path $buildPath 'updates.json'
 
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -75,7 +95,30 @@ try {
         throw "XPI was not created: $outputPath"
     }
 
+    $updatesManifest = [ordered]@{ addons = [ordered]@{} }
+    $updatesManifest.addons[$addonID] = [ordered]@{
+        updates = @(
+            [ordered]@{
+                version = $version
+                update_link = $updateLink
+                applications = [ordered]@{
+                    zotero = [ordered]@{
+                        strict_min_version = $strictMinVersion
+                        strict_max_version = $strictMaxVersion
+                    }
+                }
+            }
+        )
+    }
+    $updatesJson = ConvertTo-Json -InputObject $updatesManifest -Depth 8
+    [System.IO.File]::WriteAllText(
+        $updatesOutputPath,
+        $updatesJson + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+
     Write-Output "Created $outputPath"
+    Write-Output "Created $updatesOutputPath"
 }
 catch {
     if ($archive) {
@@ -84,6 +127,9 @@ catch {
     }
     if ($outputPath -and (Test-Path -LiteralPath $outputPath)) {
         Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($updatesOutputPath -and (Test-Path -LiteralPath $updatesOutputPath)) {
+        Remove-Item -LiteralPath $updatesOutputPath -Force -ErrorAction SilentlyContinue
     }
     Write-Error "XPI build failed: $($_.Exception.Message)"
     exit 1
