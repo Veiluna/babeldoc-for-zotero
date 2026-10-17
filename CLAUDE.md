@@ -32,3 +32,17 @@
 - 临时 Zotero 测试配置：`G:\ProgramData\zotero-translate-files\ztest\profile`。启动时用 `-no-remote -profile <dir> -ZoteroDebugText`，结束时只关闭自己启动的进程，不碰用户正在使用的 Zotero。
 - Claude 桌面应用会把写入 `%LOCALAPPDATA%` 的文件重定向到应用自己的沙盒目录。凡是 Zotero 需要读取的东西，都放到 `G:\ProgramData\...` 下。
 - 用户的接口服务商限制为 100 次请求，测试时不要消耗用户的真实额度，改用 `tests/mock_openai_server.py`。
+
+## Agent skills
+
+### Issue tracker
+
+问题和规格都记在 GitHub Issues（`gh` CLI）。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认的五个分诊标签（needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix）。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单一上下文：根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。

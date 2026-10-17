@@ -58,7 +58,7 @@
 
 - 以 **Zotero 10.0.6** 为主要目标，兼容 Zotero 7+；只使用 10.0.6 中实际存在的 API。`manifest.json` 必须包含 `applications.zotero.id`、`update_url`（https）和 `strict_max_version`。
 - 纯 JavaScript，无构建步骤，文件放在 `addon/` 下；界面文字使用 Fluent（`zh-CN` / `en-US`）。
-- 插件 ID `zotero-translate-files@veiluna.github.io` 与偏好分支 `extensions.zotero-translate-files.` 不得更改。
+- 插件 ID 与偏好分支：v0.3.0 起为 `babeldoc-for-zotero@veiluna.github.io` 与 `extensions.babeldoc-for-zotero.`（见 docs/adr/0003），之后不得再更改；旧前缀 `extensions.zotero-translate-files.` 只用于一次性迁移。
 - API key 只能通过环境变量传给子进程，不得出现在命令行参数或日志中；所有报错文本统一脱敏。
 - 不提交密钥和构建产物（`build/`、`*.xpi`）。
 - 不跳过、不禁用测试。新增的非平凡逻辑必须配回归测试：
