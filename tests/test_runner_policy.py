@@ -628,47 +628,9 @@ def test_paragraph_classification_preview_is_redacted_and_short() -> None:
     assert len(records[0]["preview"]) <= 60
 
 
-def test_table_region_detection_uses_center_and_excludes_table_labels() -> None:
-    from types import SimpleNamespace as NS
-
-    table = NS(class_name="table", box=NS(x=30, y=40, x2=70, y2=80))
-    page = NS(page_layout=[table])
-    inside = NS(
-        layout_label="fallback_line",
-        box=NS(x=24, y=50, x2=44, y2=70),
-    )
-    caption = NS(
-        layout_label="table_caption",
-        box=NS(x=35, y=50, x2=55, y2=70),
-    )
-    title = NS(
-        layout_label="table_title",
-        box=NS(x=35, y=50, x2=55, y2=70),
-    )
-    footnote = NS(
-        layout_label="table_footnote",
-        box=NS(x=35, y=50, x2=55, y2=70),
-    )
-    overlapping_but_outside = NS(
-        layout_label="fallback_line",
-        box=NS(x=5, y=50, x2=35, y2=70),
-    )
-    missing_paragraph_box = NS(layout_label="fallback_line", box=None)
-    missing_table_box_page = NS(page_layout=[NS(class_name="table", box=None)])
-
-    assert runner._is_inside_table_region(inside, page) is True
-    assert runner._is_inside_table_region(caption, page) is False
-    assert runner._is_inside_table_region(title, page) is False
-    assert runner._is_inside_table_region(footnote, page) is False
-    assert runner._is_inside_table_region(overlapping_but_outside, page) is False
-    assert runner._is_inside_table_region(missing_paragraph_box, page) is False
-    assert runner._is_inside_table_region(inside, missing_table_box_page) is False
-
-
 if __name__ == "__main__":
     test_paragraph_classification_reports_written_back_paragraphs_as_translated()
     test_paragraph_classification_preview_is_redacted_and_short()
-    test_table_region_detection_uses_center_and_excludes_table_labels()
     test_installed_babeldoc_version_allows_startup()
     test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
     test_missing_babeldoc_package_uses_the_same_error_kind()

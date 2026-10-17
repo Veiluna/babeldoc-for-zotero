@@ -339,37 +339,37 @@
   "page": 3,
   "index": 10,
   "preview": "Published Flows",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 11,
   "preview": "Cleaned Flows",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 12,
   "preview": "CSV Volume",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 13,
   "preview": "PCAP Traffic",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 14,
   "preview": "Count",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 15,
   "preview": "Count",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -405,13 +405,13 @@
   "page": 3,
   "index": 21,
   "preview": "1.09 GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 22,
   "preview": "48.8 GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -483,13 +483,13 @@
   "page": 3,
   "index": 34,
   "preview": "30.05 GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 35,
   "preview": "582 GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -519,37 +519,37 @@
   "page": 3,
   "index": 40,
   "preview": "Attack",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 41,
   "preview": "Count∗",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 42,
   "preview": "%Gain∗",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 43,
   "preview": "Count∗",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 44,
   "preview": "%Gain∗",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 45,
   "preview": "DDoS LOIC",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -579,7 +579,7 @@
   "page": 3,
   "index": 50,
   "preview": "DDoS HOIC",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -609,7 +609,7 @@
   "page": 3,
   "index": 55,
   "preview": "DoS GoldenEye",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -639,7 +639,7 @@
   "page": 3,
   "index": 60,
   "preview": "DoS Hulk",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -669,7 +669,7 @@
   "page": 3,
   "index": 65,
   "preview": "DoS Slow HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -699,7 +699,7 @@
   "page": 3,
   "index": 70,
   "preview": "DoS Slowloris",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -729,7 +729,7 @@
   "page": 3,
   "index": 75,
   "preview": "FTP Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -759,7 +759,7 @@
   "page": 3,
   "index": 80,
   "preview": "Heartbleed",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -789,7 +789,7 @@
   "page": 3,
   "index": 85,
   "preview": "Infiltration",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -819,7 +819,7 @@
   "page": 3,
   "index": 90,
   "preview": "Port Scan",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -849,7 +849,7 @@
   "page": 3,
   "index": 95,
   "preview": "SSH Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -879,7 +879,7 @@
   "page": 3,
   "index": 100,
   "preview": "Web Brute Force",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -909,7 +909,7 @@
   "page": 3,
   "index": 105,
   "preview": "Web SQL Injection",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -939,7 +939,7 @@
   "page": 3,
   "index": 110,
   "preview": "Web XSS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -1035,19 +1035,19 @@
   "page": 4,
   "index": 2,
   "preview": "Published Label",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 3,
   "preview": "Revised Label",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 4,
   "preview": "% Corruption",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1059,7 +1059,7 @@
   "page": 4,
   "index": 6,
   "preview": "Remarks",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1083,7 +1083,7 @@
   "page": 4,
   "index": 10,
   "preview": "Botnet - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1095,37 +1095,37 @@
   "page": 4,
   "index": 12,
   "preview": "Port/System Closed. Cont",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 13,
   "preview": "tempts by victim after a",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 14,
   "preview": "time, and C&C is no long",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 15,
   "preview": "down).",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 16,
   "preview": "DoS GoldenEye",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 17,
   "preview": "DoS GoldenEye - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1137,19 +1137,19 @@
   "page": 4,
   "index": 19,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 20,
   "preview": "DoS Hulk",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 21,
   "preview": "DoS Hulk - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1161,31 +1161,31 @@
   "page": 4,
   "index": 23,
   "preview": "No malicious payload (4.",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 24,
   "preview": "Empty Payload (28.23%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 25,
   "preview": "Attack artifacts (0.001%",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 26,
   "preview": "DoS Slow HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 27,
   "preview": "DoS Slow HTTP - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1197,31 +1197,31 @@
   "page": 4,
   "index": 29,
   "preview": "Empty Payload (5.13%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 30,
   "preview": "Target Unresponsive (51.",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 31,
   "preview": "Attack startup/ tear dow",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 32,
   "preview": "DoS Slowloris",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 33,
   "preview": "DoS Slowloris - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1233,25 +1233,25 @@
   "page": 4,
   "index": 35,
   "preview": "Empty Payload (29.55%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 36,
   "preview": "Attack startup/ tear dow",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 37,
   "preview": "FTP-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 38,
   "preview": "FTP-Patator - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1263,31 +1263,31 @@
   "page": 4,
   "index": 40,
   "preview": "No malicious payload (49",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 41,
   "preview": "Empty Payload (0.20%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 42,
   "preview": "Attack startup/ tear dow",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 43,
   "preview": "SSH-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 44,
   "preview": "SSH-Patator - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1299,19 +1299,19 @@
   "page": 4,
   "index": 46,
   "preview": "No malicious payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 47,
   "preview": "Web - Brute Force",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 48,
   "preview": "Web - Brute Force - Atte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1323,31 +1323,31 @@
   "page": 4,
   "index": 50,
   "preview": "Empty Payload (89.85%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 51,
   "preview": "Attack startup/ teardown",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 52,
   "preview": "Attack artifact (4.71%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 53,
   "preview": "Web Attack - XSS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 54,
   "preview": "Web Attack - XSS - Attem",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1359,13 +1359,13 @@
   "page": 4,
   "index": 56,
   "preview": "Attack startup/tear down",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 57,
   "preview": "Empty Payload (93.87%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1383,7 +1383,7 @@
   "page": 4,
   "index": 60,
   "preview": "Botnet Ares - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1395,25 +1395,25 @@
   "page": 4,
   "index": 62,
   "preview": "Empty Payload. No eviden",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 63,
   "preview": "during traffic analysis.",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 64,
   "preview": "Web - Brute Force",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 65,
   "preview": "Web - Brute Force - Atte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1425,43 +1425,43 @@
   "page": 4,
   "index": 67,
   "preview": "Empty Payload (30.77%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 68,
   "preview": "Attack startup/ tear dow",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 69,
   "preview": "Attack Implemented Incor",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 70,
   "preview": "only single login reques",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 71,
   "preview": "in the context of a sing",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 72,
   "preview": "Web - Brute Force",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 73,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1473,25 +1473,25 @@
   "page": 4,
   "index": 75,
   "preview": "Mixture of empty flows c",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 76,
   "preview": "and browsing traffic not",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 77,
   "preview": "Web Attack - XSS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 78,
   "preview": "Web Attack - XSS - Attem",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1503,31 +1503,31 @@
   "page": 4,
   "index": 80,
   "preview": "Attack startup/tear down",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 81,
   "preview": "Empty Payload (48.26%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 82,
   "preview": "No malicious payload (0.",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 83,
   "preview": "DDoS HOIC",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 84,
   "preview": "DDoS HOIC - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1539,55 +1539,55 @@
   "page": 4,
   "index": 86,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 87,
   "preview": "DDoS LOIC-HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 88,
   "preview": "DDoS LOIC-UDP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 89,
   "preview": "0.14% (LOIC)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 90,
   "preview": "46.07% (UDP)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 91,
   "preview": "All DDoS LOIC-UDP flows ",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 92,
   "preview": "beled as DDoS LOIC-HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 93,
   "preview": "DDoS LOIC-HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 94,
   "preview": "DDoS-LOIC-HTTP - Attempt",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1599,19 +1599,19 @@
   "page": 4,
   "index": 96,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 97,
   "preview": "DoS GoldenEye",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 98,
   "preview": "DoS GoldenEye - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1623,25 +1623,25 @@
   "page": 4,
   "index": 100,
   "preview": "Empty Payload (33.09%)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 101,
   "preview": "Target Unresponsive (0.1",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 102,
   "preview": "DoS Hulk",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 103,
   "preview": "DoS Hulk - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1653,19 +1653,19 @@
   "page": 4,
   "index": 105,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 106,
   "preview": "DoS Slow HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 107,
   "preview": "FTP-Patator - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1677,25 +1677,25 @@
   "page": 4,
   "index": 109,
   "preview": "Attack mislabeled. Traff",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 110,
   "preview": "tempts to port 21 which ",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 111,
   "preview": "DoS Slowloris",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 112,
   "preview": "DoS Slowloris - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1707,19 +1707,19 @@
   "page": 4,
   "index": 114,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 115,
   "preview": "FTP-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 116,
   "preview": "FTP-Patator - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1731,31 +1731,31 @@
   "page": 4,
   "index": 118,
   "preview": "Port/System Closed. Unsu",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 119,
   "preview": "oversight. All TCP ‘Syn’",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 120,
   "preview": "host/port are responded ",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 121,
   "preview": "Infiltration",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 122,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1767,31 +1767,31 @@
   "page": 4,
   "index": 124,
   "preview": "Hosts not involved in th",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 125,
   "preview": "tion. Suspect severe con",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 126,
   "preview": "due to time-based labell",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 127,
   "preview": "SQL Injection",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 128,
   "preview": "SQL Injection - Attempte",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1803,31 +1803,31 @@
   "page": 4,
   "index": 130,
   "preview": "Empty Payload (36.78%). ",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 131,
   "preview": "occur in the timeframe o",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 132,
   "preview": "Attack startup/tear down",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 133,
   "preview": "SSH-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 134,
   "preview": "SSH-Patator - Attempted",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1839,13 +1839,13 @@
   "page": 4,
   "index": 136,
   "preview": "Empty Payload",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 137,
   "preview": "* Values accurate at tim",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1959,19 +1959,19 @@
   "page": 5,
   "index": 8,
   "preview": "Attack",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 9,
   "preview": "Overlap Class",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 10,
   "preview": "# Overlap",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -1989,7 +1989,7 @@
   "page": 5,
   "index": 13,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2001,13 +2001,13 @@
   "page": 5,
   "index": 15,
   "preview": "DoS Hulk",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 16,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2019,13 +2019,13 @@
   "page": 5,
   "index": 18,
   "preview": "DoS Slowloris",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 19,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2037,13 +2037,13 @@
   "page": 5,
   "index": 21,
   "preview": "Portscan",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 22,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2061,13 +2061,13 @@
   "page": 5,
   "index": 25,
   "preview": "Brute Force - Web",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 26,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2079,13 +2079,13 @@
   "page": 5,
   "index": 28,
   "preview": "Web - Brute Force",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 29,
   "preview": "Infiltration",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2097,13 +2097,13 @@
   "page": 5,
   "index": 31,
   "preview": "Web Attack - XSS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 32,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2115,13 +2115,13 @@
   "page": 5,
   "index": 34,
   "preview": "Web Attack - XSS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 35,
   "preview": "SQL Injection",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2133,13 +2133,13 @@
   "page": 5,
   "index": 37,
   "preview": "DoS Slow HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 38,
   "preview": "FTP-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2163,13 +2163,13 @@
   "page": 5,
   "index": 42,
   "preview": "DoS Slow HTTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 43,
   "preview": "SSH-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2193,13 +2193,13 @@
   "page": 5,
   "index": 47,
   "preview": "FTP-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 48,
   "preview": "SSH-Patator",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -2223,13 +2223,13 @@
   "page": 5,
   "index": 52,
   "preview": "Infiltration",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
   "index": 53,
   "preview": "Benign",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -4671,7 +4671,7 @@
   "page": 8,
   "index": 142,
   "preview": "Total Flows",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
@@ -4689,37 +4689,37 @@
   "page": 8,
   "index": 145,
   "preview": "Incorrectly labeled",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 146,
   "preview": "Count",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 147,
   "preview": "% Mismatch",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 148,
   "preview": "Count",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 149,
   "preview": "%Mismatch",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 150,
   "preview": "Published Version (Basel",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
@@ -4749,7 +4749,7 @@
   "page": 8,
   "index": 155,
   "preview": "Confident Learning [40]",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
@@ -4779,7 +4779,7 @@
   "page": 8,
   "index": 160,
   "preview": "O2U-Net [38]",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
