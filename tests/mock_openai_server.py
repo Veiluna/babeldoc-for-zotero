@@ -139,6 +139,8 @@ class MockOpenAIServer(HTTPServer):
         bad_fragments: bool = False,
         bad_fragment_repairs: bool = False,
         long_short_labels: bool = False,
+        echo_pattern: str | None = None,
+        synthetic: bool = False,
     ) -> None:
         super().__init__(address, handler)
         self.response_status = status
@@ -151,6 +153,13 @@ class MockOpenAIServer(HTTPServer):
         # 0.3 < ratio < 3 check, so it exercises the runner's override path.
         self.long_short_labels = long_short_labels
         self.long_short_label_count = 0
+        # Echo inputs whose text (placeholders removed) matches this regex,
+        # like a model leaving numbers or names untranslated.
+        self.echo_pattern = re.compile(echo_pattern) if echo_pattern else None
+        self.echo_count = 0
+        # Answer ordinary inputs with token-matched synthetic Chinese instead
+        # of the "译：<source>" default.
+        self.synthetic = synthetic
         self.bad_fragment_groups: set[str] = set()
         self.bad_fragment_group: str | None = None
         self.bad_fragment_sources: dict[str, dict[str, str]] = {}
@@ -233,7 +242,14 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
         for index, item in enumerate(items):
             source_text = str(item.get("input", ""))
             fragment_group = str(item.get("fragment_id", ""))
-            if (
+            if self.server.echo_pattern and self.server.echo_pattern.search(
+                _MOCK_PLACEHOLDER_TOKEN_RE.sub("", source_text).strip()
+            ):
+                # A model echoing an input keeps its placeholders but tends to
+                # collapse runs of whitespace.
+                translated = " ".join(source_text.split())
+                self.server.echo_count += 1
+            elif (
                 is_repair
                 and self.server.bad_fragment_repairs
                 and fragment_group == self.server.bad_fragment_group
@@ -267,7 +283,7 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             ):
                 # Deliberately omit the continuation; the runner should repair it in one packed pass.
                 translated = ""
-            elif self.server.bad_fragments:
+            elif self.server.bad_fragments or self.server.synthetic:
                 translated = _synthetic_translation(source_text, index)
             else:
                 translated = "\u8bd1\uff1a" + source_text
@@ -338,6 +354,12 @@ def main() -> int:
         action="store_true",
         help="translate inputs of <= 4 tokens at exactly 3x their token count (BabelDOC rejects these)",
     )
+    parser.add_argument("--echo-pattern", help="return inputs matching this regex unchanged")
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="answer with token-matched synthetic Chinese instead of 译：<source>",
+    )
     args = parser.parse_args()
 
     server = MockOpenAIServer(
@@ -347,6 +369,8 @@ def main() -> int:
         count_file=args.count_file,
         bad_fragments=args.bad_fragments,
         long_short_labels=args.long_short_labels,
+        echo_pattern=args.echo_pattern,
+        synthetic=args.synthetic,
     )
     print(f"Mock OpenAI server listening at http://{args.host}:{args.port}/v1", flush=True)
     try:

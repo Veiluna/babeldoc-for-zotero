@@ -584,7 +584,53 @@ def test_warning_protocol_redacts_keys_with_json_escape_characters_before_encodi
     assert "[已隐藏]" in event["message"]
 
 
+def test_paragraph_classification_reports_written_back_paragraphs_as_translated() -> None:
+    from types import SimpleNamespace as NS
+
+    kept = NS(unicode="Jane Doe  jane@example.org", pdf_paragraph_composition=["glyphs"])
+    translated = NS(unicode="Deep learning is widely used.", pdf_paragraph_composition=["glyphs"])
+    untouched_none = NS(unicode=None, pdf_paragraph_composition=None)
+    same_text_rewritten = NS(unicode="CIC-IDS-2017", pdf_paragraph_composition=["glyphs"])
+    rolled_back = NS(unicode="Results", pdf_paragraph_composition=["glyphs"])
+    document = NS(page=[
+        NS(pdf_paragraph=[kept, translated]),
+        NS(pdf_paragraph=[untouched_none, same_text_rewritten, rolled_back]),
+    ])
+    original = runner.snapshot_paragraph_state(document)
+    translated.unicode = "深度学习被广泛使用。"
+    translated.pdf_paragraph_composition = ["new glyphs"]
+    # BabelDOC writes back an output equal to the text: still re-typeset.
+    same_text_rewritten.pdf_paragraph_composition = ["new glyphs"]
+    original_composition = rolled_back.pdf_paragraph_composition
+    rolled_back.unicode, rolled_back.pdf_paragraph_composition = "结果", ["new glyphs"]
+    runner.restore_paragraph_snapshots(
+        {id(rolled_back): (rolled_back, "Results", original_composition)}, {id(rolled_back)}
+    )
+
+    records = runner.classify_paragraphs(document, original, "sk-secret")
+
+    assert records == [
+        {"page": 1, "index": 0, "preview": "Jane Doe jane@example.org", "decision": "kept"},
+        {"page": 1, "index": 1, "preview": "Deep learning is widely used.", "decision": "translated"},
+        {"page": 2, "index": 0, "preview": "", "decision": "kept"},
+        {"page": 2, "index": 1, "preview": "CIC-IDS-2017", "decision": "translated"},
+        {"page": 2, "index": 2, "preview": "Results", "decision": "kept"},
+    ]
+
+
+def test_paragraph_classification_preview_is_redacted_and_short() -> None:
+    from types import SimpleNamespace as NS
+
+    paragraph = NS(unicode="key sk-secret " + "x" * 200, pdf_paragraph_composition=[])
+    document = NS(page=[NS(pdf_paragraph=[paragraph])])
+    records = runner.classify_paragraphs(document, runner.snapshot_paragraph_state(document), "sk-secret")
+    assert "sk-secret" not in records[0]["preview"]
+    assert len(records[0]["preview"]) <= 60
+
+
 if __name__ == "__main__":
+    test_paragraph_classification_reports_written_back_paragraphs_as_translated()
+    test_paragraph_classification_preview_is_redacted_and_short()
     test_installed_babeldoc_version_allows_startup()
     test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
     test_missing_babeldoc_package_uses_the_same_error_kind()

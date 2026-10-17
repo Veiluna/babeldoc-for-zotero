@@ -1,0 +1,3470 @@
+[
+ {
+  "page": 1,
+  "index": 0,
+  "preview": "Toward Generating a New ",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 1,
+  "preview": "Iman Sharafaldin, Arash ",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 2,
+  "preview": "Keywords:",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 3,
+  "preview": "Intrusion Detection, IDS",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 4,
+  "preview": "Abstract:",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 5,
+  "preview": "With exponential growth ",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 6,
+  "preview": "1 INTRODUCTION",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 7,
+  "preview": "Intrusion detection play",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 8,
+  "preview": "On one hand, many such d",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 9,
+  "preview": "The first two authors co",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 10,
+  "preview": "datasets a perfect datas",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 11,
+  "preview": "Since 1999, Scott et al.",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 12,
+  "preview": "Our Contributions: Our c",
+  "decision": "translated"
+ },
+ {
+  "page": 1,
+  "index": 13,
+  "preview": "108",
+  "decision": "kept"
+ },
+ {
+  "page": 1,
+  "index": 14,
+  "preview": "Sharafaldin, I., Lashkar",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 0,
+  "preview": "necessary criteria with ",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 1,
+  "preview": "The rest of the paper is",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 2,
+  "preview": "2 AVAILABLE DATASETS",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 3,
+  "preview": "In this section, we anal",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 4,
+  "preview": "DARPA (Lincoln Laborator",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 5,
+  "preview": "KDD’99(University of Cal",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 6,
+  "preview": "DEFCON (The Shmoo Group,",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 7,
+  "preview": "CAIDA (Center of Applied",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 8,
+  "preview": "LBNL (Lawrence Berkeley ",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 9,
+  "preview": "Kyoto (Kyoto University ",
+  "decision": "translated"
+ },
+ {
+  "page": 2,
+  "index": 10,
+  "preview": "Toward Generating a New ",
+  "decision": "kept"
+ },
+ {
+  "page": 2,
+  "index": 11,
+  "preview": "109",
+  "decision": "kept"
+ },
+ {
+  "page": 3,
+  "index": 0,
+  "preview": "sis and evaluation. The ",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 1,
+  "preview": "Twente (University of Tw",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 2,
+  "preview": "UMASS (University of Mas",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 3,
+  "preview": "ISCX2012 (University of ",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 4,
+  "preview": "ADFA (University of New ",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 5,
+  "preview": "3 EXPERIMENTS",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 6,
+  "preview": "To create a comprehensiv",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 7,
+  "preview": "3.1 Testbed Architecture",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 8,
+  "preview": "As Figure 1 shows, our t",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 9,
+  "preview": "Table 1 shows the list o",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 10,
+  "preview": "3.2 BenignProfile Agent",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 11,
+  "preview": "Generating the realistic",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 12,
+  "preview": "At First, it tries to en",
+  "decision": "translated"
+ },
+ {
+  "page": 3,
+  "index": 13,
+  "preview": "ICISSP 2018 - 4th Intern",
+  "decision": "kept"
+ },
+ {
+  "page": 3,
+  "index": 14,
+  "preview": "110",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 0,
+  "preview": "Table 1: Victim-Network ",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 1,
+  "preview": "Machine",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 2,
+  "preview": "OS",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 3,
+  "preview": "IPs",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 4,
+  "preview": "rk o etw N- Victim",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 5,
+  "preview": "Servers",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 6,
+  "preview": "Win",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 7,
+  "preview": "Server",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 8,
+  "preview": "2016 (DC and",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 9,
+  "preview": "DNS)",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 10,
+  "preview": "192.168.10.3",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 11,
+  "preview": "Ubuntu",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 12,
+  "preview": "16",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 13,
+  "preview": "(Web Server)",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 14,
+  "preview": "192.168.10.50-",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 15,
+  "preview": "205.174.165.68",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 16,
+  "preview": "Ubuntu 12",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 17,
+  "preview": "192.168.10.51-",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 18,
+  "preview": "205.174.165.66",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 19,
+  "preview": "PCs",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 20,
+  "preview": "Ubuntu",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 21,
+  "preview": "14.4",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 22,
+  "preview": "(32, 64)",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 23,
+  "preview": "192.168.10.19-",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 24,
+  "preview": "192168.10.17",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 25,
+  "preview": "Ubuntu",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 26,
+  "preview": "16.4",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 27,
+  "preview": "(32-64)",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 28,
+  "preview": "192.168.10.16-",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 29,
+  "preview": "192.168.10.12",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 30,
+  "preview": "Win 7Pro",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 31,
+  "preview": "192.168.10.9",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 32,
+  "preview": "Win 8.1-64",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 33,
+  "preview": "192.168.10.5",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 34,
+  "preview": "Win Vista",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 35,
+  "preview": "192.168.10.8",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 36,
+  "preview": "Win",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 37,
+  "preview": "10",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 38,
+  "preview": "(Pro",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 39,
+  "preview": "32-64)",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 40,
+  "preview": "192.168.10.14-",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 41,
+  "preview": "192.168.10.15",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 42,
+  "preview": "Mac",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 43,
+  "preview": "192.168.10.25",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 44,
+  "preview": "Firewall",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 45,
+  "preview": "Fortinet",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 46,
+  "preview": "ttackers A",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 47,
+  "preview": "PCs",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 48,
+  "preview": "Kali",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 49,
+  "preview": "win 8.1",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 50,
+  "preview": "Win 8.1",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 51,
+  "preview": "Win 8.1",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 52,
+  "preview": "205.174.165.73",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 53,
+  "preview": "205.174.165.69",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 54,
+  "preview": "205.174.165.70",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 55,
+  "preview": "205.174.165.71",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 56,
+  "preview": "of protocols. Then, afte",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 57,
+  "preview": "3.3 Attack ProfilesandSc",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 58,
+  "preview": "Since CICIDS2017 is inte",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 59,
+  "preview": "Brute Force Attack: This",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 60,
+  "preview": "Heartbleed Attack: It co",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 61,
+  "preview": "Botnet: A number of Inte",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 62,
+  "preview": "access to the device and",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 63,
+  "preview": "DoS Attack: The attacker",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 64,
+  "preview": "DDoS Attack: It typicall",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 65,
+  "preview": "Web Attack: This attack ",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 66,
+  "preview": "Infiltration Attack: The",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 67,
+  "preview": "4 DATASET",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 68,
+  "preview": "The capturing period sta",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 69,
+  "preview": "Toward Generating a New ",
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 70,
+  "preview": "111",
+  "decision": "kept"
+ },
+ {
+  "page": 5,
+  "index": 0,
+  "preview": "Figure 1: Testbed Archit",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 1,
+  "preview": "Table 2: Daily Label of ",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 2,
+  "preview": "Days",
+  "decision": "kept"
+ },
+ {
+  "page": 5,
+  "index": 3,
+  "preview": "Labels",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 4,
+  "preview": "Monday",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 5,
+  "preview": "Benign",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 6,
+  "preview": "Tuesday",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 7,
+  "preview": "BForce,SFTP and SSH",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 8,
+  "preview": "Wednes.",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 9,
+  "preview": "DoS and Hearbleed Attack",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 10,
+  "preview": "slowloris, Slowhttptest,",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 11,
+  "preview": "Hulk and GoldenEye",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 12,
+  "preview": "Thurs.",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 13,
+  "preview": "Web and Infiltration Att",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 14,
+  "preview": "Web BForce, XSS and Sql ",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 15,
+  "preview": "Infiltration Dropbox Dow",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 16,
+  "preview": "and Cool disk",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 17,
+  "preview": "Friday",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 18,
+  "preview": "DDoS LOIT",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 19,
+  "preview": ",",
+  "decision": "kept"
+ },
+ {
+  "page": 5,
+  "index": 20,
+  "preview": "Botnet ARES",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 21,
+  "preview": ",",
+  "decision": "kept"
+ },
+ {
+  "page": 5,
+  "index": 22,
+  "preview": "PortScans (sS,sT,sF,sX,s",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 23,
+  "preview": "sO,sA,sW,sR,sL and B)",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 24,
+  "preview": "pump for password hash c",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 25,
+  "preview": "DoS attack (Wednesday mo",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 26,
+  "preview": "DoS attack (Wednesday Af",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 27,
+  "preview": "which can scan a system ",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 28,
+  "preview": "Web attack (Thursday mor",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 29,
+  "preview": "Infiltration attack (Thu",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 30,
+  "preview": "Botnetattack (Fridaymorn",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 31,
+  "preview": "DDoS attack and PortScan",
+  "decision": "translated"
+ },
+ {
+  "page": 5,
+  "index": 32,
+  "preview": "ICISSP 2018 - 4th Intern",
+  "decision": "kept"
+ },
+ {
+  "page": 5,
+  "index": 33,
+  "preview": "112",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 0,
+  "preview": "server. The attackers ar",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 1,
+  "preview": "5 ANALYSIS",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 2,
+  "preview": "We evaluate the proposed",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 3,
+  "preview": "For extracting the netwo",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 4,
+  "preview": "In the second step, to f",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 5,
+  "preview": "Table 3 shows the list o",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 6,
+  "preview": "Table 3: Feature Selecti",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 7,
+  "preview": "Label",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 8,
+  "preview": "Feature",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 9,
+  "preview": "Weight",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 10,
+  "preview": "Benign",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 11,
+  "preview": "B.Packet Len Min",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 12,
+  "preview": "0.0479",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 13,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 14,
+  "preview": "0.0007",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 15,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 16,
+  "preview": "0.0004",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 17,
+  "preview": "F.Packet Len Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 18,
+  "preview": "0.0002",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 19,
+  "preview": "DoS GoldenEye",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 20,
+  "preview": "B.Packet Len Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 21,
+  "preview": "0.1585",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 22,
+  "preview": "Flow IAT Min",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 23,
+  "preview": "0.0317",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 24,
+  "preview": "Fwd IAT Min",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 25,
+  "preview": "0.0257",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 26,
+  "preview": "Flow IAT Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 27,
+  "preview": "0.0214",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 28,
+  "preview": "Heartbleed",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 29,
+  "preview": "B.Packet Len Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 30,
+  "preview": "0.2028",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 31,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 32,
+  "preview": "0.1367",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 33,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 34,
+  "preview": "0.0991",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 35,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 36,
+  "preview": "0.0903",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 37,
+  "preview": "DoS Hulk",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 38,
+  "preview": "B.Packet Len Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 39,
+  "preview": "0.2028",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 40,
+  "preview": "B.Packet Len Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 41,
+  "preview": "0.1277",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 42,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 43,
+  "preview": "0.0437",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 44,
+  "preview": "Flow IAT Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 45,
+  "preview": "0.0227",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 46,
+  "preview": "DoS Slowhttp",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 47,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 48,
+  "preview": "0.0443",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 49,
+  "preview": "Active Min",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 50,
+  "preview": "0.0228",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 51,
+  "preview": "Active Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 52,
+  "preview": "0.0219",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 53,
+  "preview": "Flow IAT Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 54,
+  "preview": "0.0200",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 55,
+  "preview": "DoS slowloris",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 56,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 57,
+  "preview": "0.0431",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 58,
+  "preview": "F.IAT Min",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 59,
+  "preview": "0.0378",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 60,
+  "preview": "B.IAT Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 61,
+  "preview": "0.0300",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 62,
+  "preview": "F.IAT Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 63,
+  "preview": "0.0265",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 64,
+  "preview": "SSH-Patator",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 65,
+  "preview": "Init Win F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 66,
+  "preview": "0.0079",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 67,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 68,
+  "preview": "0.0052",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 69,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 70,
+  "preview": "0.0034",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 71,
+  "preview": "ACK Flag Count",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 72,
+  "preview": "0.0007",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 73,
+  "preview": "FTP-Patator",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 74,
+  "preview": "Init Win F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 75,
+  "preview": "0.0077",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 76,
+  "preview": "F.PSH Flags",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 77,
+  "preview": "0.0062",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 78,
+  "preview": "SYN Flag Count",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 79,
+  "preview": "0.0061",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 80,
+  "preview": "F.Packets/s",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 81,
+  "preview": "0.0014",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 82,
+  "preview": "Web Attack",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 83,
+  "preview": "Init Win F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 84,
+  "preview": "0.0200",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 85,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 86,
+  "preview": "0.0145",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 87,
+  "preview": "Init Win B.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 88,
+  "preview": "0.0129",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 89,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 90,
+  "preview": "0.0096",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 91,
+  "preview": "Infiltration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 92,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 93,
+  "preview": "4.3012",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 94,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 95,
+  "preview": "2.8427",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 96,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 97,
+  "preview": "0.0657",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 98,
+  "preview": "Active Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 99,
+  "preview": "0.0227",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 100,
+  "preview": "Bot",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 101,
+  "preview": "Subflow F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 102,
+  "preview": "0.0239",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 103,
+  "preview": "Total Len F.Packets",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 104,
+  "preview": "0.0158",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 105,
+  "preview": "F.Packet Len Mean",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 106,
+  "preview": "0.0025",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 107,
+  "preview": "B.Packets/s",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 108,
+  "preview": "0.0021",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 109,
+  "preview": "PortScan",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 110,
+  "preview": "Init Win F.Bytes",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 111,
+  "preview": "0.0083",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 112,
+  "preview": "B.Packets/s",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 113,
+  "preview": "0.0032",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 114,
+  "preview": "PSH Flag Count",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 115,
+  "preview": "0.0009",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 116,
+  "preview": "DDoS",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 117,
+  "preview": "B.Packet Len Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 118,
+  "preview": "0.1728",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 119,
+  "preview": "Avg Packet Size",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 120,
+  "preview": "0.0162",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 121,
+  "preview": "Flow Duration",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 122,
+  "preview": "0.0137",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 123,
+  "preview": "Flow IAT Std",
+  "decision": "translated"
+ },
+ {
+  "page": 6,
+  "index": 124,
+  "preview": "0.0086",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 125,
+  "preview": "Toward Generating a New ",
+  "decision": "kept"
+ },
+ {
+  "page": 6,
+  "index": 126,
+  "preview": "113",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 0,
+  "preview": "Table 4: The Performance",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 1,
+  "preview": "Algorithm",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 2,
+  "preview": "Pr",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 3,
+  "preview": "Rc",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 4,
+  "preview": "F1",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 5,
+  "preview": "Execution",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 6,
+  "preview": "(Sec.)",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 7,
+  "preview": "KNN",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 8,
+  "preview": "0.96",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 9,
+  "preview": "0.96",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 10,
+  "preview": "0.96",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 11,
+  "preview": "1908.23",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 12,
+  "preview": "RF",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 13,
+  "preview": "0.98",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 14,
+  "preview": "0.97",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 15,
+  "preview": "0.97",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 16,
+  "preview": "74.39",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 17,
+  "preview": "ID3",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 18,
+  "preview": "0.98",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 19,
+  "preview": "0.98",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 20,
+  "preview": "0.98",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 21,
+  "preview": "235.02",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 22,
+  "preview": "Adaboost",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 23,
+  "preview": "0.77",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 24,
+  "preview": "0.84",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 25,
+  "preview": "0.77",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 26,
+  "preview": "1126.24",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 27,
+  "preview": "MLP",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 28,
+  "preview": "0.77",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 29,
+  "preview": "0.83",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 30,
+  "preview": "0.76",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 31,
+  "preview": "575.73",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 32,
+  "preview": "Naive-Bayes",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 33,
+  "preview": "0.88",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 34,
+  "preview": "0.04",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 35,
+  "preview": "0.04",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 36,
+  "preview": "14.77",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 37,
+  "preview": "QDA",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 38,
+  "preview": "0.97",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 39,
+  "preview": "0.88",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 40,
+  "preview": "0.92",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 41,
+  "preview": "18.79",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 42,
+  "preview": "as Standard Deviation (S",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 43,
+  "preview": "Besides, the analysissho",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 44,
+  "preview": "Forthe next step ofour a",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 45,
+  "preview": "Precision (Pr) or Positi",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 46,
+  "preview": "Recall (Rc) or Sensitivi",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 47,
+  "preview": "F-Measure (F1): It is a ",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 48,
+  "preview": "Table 4 shows the perfor",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 49,
+  "preview": "ated dataset. Also the e",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 50,
+  "preview": "On the last part of our ",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 51,
+  "preview": "Complete Network configu",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 52,
+  "preview": "Complete Traffic: By hav",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 53,
+  "preview": "Labelled Dataset: Sectio",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 54,
+  "preview": "Complete Interaction: As",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 55,
+  "preview": "Complete Capture: Becaus",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 56,
+  "preview": "AvailableProtocols: Bypr",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 57,
+  "preview": "AttackDiversity: Byinclu",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 58,
+  "preview": "Heterogeneity: By captur",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 59,
+  "preview": "Feature Set: By extracti",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 60,
+  "preview": "MetaData: By completely ",
+  "decision": "translated"
+ },
+ {
+  "page": 7,
+  "index": 61,
+  "preview": "ICISSP 2018 - 4th Intern",
+  "decision": "kept"
+ },
+ {
+  "page": 7,
+  "index": 62,
+  "preview": "114",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 0,
+  "preview": "Tabl",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 1,
+  "preview": "e 5: Comparison between ",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 2,
+  "preview": ".",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 3,
+  "preview": "Network",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 4,
+  "preview": "Traffic",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 5,
+  "preview": "Label.",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 6,
+  "preview": "Interact.",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 7,
+  "preview": "Captu.",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 8,
+  "preview": "Protocols",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 9,
+  "preview": "Attack Diversity",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 10,
+  "preview": "Ano.",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 11,
+  "preview": "Heter.",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 12,
+  "preview": "Features",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 13,
+  "preview": "Meta.",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 14,
+  "preview": "http",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 15,
+  "preview": "https",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 16,
+  "preview": "SSH",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 17,
+  "preview": "FTP",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 18,
+  "preview": "Email",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 19,
+  "preview": "Browser",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 20,
+  "preview": "Bforce",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 21,
+  "preview": "DoS",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 22,
+  "preview": "Scan",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 23,
+  "preview": "Bdoor",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 24,
+  "preview": "DNS",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 25,
+  "preview": "Other",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 26,
+  "preview": "DARPA",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 27,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 28,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 29,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 30,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 31,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 32,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 33,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 34,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 35,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 36,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 37,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 38,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 39,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 40,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 41,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 42,
+  "preview": "KDD’99",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 43,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 44,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 45,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 46,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 47,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 48,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 49,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 50,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 51,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 52,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 53,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 54,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 55,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 56,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 57,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 58,
+  "preview": "DEFCON",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 59,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 60,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 61,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 62,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 63,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 64,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 65,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 66,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 67,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 68,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 69,
+  "preview": "YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 70,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 71,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 72,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 73,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 74,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 75,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 76,
+  "preview": "CAIDAs",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 77,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 78,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 79,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 80,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 81,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 82,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 83,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 84,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 85,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 86,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 87,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 88,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 89,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 90,
+  "preview": "YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 91,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 92,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 93,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 94,
+  "preview": "LBNL",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 95,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 96,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 97,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 98,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 99,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 100,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 101,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 102,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 103,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 104,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 105,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 106,
+  "preview": "YES -",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 107,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 108,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 109,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 110,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 111,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 112,
+  "preview": "CDX",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 113,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 114,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 115,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 116,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 117,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 118,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 119,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 120,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 121,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 122,
+  "preview": "YES -",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 123,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 124,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 125,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 126,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 127,
+  "preview": "KYOTO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 128,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 129,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 130,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 131,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 132,
+  "preview": "YES YES YES YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 133,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 134,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 135,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 136,
+  "preview": "YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 137,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 138,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 139,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 140,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 141,
+  "preview": "TWENTE",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 142,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 143,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 144,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 145,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 146,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 147,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 148,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 149,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 150,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 151,
+  "preview": "YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 152,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 153,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 154,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 155,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 156,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 157,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 158,
+  "preview": "UMASS",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 159,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 160,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 161,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 162,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 163,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 164,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 165,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 166,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 167,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 168,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 169,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 170,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 171,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 172,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 173,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 174,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 175,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 176,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 177,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 178,
+  "preview": "ISCX2012",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 179,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 180,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 181,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 182,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 183,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 184,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 185,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 186,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 187,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 188,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 189,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 190,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 191,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 192,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 193,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 194,
+  "preview": "ADFA2013",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 195,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 196,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 197,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 198,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 199,
+  "preview": "YES YES NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 200,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 201,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 202,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 203,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 204,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 205,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 206,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 207,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 208,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 209,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 210,
+  "preview": "NO",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 211,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 212,
+  "preview": "CICIDS2017",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 213,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 214,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 215,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 216,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 217,
+  "preview": "YES YES YES YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 218,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 219,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 220,
+  "preview": "YES YES YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 221,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 222,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 223,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 224,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 225,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 226,
+  "preview": "YES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 227,
+  "preview": "dataset in Section 4 and",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 228,
+  "preview": "Finally, Table 5 showsth",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 229,
+  "preview": "6 CONCLUSIONS",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 230,
+  "preview": "Having a reliable, publi",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 231,
+  "preview": "ACKNOWLEDGEMENTS",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 232,
+  "preview": "The authors generously a",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 233,
+  "preview": "REFERENCES",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 234,
+  "preview": "Ali Shiravi, Hadi Shirav",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 235,
+  "preview": "Toward Generating a New ",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 236,
+  "preview": "115",
+  "decision": "kept"
+ },
+ {
+  "page": 9,
+  "index": 0,
+  "preview": "Heidemann, J. and Papdop",
+  "decision": "kept"
+ },
+ {
+  "page": 9,
+  "index": 1,
+  "preview": "ing Analysis Datasets an",
+  "decision": "kept"
+ },
+ {
+  "page": 9,
+  "index": 2,
+  "preview": "ICISSP 2018 - 4th Intern",
+  "decision": "kept"
+ },
+ {
+  "page": 9,
+  "index": 3,
+  "preview": "116",
+  "decision": "kept"
+ }
+]

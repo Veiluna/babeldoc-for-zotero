@@ -1477,6 +1477,45 @@ def _parse_json_array_prefix(text: str) -> tuple[list[Any], bool, bool]:
             return values, False, False
 
 
+def snapshot_paragraph_state(document: Any) -> dict[int, tuple[Any, Any]]:
+    """Each paragraph's text and composition before translation, keyed by id()."""
+    return {
+        id(paragraph): (paragraph.unicode, paragraph.pdf_paragraph_composition)
+        for page in document.page
+        for paragraph in page.pdf_paragraph
+    }
+
+
+def classify_paragraphs(
+    document: Any, original: dict[int, tuple[Any, Any]], api_key: str = ""
+) -> list[dict[str, Any]]:
+    """Whether each paragraph ended with model output written back.
+
+    BabelDOC's post_translate_paragraph is the only step before typesetting
+    that replaces pdf_paragraph_composition, and rollbacks restore the original
+    object, so a paragraph still holding its original composition keeps its
+    original glyphs and layout. Text equality is not enough: BabelDOC also
+    writes back an output identical to the paragraph's text.
+    """
+    records = []
+    for page_index, page in enumerate(document.page):
+        for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
+            text, composition = original.get(
+                id(paragraph), (paragraph.unicode, paragraph.pdf_paragraph_composition)
+            )
+            records.append(
+                {
+                    "page": page_index + 1,
+                    "index": paragraph_index,
+                    "preview": _text_preview(text, api_key)[:60],
+                    "decision": "kept"
+                    if paragraph.pdf_paragraph_composition is composition
+                    else "translated",
+                }
+            )
+    return records
+
+
 def restore_paragraph_snapshots(
     snapshots: dict[int, tuple[Any, Any, Any]], paragraph_ids: set[int]
 ) -> None:
@@ -3798,6 +3837,7 @@ def _install_min_request_patches(
             )
             request_state["preserved_paragraph_ids"] = set()
             docs = translator.il_translator.docs
+            original_paragraph_state = snapshot_paragraph_state(docs)
             repeated_marginal_ids = collect_repeated_marginal_ids(docs)
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
@@ -4094,6 +4134,15 @@ def _install_min_request_patches(
 
             if not request_state.get("fatal_error") and request_state.get("repair_records"):
                 perform_repair_pass(translator)
+
+            _write_job_log(
+                request_state,
+                {
+                    "event": "paragraph_classification",
+                    "paragraphs": classify_paragraphs(docs, original_paragraph_state, api_key),
+                },
+                api_key,
+            )
 
             paragraph_font_maps.clear()
             request_state.pop("preprocessed_results", None)

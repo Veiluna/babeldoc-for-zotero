@@ -64,6 +64,7 @@
 - 不跳过、不禁用测试。新增的非平凡逻辑必须配回归测试：
   - Node：`node tests/<file>.test.js`（逐个运行）
   - Python：`python tests/test_runner_policy.py`、`python tests/test_min_requests.py`
+  - 回放回归（真实 BabelDOC + 模拟接口，不耗请求，约 1.5 分钟）：`python tests/test_replay_classification.py`；有意改变分类时用 `ZTF_UPDATE_REPLAY_BASELINE=1` 重写 `tests/fixtures/replay/` 基线并在提交中说明变化
 - 打包：`powershell -ExecutionPolicy Bypass -File scripts/build-xpi.ps1`。
 
 ## 模型调用方式
