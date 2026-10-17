@@ -48,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 3. **模型名**：接口服务支持的模型名称。
 4. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
 5. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
-6. **下载源**：默认使用国内镜像，也可切换到官方源。首次翻译会自动下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型（通常需要数分钟并下载数百 MB）；也可在此页点击“安装 / 修复环境”提前安装。
+6. **下载源**：默认使用国内镜像，也可切换到官方源。首次翻译会自动下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型（通常需要数分钟并下载数百 MB）。设置页的“安装 / 修复环境”会完整删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 后从头安装；已有环境会先询问确认，正在翻译时不能开始修复。清理不会删除 `%USERPROFILE%\.cache\babeldoc` 或 Zotero 数据目录中的日志。
 
 这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.maxOutputTokens`、`extensions.babeldoc-for-zotero.maxRequests`、`extensions.babeldoc-for-zotero.repairFailed`、`extensions.babeldoc-for-zotero.translateReferences` 和 `extensions.babeldoc-for-zotero.downloadSource`。
 

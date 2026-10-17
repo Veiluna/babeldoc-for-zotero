@@ -14,8 +14,11 @@ async function testConnection(
   baseURL = "https://example.test/v1",
   settingsError = null,
   tokenParam = "max_tokens",
+  installerReady = false,
+  invalidMaxRequests = false,
 ) {
   let testClick;
+  let installClick;
   const messages = new Map();
   const requests = [];
   const httpLogs = [];
@@ -26,10 +29,18 @@ async function testConnection(
       testClick = callback;
     },
   };
+  const installButton = {
+    disabled: false,
+    addEventListener(_event, callback) {
+      installClick = callback;
+    },
+  };
+  const installerCalls = [];
+  let readinessCalls = 0;
   const elements = {
     "babeldoc-for-zotero-preferences": pane,
     "babeldoc-for-zotero-preferences-test": button,
-    "babeldoc-for-zotero-preferences-install": { addEventListener() {} },
+    "babeldoc-for-zotero-preferences-install": installButton,
   };
   const document = {
     l10n: {
@@ -52,6 +63,7 @@ async function testConnection(
   const prefsSet = [];
   const prefValues = new Map([
     ["extensions.babeldoc-for-zotero.tokenParam", tokenParam],
+    ...(invalidMaxRequests ? [["extensions.babeldoc-for-zotero.maxRequests", 0]] : []),
   ]);
   const configContext = {
     Zotero: {
@@ -74,6 +86,7 @@ async function testConnection(
   const config = {
     getSettings() {
       if (settingsError) throw settingsError;
+      if (invalidMaxRequests) return realConfig.getSettings();
       return {
         baseURL,
         apiKey,
@@ -82,6 +95,8 @@ async function testConnection(
         tokenParam: realConfig.getSettings().tokenParam,
       };
     },
+    getDownloadSource: realConfig.getDownloadSource,
+    redact: realConfig.redact,
     tokenLimitAdaptation: realConfig.tokenLimitAdaptation,
     setTokenParam: realConfig.setTokenParam,
     chatCompletionsURL(baseURL) {
@@ -111,8 +126,12 @@ async function testConnection(
     ZoteroTranslateFilesInstaller: {
       baseDir() { return "C:\\Users\\test\\AppData\\Local\\babeldoc-for-zotero"; },
       isInstalling() { return false; },
-      async isReady() { return false; },
-      async ensureReady() { return "C:\\env\\python.exe"; },
+      async isReady() { readinessCalls++; return installerReady; },
+      async repairEnvironment(options) {
+        installerCalls.push(options);
+        if (typeof options.onStart === "function") options.onStart();
+        return "C:\\env\\python.exe";
+      },
     },
     window,
   };
@@ -130,6 +149,10 @@ async function testConnection(
     tokenLimitAdaptation: realConfig.tokenLimitAdaptation,
     httpLogs,
     button,
+    installButton,
+    installClick,
+    installerCalls,
+    get readinessCalls() { return readinessCalls; },
     TimeoutException,
   };
 }
@@ -258,6 +281,37 @@ async function testConnection(
   assert.equal(successCase.status.messageID, "babeldoc-for-zotero-pref-api-success");
   assert.equal(successCase.status.args.status, 204);
 
+  const settingsResumeCase = await testConnection(
+    { response: { status: 204, responseText: "" } },
+    apiKey,
+    "https://example.test/v1",
+    null,
+    "max_tokens",
+    false,
+  );
+  const resumeReadinessChecks = settingsResumeCase.readinessCalls;
+  await settingsResumeCase.installClick({ currentTarget: settingsResumeCase.installButton });
+  assert.equal(settingsResumeCase.installerCalls.length, 1);
+  assert.equal(typeof settingsResumeCase.installerCalls[0].onStart, "function",
+    "settings should start progress only after repair has passed its safety checks");
+  assert.equal(Object.hasOwn(settingsResumeCase.installerCalls[0], "force"), false,
+    "settings should use the dedicated full-repair path instead of force mode");
+  assert.equal(settingsResumeCase.readinessCalls, resumeReadinessChecks,
+    "settings should not make a separate readiness check that can race with the shared install");
+
+  const settingsRepairCase = await testConnection(
+    { response: { status: 204, responseText: "" } },
+    apiKey,
+    "https://example.test/v1",
+    null,
+    "max_tokens",
+    true,
+  );
+  const repairReadinessChecks = settingsRepairCase.readinessCalls;
+  await settingsRepairCase.installClick({ currentTarget: settingsRepairCase.installButton });
+  assert.equal(typeof settingsRepairCase.installerCalls[0].onStart, "function");
+  assert.equal(settingsRepairCase.readinessCalls, repairReadinessChecks);
+
   const invalidSettingsCase = await testConnection(
     { response: { status: 204, responseText: "" } },
     apiKey,
@@ -266,6 +320,23 @@ async function testConnection(
   );
   assert.equal(invalidSettingsCase.button.disabled, false, "settings validation must re-enable the test button");
   assert.match(invalidSettingsCase.statusElement.textContent, /单篇最多请求次数必须是大于或等于 1 的整数/);
+
+  const invalidMaxRequestsInstallCase = await testConnection(
+    { response: { status: 204, responseText: "" } },
+    apiKey,
+    "https://example.test/v1",
+    null,
+    "max_tokens",
+    false,
+    true,
+  );
+  assert.match(invalidMaxRequestsInstallCase.statusElement.textContent,
+    /单篇最多请求次数必须是大于或等于 1 的整数/);
+  await invalidMaxRequestsInstallCase.installClick({ currentTarget: invalidMaxRequestsInstallCase.installButton });
+  assert.equal(invalidMaxRequestsInstallCase.installerCalls.length, 1,
+    "invalid translation settings must not block the settings install button");
+  assert.equal(invalidMaxRequestsInstallCase.installerCalls[0].source, "china");
+  assert.equal(invalidMaxRequestsInstallCase.installButton.disabled, false);
 
   const encodedKey = encodeURIComponent(apiKey);
   const encodedKeyLowerHex = encodedKey.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase());

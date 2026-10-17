@@ -570,6 +570,44 @@ async function cleanupRunsWhenImportFails() {
   assert.deepEqual(failures, [[43, "import failed"]]);
 }
 
+async function maintenanceLockRefusesActiveWorkAndPausesNewJobs() {
+  const started = [];
+  const firstStarted = deferred();
+  const finishFirst = deferred();
+  const harness = makeHarness({
+    runner: {
+      async translate(item) {
+        started.push(item.id);
+        if (item.id === 1) {
+          firstStarted.resolve();
+          await finishFirst.promise;
+        }
+        return "translation-" + item.id + ".pdf";
+      },
+    },
+  });
+  harness.items.set(1, { id: 1 });
+  harness.items.set(2, { id: 2 });
+
+  harness.queue.enqueue([1]);
+  await firstStarted.promise;
+  const busyLock = harness.queue.acquireMaintenanceLock();
+  assert.equal(busyLock.acquired, false, "maintenance must be refused while a translation is running");
+  assert.equal(busyLock.reason, "translation");
+  finishFirst.resolve();
+  await harness.queue.onIdle();
+
+  const lock = harness.queue.acquireMaintenanceLock();
+  assert.equal(lock.acquired, true);
+  harness.queue.enqueue([2]);
+  await Promise.resolve();
+  assert.deepEqual(started, [1], "queued work must not start while environment maintenance holds the lock");
+  const idle = harness.queue.onIdle();
+  lock.release();
+  await idle;
+  assert.deepEqual(started, [1, 2], "queued work should resume when maintenance releases the lock");
+}
+
 (async () => {
   await fifoDedupeAndContinueAfterFailure();
   await validatesSettingsBeforeStarting();
@@ -581,6 +619,7 @@ async function cleanupRunsWhenImportFails() {
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
   await cleanupRunsWhenImportFails();
+  await maintenanceLockRefusesActiveWorkAndPausesNewJobs();
   process.stdout.write("translation queue regression cases passed\n");
 })().catch(error => {
   process.stderr.write(error.stack + "\n");

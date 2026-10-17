@@ -93,7 +93,7 @@ var ZoteroTranslateFilesConfig = (function () {
       baseURL: read("baseURL"),
       apiKey: read("apiKey"),
       model: read("model"),
-      downloadSource: read("downloadSource") === "official" ? "official" : "china",
+      downloadSource: getDownloadSource(),
       maxOutputTokens: readInteger(
         "maxOutputTokens",
         8192,
@@ -107,6 +107,11 @@ var ZoteroTranslateFilesConfig = (function () {
         ? read("tokenParam")
         : "max_tokens",
     };
+  }
+
+  function getDownloadSource() {
+    var value = Zotero.Prefs.get(preferences.downloadSource, true);
+    return String(value == null ? "" : value).trim() === "official" ? "official" : "china";
   }
 
   function setTokenParam(value) {
@@ -260,6 +265,7 @@ var ZoteroTranslateFilesConfig = (function () {
   return {
     migrateLegacyPreferences: migrateLegacyPreferences,
     getSettings: getSettings,
+    getDownloadSource: getDownloadSource,
     setTokenParam: setTokenParam,
     tokenLimitAdaptation: tokenLimitAdaptation,
     redact: redact,

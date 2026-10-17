@@ -10,6 +10,7 @@ var ZoteroTranslateFilesQueue = (function () {
   var currentProgress = null;
   var stopped = true;
   var idleWaiters = [];
+  var maintenanceLocked = false;
 
   function log(message) {
     if (ZoteroTranslateFiles && typeof ZoteroTranslateFiles.log === "function") {
@@ -518,7 +519,7 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   function startNext() {
-    if (stopped || currentJob) {
+    if (stopped || currentJob || maintenanceLocked) {
       notifyIdle();
       return;
     }
@@ -601,6 +602,23 @@ var ZoteroTranslateFilesQueue = (function () {
       });
     },
 
+    acquireMaintenanceLock: function () {
+      if (currentJob) return { acquired: false, reason: "translation" };
+      if (maintenanceLocked) return { acquired: false, reason: "maintenance" };
+      maintenanceLocked = true;
+      var released = false;
+      return {
+        acquired: true,
+        release: function () {
+          if (released) return;
+          released = true;
+          maintenanceLocked = false;
+          if (stopped) notifyIdle();
+          else startNext();
+        },
+      };
+    },
+
     cancelAll: function () {
       stopped = true;
       for (var job of pending) queuedIDs.delete(String(job.attachmentID));
@@ -641,6 +659,10 @@ var ZoteroTranslateFilesQueue = (function () {
       importer = value || null;
     },
   };
+
+  try { Zotero.__babeldocForZoteroQueue = api; } catch (error) {
+    // The installer can still use this module's direct global API when exposed.
+  }
 
   return api;
 })();

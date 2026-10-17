@@ -1,9 +1,54 @@
 /* global Zotero, ZoteroTranslateFilesConfig, Services, IOUtils, PathUtils, ChromeUtils, Cc, Ci, crypto */
 
-var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
-  Zotero.__babeldocForZoteroInstaller.__moduleVersion === 1
-  ? Zotero.__babeldocForZoteroInstaller
-  : (function () {
+var installerPriorSingleton = Zotero.__babeldocForZoteroInstaller;
+var installerPriorBarrier = null;
+var installerPriorBarrierFinish = null;
+if (installerPriorSingleton && installerPriorSingleton.__moduleVersion !== 3 &&
+    typeof installerPriorSingleton.isInstalling === "function") {
+  try {
+    if (installerPriorSingleton.isInstalling()) {
+      installerPriorBarrier = new Promise(function (resolve) {
+        var removeListener = null;
+        var finished = false;
+        var detachAfterRegistration = false;
+        function finishWhenIdle() {
+          if (finished) return;
+          finished = true;
+          if (typeof removeListener === "function") {
+            try { removeListener(); } catch (error) { /* The handoff must still finish. */ }
+          } else {
+            detachAfterRegistration = true;
+          }
+          resolve();
+        }
+        installerPriorBarrierFinish = finishWhenIdle;
+        try {
+          if (typeof installerPriorSingleton.addStateListener !== "function") return;
+          removeListener = installerPriorSingleton.addStateListener(function (running) {
+            if (!running) finishWhenIdle();
+          });
+          if (detachAfterRegistration && typeof removeListener === "function") {
+            try { removeListener(); } catch (error) { /* The handoff must still finish. */ }
+          }
+          if (!installerPriorSingleton.isInstalling()) finishWhenIdle();
+        } catch (error) {
+          try {
+            if (!installerPriorSingleton.isInstalling()) finishWhenIdle();
+          } catch (stateError) {
+            // Stay blocked if the old install state cannot be observed safely.
+          }
+        }
+      });
+    }
+  } catch (error) {
+    installerPriorBarrier = new Promise(function () {});
+  }
+}
+
+var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
+  installerPriorSingleton.__moduleVersion === 3
+  ? installerPriorSingleton
+  : (function (initialInstallBarrier) {
   var UV_VERSION = "0.13.1";
   var PYTHON_VERSION = "3.12";
   var BABELDOC_VERSION = "0.6.4";
@@ -22,12 +67,19 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     },
   };
   var STEP_NAMES = ["下载 uv", "安装 Python 3.12", "创建环境", "安装 BabelDOC 0.6.4", "下载字体和模型"];
+  var STEP_IDS = ["download-uv", "install-python", "create-environment", "install-babeldoc", "warmup"];
   var inFlight = null;
   var inFlightAbortController = null;
   var inFlightWaiters = [];
   var progressObservers = [];
   var stateObservers = [];
   var activeInstall = false;
+  var acceptingInstalls = true;
+  var lifecycleGeneration = 0;
+  var legacyInstallBarrier = initialInstallBarrier;
+  var legacyInstallWaiters = [];
+  var repairOperation = null;
+  var repairDeletionError = null;
 
   function redact(value) {
     var text = String(value == null ? "" : value);
@@ -75,14 +127,13 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     return env;
   }
 
-  function buildStepPlan(state, force) {
+  function buildStepPlan(state) {
     state = state || {};
-    force = !!force;
     return STEP_NAMES.map(function (name, index) {
       var complete = index === 0 ? !!state.uvReady
         : index === 1 ? !!state.pythonReady
-          : !force && index === 2 ? !!state.environmentReady
-            : !force && index === 3 ? !!state.babeldocReady
+          : index === 2 ? !!state.environmentReady
+            : index === 3 ? !!state.babeldocReady
               : false;
       return { index: index + 1, name: name, skip: complete };
     });
@@ -129,6 +180,30 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     };
   }
 
+  function normalizedWindowsPath(path) {
+    return String(path || "").replace(/\//g, "\\").replace(/\\+/g, "\\")
+      .replace(/\\+$/, "").toLowerCase();
+  }
+
+  function windowsPathsOverlap(first, second) {
+    var left = normalizedWindowsPath(first);
+    var right = normalizedWindowsPath(second);
+    return left === right || left.startsWith(right + "\\") || right.startsWith(left + "\\");
+  }
+
+  async function removeManagedBase(path) {
+    var expected = pathsFor(baseDir()).base;
+    if (!path || normalizedWindowsPath(path) !== normalizedWindowsPath(expected) ||
+        !normalizedWindowsPath(expected).endsWith("\\babeldoc-for-zotero")) {
+      throw new Error("拒绝删除非 BabelDOC 管理环境目录。");
+    }
+    var zoteroLogs = join(Zotero.DataDirectory.dir, "babeldoc-for-zotero", "logs");
+    if (windowsPathsOverlap(expected, zoteroLogs)) {
+      throw repairError("ENVIRONMENT_DELETE_PROTECTED", "翻译环境目录与 Zotero 日志目录重叠；为保护日志，未删除环境，也未开始重新安装。");
+    }
+    await IOUtils.remove(expected, { recursive: true, ignoreAbsent: true });
+  }
+
   async function isReady() {
     var base;
     try {
@@ -161,6 +236,7 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     var normalized = Math.max(0, Math.min(100, Number(percent) || 0));
     var progress = {
       step: STEP_NAMES[index - 1],
+      stepId: STEP_IDS[index - 1],
       stepIndex: index,
       stepCount: 5,
       stepProgress: normalized,
@@ -314,7 +390,12 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
         }
         await Zotero.HTTP.download(urls[index], wheelPath, {
           timeout: 60000,
-          cancellerReceiver: function (cancel) { cancelDownload = cancel; },
+          errorDelayMax: 0,
+          noRetryOnThrottle: true,
+          cancellerReceiver: function (cancel) {
+            cancelDownload = cancel;
+            if (signal && signal.aborted) cancelDownload();
+          },
           onProgress: function (totalBytes, contentLength) {
             var fraction = contentLength > 0 ? totalBytes / contentLength * 100 : 0;
             emitProgress(observers, 1, Math.min(99, fraction), contentLength
@@ -371,6 +452,10 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     return prompt.confirmEx(parent, title, message, flags, "重试", "取消", null, null, {});
   }
 
+  function hasInteractiveWaiter() {
+    return inFlightWaiters.some(function (waiter) { return waiter.interactive; });
+  }
+
   async function executeInstall(options, observers) {
     options = options || {};
     var source = normalizeSource(options.source);
@@ -390,13 +475,8 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
         base = baseDir();
         paths = pathsFor(base);
         architecture = Services.sysinfo.getProperty("arch");
-        if (options.force) {
-          await IOUtils.remove(paths.installJSON, { ignoreAbsent: true });
-          await IOUtils.remove(paths.environment, { recursive: true, ignoreAbsent: true });
-        } else {
-          // A stale manifest must not make a partially repaired environment look ready.
-          await IOUtils.remove(paths.installJSON, { ignoreAbsent: true });
-        }
+        // A stale manifest must not make a partially repaired environment look ready.
+        await IOUtils.remove(paths.installJSON, { ignoreAbsent: true });
         await ensureDirectory(paths.base);
         await ensureDirectory(paths.uvDir);
         await ensureDirectory(paths.pythonInstallDir);
@@ -412,6 +492,14 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
           activeInstall = false;
           notifyInstallState();
           throw setupCancelled;
+        }
+        if (!hasInteractiveWaiter()) {
+          var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+          setupFailed.logPath = logState.path;
+          activeInstall = false;
+          notifyInstallState();
+          await writeLog(logState);
+          throw setupFailed;
         }
         var setupChoice;
         try { setupChoice = promptRetry("准备安装目录", setupDetail, logState.path); }
@@ -469,10 +557,10 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
               var packageWorks = false;
               if (fileExists(paths.python)) {
                 var importCheck = await probeChild(paths.python, ["-c", PACKAGE_PROBE], paths, source, options.signal, logState);
-                packageWorks = importCheck.exitCode === 0;
+                packageWorks = importCheck.exitCode === 0 && fileExists(paths.babeldoc);
               }
               if (!packageWorks) {
-                var installArgs = ["pip", "install", "--python", paths.python, "BabelDOC==" + BABELDOC_VERSION, "bitstring<5"];
+                var installArgs = ["pip", "install", "--reinstall-package", "BabelDOC", "--python", paths.python, "BabelDOC==" + BABELDOC_VERSION, "bitstring<5"];
                 if (source === "china") installArgs.push("--index-url", TUNA_INDEX);
                 await runChild(paths.uv, installArgs, paths, source, options.signal, logState);
                 await runChild(paths.python, ["-c", PACKAGE_PROBE], paths, source, options.signal, logState);
@@ -489,6 +577,11 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
               var cancelled = new Error("BabelDOC 环境安装已取消。请重新翻译或在设置中安装/修复环境以继续。日志：" + logState.path);
               cancelled.logPath = logState.path;
               throw cancelled;
+            }
+            if (!hasInteractiveWaiter()) {
+              var nonInteractiveFailure = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+              nonInteractiveFailure.logPath = logState.path;
+              throw nonInteractiveFailure;
             }
             var choice;
             try { choice = promptRetry(stepName, detail, logState.path); }
@@ -586,7 +679,11 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     var observer = typeof options.onProgress === "function" ? options.onProgress : null;
     if (observer) progressObservers.push(observer);
 
-    var waiter = { signal: options.signal || null, abortListener: null };
+    var waiter = {
+      signal: options.signal || null,
+      interactive: options.interactive !== false,
+      abortListener: null,
+    };
     inFlightWaiters.push(waiter);
     if (!waiter.signal) return inFlight;
 
@@ -619,7 +716,20 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     });
   }
 
-  function waitForRestart(options, previousInstall) {
+  function isLifecycleCurrent(generation) {
+    return acceptingInstalls && generation === lifecycleGeneration;
+  }
+
+  function inactiveError() {
+    return new Error("BabelDOC installer is inactive.");
+  }
+
+  function assertRepairActive(generation, signal) {
+    if (!isLifecycleCurrent(generation)) throw inactiveError();
+    if (signal && signal.aborted) throw new Error("修复环境已取消。");
+  }
+
+  function waitForRestart(options, previousInstall, generation) {
     return new Promise(function (resolve, reject) {
       var signal = options.signal || null;
       var active = true;
@@ -631,7 +741,11 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
         if (!active) return;
         active = false;
         cleanup();
-        ensureReady(options).then(resolve, reject);
+        if (!isLifecycleCurrent(generation)) {
+          reject(inactiveError());
+          return;
+        }
+        ensureReady(options, generation).then(resolve, reject);
       }
       function cancel() {
         if (!active) return;
@@ -651,32 +765,297 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
     });
   }
 
-  function ensureReady(options) {
+  function waitForLegacyInstall(options, barrier, generation) {
+    return new Promise(function (resolve, reject) {
+      var signal = options.signal || null;
+      var active = true;
+      var waiter = { cancel: cancel };
+      function cleanup() {
+        if (signal && waiter.abortListener) signal.removeEventListener("abort", waiter.abortListener);
+        waiter.abortListener = null;
+        var index = legacyInstallWaiters.indexOf(waiter);
+        if (index !== -1) legacyInstallWaiters.splice(index, 1);
+      }
+      function cancel(error) {
+        if (!active) return;
+        active = false;
+        cleanup();
+        reject(error);
+      }
+      function continueAfterLegacyInstall() {
+        if (!active) return;
+        active = false;
+        cleanup();
+        if (legacyInstallBarrier === barrier) legacyInstallBarrier = null;
+        if (!isLifecycleCurrent(generation)) {
+          reject(inactiveError());
+          return;
+        }
+        try {
+          Promise.resolve(ensureReady(options, generation)).then(resolve, reject);
+        } catch (error) {
+          reject(error);
+        }
+      }
+
+      legacyInstallWaiters.push(waiter);
+      if (signal) {
+        waiter.abortListener = function () { cancel(new Error("Install waiter was cancelled.")); };
+        signal.addEventListener("abort", waiter.abortListener, { once: true });
+        if (signal.aborted) {
+          waiter.abortListener();
+          return;
+        }
+      }
+      barrier.then(continueAfterLegacyInstall, continueAfterLegacyInstall);
+    });
+  }
+
+  function waitForRepair(options, operation, generation) {
+    return new Promise(function (resolve, reject) {
+      var signal = options.signal || null;
+      var active = true;
+      function cleanup() {
+        if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+        abortListener = null;
+      }
+      function finish(settle, value) {
+        if (!active) return;
+        active = false;
+        cleanup();
+        settle(value);
+      }
+      function resume(value) {
+        if (!active) return;
+        if (!isLifecycleCurrent(generation)) {
+          finish(reject, inactiveError());
+        } else if (value === null) {
+          Promise.resolve(ensureReady(options, generation)).then(
+            result => finish(resolve, result),
+            error => finish(reject, error),
+          );
+        } else {
+          finish(resolve, value);
+        }
+      }
+      var abortListener = signal ? function () {
+        finish(reject, new Error("翻译任务已取消。"));
+      } : null;
+      if (signal) {
+        signal.addEventListener("abort", abortListener, { once: true });
+        if (signal.aborted) {
+          abortListener();
+          return;
+        }
+      }
+      operation.then(resume, function (error) { finish(reject, error); });
+    });
+  }
+
+  function maintenanceQueue() {
+    try { return Zotero && Zotero.__babeldocForZoteroQueue; } catch (error) { return null; }
+  }
+
+  function repairError(code, message) {
+    var error = new Error(message);
+    error.code = code;
+    return error;
+  }
+
+  function repairQueueLock() {
+    var queue = maintenanceQueue();
+    if (!queue || typeof queue.acquireMaintenanceLock !== "function") {
+      throw repairError("REPAIR_QUEUE_UNAVAILABLE", "无法确认翻译队列状态，请重启 Zotero 后重试修复环境。");
+    }
+    var result = queue.acquireMaintenanceLock();
+    if (!result || !result.acquired) {
+      if (result && result.reason === "translation") {
+        throw repairError("TRANSLATION_RUNNING", "翻译正在运行，无法修复翻译环境。请等待翻译任务完成后重试。");
+      }
+      throw repairError("ENVIRONMENT_MAINTENANCE_BUSY", "翻译环境正在维护，当前无法开始另一项修复。");
+    }
+    return result.release;
+  }
+
+  async function stopAndWaitForInstalls() {
+    var currentInstall = inFlight;
+    var currentLegacyBarrier = legacyInstallBarrier;
+    if (inFlightAbortController && !inFlightAbortController.signal.aborted) {
+      inFlightAbortController.abort();
+    }
+    if (currentLegacyBarrier && installerPriorSingleton &&
+        typeof installerPriorSingleton.cancelInFlight === "function") {
+      try { installerPriorSingleton.cancelInFlight(); } catch (error) { /* The barrier still guards deletion. */ }
+      try {
+        if (!installerPriorSingleton.isInstalling() && typeof installerPriorBarrierFinish === "function") {
+          installerPriorBarrierFinish();
+        }
+      } catch (error) {
+        // Keep waiting for the existing handoff observer when state cannot be read.
+      }
+    }
+    var waits = [];
+    if (currentInstall) waits.push(Promise.resolve(currentInstall).catch(function () {}));
+    if (currentLegacyBarrier) waits.push(Promise.resolve(currentLegacyBarrier).catch(function () {}));
+    await Promise.all(waits);
+  }
+
+  async function promptRepair() {
+    var parent = null;
+    try { parent = Zotero.getMainWindow(); } catch (error) { parent = null; }
+    var localization = parent && parent.document && parent.document.l10n;
+    if (!localization || typeof localization.formatValue !== "function") {
+      throw new Error("无法读取翻译环境修复确认框的本地化文本。");
+    }
+    if (parent.MozXULElement && typeof parent.MozXULElement.insertFTLIfNeeded === "function") {
+      parent.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
+    }
+    var messageIDs = [
+      "babeldoc-for-zotero-pref-environment-repair-confirm-title",
+      "babeldoc-for-zotero-pref-environment-repair-confirm-message",
+      "babeldoc-for-zotero-pref-environment-repair-confirm",
+      "babeldoc-for-zotero-pref-environment-repair-cancel",
+    ];
+    var strings = await Promise.all(messageIDs.map(function (messageID) {
+      return localization.formatValue(messageID);
+    }));
+    if (strings.some(function (value) { return !value; })) {
+      throw new Error("无法读取翻译环境修复确认框的本地化文本。");
+    }
+    var prompt = Services.prompt;
+    var flags = prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_0 +
+      prompt.BUTTON_TITLE_IS_STRING * prompt.BUTTON_POS_1 + prompt.BUTTON_POS_1_DEFAULT;
+    return prompt.confirmEx(
+      parent,
+      strings[0],
+      strings[1],
+      flags,
+      strings[2],
+      strings[3],
+      null,
+      null,
+      {},
+    );
+  }
+
+  function repairEnvironment(options) {
     options = options || {};
-    if (options.signal && options.signal.aborted) return Promise.reject(new Error("翻译任务已取消。"));
+    var generation = lifecycleGeneration;
+    if (!isLifecycleCurrent(generation)) return Promise.reject(inactiveError());
+    if (options.signal && options.signal.aborted) return Promise.reject(new Error("修复环境已取消。"));
+    if (repairOperation) return repairOperation;
+
+    var releaseQueue;
+    try { releaseQueue = repairQueueLock(); }
+    catch (error) { return Promise.reject(error); }
+
+    var operation;
+    operation = (async function () {
+      try {
+        var readyBeforeStop = await isReady();
+        assertRepairActive(generation, options.signal);
+        if (readyBeforeStop) {
+          var choice;
+          try { choice = await promptRepair(); }
+          catch (error) { choice = 1; }
+          assertRepairActive(generation, options.signal);
+          if (choice !== 0) return null;
+        }
+
+        await stopAndWaitForInstalls();
+        assertRepairActive(generation, options.signal);
+        if (!readyBeforeStop) {
+          var readyAfterStop = await isReady();
+          assertRepairActive(generation, options.signal);
+          if (readyAfterStop) {
+            var completedInstallChoice;
+            try { completedInstallChoice = await promptRepair(); }
+            catch (error) { completedInstallChoice = 1; }
+            assertRepairActive(generation, options.signal);
+            if (completedInstallChoice !== 0) return null;
+          }
+        }
+
+        assertRepairActive(generation, options.signal);
+        if (typeof options.onStart === "function") options.onStart();
+        assertRepairActive(generation, options.signal);
+        try {
+          await removeManagedBase(baseDir());
+          repairDeletionError = null;
+        } catch (error) {
+          if (error && error.code === "ENVIRONMENT_DELETE_PROTECTED") {
+            repairDeletionError = error;
+            throw error;
+          }
+          repairDeletionError = repairError("ENVIRONMENT_DELETE_FAILED", "无法删除翻译环境，文件可能正在使用；未开始重新安装。请关闭相关程序后重试。");
+          throw repairDeletionError;
+        }
+
+        // Start the ordinary installer against the now-empty base directory.
+        // Publish its shared in-flight promise before allowing another caller in.
+        if (repairOperation === operation) repairOperation = null;
+        return await ensureReady(options, generation);
+      } finally {
+        if (repairOperation === operation) repairOperation = null;
+        try { releaseQueue(); } catch (error) { /* Queue cleanup must not mask the repair result. */ }
+      }
+    })();
+    repairOperation = operation;
+    return operation;
+  }
+
+  function ensureReady(options, expectedGeneration) {
+    options = options || {};
+    var generation = expectedGeneration == null ? lifecycleGeneration : expectedGeneration;
+    if (!isLifecycleCurrent(generation)) return Promise.reject(inactiveError());
+    if (options.signal && options.signal.aborted) return Promise.reject(new Error("Install waiter was cancelled."));
+
+    if (repairOperation) return waitForRepair(options, repairOperation, generation);
+    if (repairDeletionError) return Promise.reject(repairDeletionError);
+
+    if (legacyInstallBarrier) {
+      return waitForLegacyInstall(options, legacyInstallBarrier, generation);
+    }
 
     if (inFlight && inFlightAbortController && inFlightAbortController.signal.aborted) {
-      return waitForRestart(options, inFlight);
+      return waitForRestart(options, inFlight, generation);
     }
 
     if (!inFlight) {
       inFlightAbortController = makeAbortController();
       var installOptions = Object.assign({}, options, { signal: inFlightAbortController.signal });
-      if (!options.force) {
-        inFlight = isReady().then(function (ready) {
-          if (ready) return pathsFor(baseDir()).python;
-          return executeInstall(installOptions, progressObservers);
-        }).finally(cleanupInFlight);
-      } else {
-        inFlight = executeInstall(installOptions, progressObservers).finally(cleanupInFlight);
-      }
+      inFlight = isReady().then(function (ready) {
+        if (!isLifecycleCurrent(generation) || installOptions.signal.aborted) throw inactiveError();
+        if (ready) return pathsFor(baseDir()).python;
+        return executeInstall(installOptions, progressObservers);
+      }).finally(cleanupInFlight);
     }
     return waitForInFlight(options);
   }
 
-  return {
+  function activate() {
+    if (!acceptingInstalls) {
+      lifecycleGeneration++;
+      acceptingInstalls = true;
+    }
+  }
+
+  function cancelInFlight() {
+    acceptingInstalls = false;
+    lifecycleGeneration++;
+    legacyInstallWaiters.slice().forEach(function (waiter) { waiter.cancel(inactiveError()); });
+    if (inFlightAbortController && !inFlightAbortController.signal.aborted) {
+      inFlightAbortController.abort();
+    }
+  }
+
+    return {
     isReady: isReady,
     ensureReady: ensureReady,
+    repairEnvironment: repairEnvironment,
+    activate: activate,
+    createInstallAbortController: makeAbortController,
+    cancelInFlight: cancelInFlight,
     baseDir: baseDir,
     isInstalling: function () { return activeInstall; },
     addStateListener: function (callback) {
@@ -700,13 +1079,15 @@ var ZoteroTranslateFilesInstaller = Zotero.__babeldocForZoteroInstaller &&
       shortError: shortError,
       hashFile: hashFile,
       pathsFor: pathsFor,
+      removeManagedBase: removeManagedBase,
       stepNames: STEP_NAMES.slice(),
+      stepIDs: STEP_IDS.slice(),
       constants: { tunaIndex: TUNA_INDEX, pythonMirror: PYTHON_MIRROR },
     },
   };
-})();
+})(installerPriorBarrier);
 
-ZoteroTranslateFilesInstaller.__moduleVersion = 1;
+ZoteroTranslateFilesInstaller.__moduleVersion = 3;
 try {
   Zotero.__babeldocForZoteroInstaller = ZoteroTranslateFilesInstaller;
 } catch (error) {

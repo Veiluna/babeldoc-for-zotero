@@ -42,7 +42,32 @@ for (const relativePath of [
 const preferenceMarkup = read("addon/content/preferences.xhtml");
 assert.match(preferenceMarkup, /id="babeldoc-for-zotero-preferences"/);
 assert.match(preferenceMarkup, /preference="extensions\.babeldoc-for-zotero\.baseURL"/);
+assert.doesNotMatch(preferenceMarkup, /babeldoc-for-zotero-pref-request-help/);
 assert.doesNotMatch(preferenceMarkup, /(?:id|class)="zotero-translate-files-/);
+assert.match(read("addon/locale/zh-CN/babeldoc-for-zotero.ftl"), /^babeldoc-for-zotero-pref-repair-failed = 失败段落合并补译$/m);
+assert.match(read("addon/locale/en-US/babeldoc-for-zotero.ftl"), /^babeldoc-for-zotero-pref-repair-failed = Retry failed paragraphs in one batch$/m);
+for (const locale of ["zh-CN", "en-US"]) {
+  const localization = read(`addon/locale/${locale}/babeldoc-for-zotero.ftl`);
+  assert.doesNotMatch(localization, /^babeldoc-for-zotero-pref-request-help\s*=/m);
+  for (const messageID of [
+    "babeldoc-for-zotero-startup-progress-item",
+    "babeldoc-for-zotero-startup-progress-initial",
+    "babeldoc-for-zotero-startup-progress-stage",
+    "babeldoc-for-zotero-startup-ready",
+    "babeldoc-for-zotero-startup-failed",
+    "babeldoc-for-zotero-pref-environment-repair-busy",
+    "babeldoc-for-zotero-pref-environment-maintenance-busy",
+    "babeldoc-for-zotero-pref-environment-repair-delete-failed",
+    "babeldoc-for-zotero-pref-environment-repair-queue-unavailable",
+    "babeldoc-for-zotero-installer-step-download-uv",
+    "babeldoc-for-zotero-installer-step-install-python",
+    "babeldoc-for-zotero-installer-step-create-environment",
+    "babeldoc-for-zotero-installer-step-install-babeldoc",
+    "babeldoc-for-zotero-installer-step-warmup",
+  ]) {
+    assert.match(localization, new RegExp(`^${messageID}\\s*=`, "m"), `${locale} defines ${messageID}`);
+  }
+}
 assert.match(read("addon/content/modules/menu.js"), /var MENU_ID = "babeldoc-for-zotero-translate-pdf"/);
 
 const prefsSource = read("addon/prefs.js");

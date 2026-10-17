@@ -318,19 +318,25 @@ var ZoteroTranslateFilesPreferences = (function () {
     document.getElementById(PANE_ID + "-install").addEventListener("click", async function (event) {
       var button = event.currentTarget;
       button.disabled = true;
-      setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-installing");
-      var progress = showInstallProgress();
+      var progress = null;
       try {
-        var settings = ZoteroTranslateFilesConfig.getSettings();
-        await ZoteroTranslateFilesInstaller.ensureReady({
-          source: settings.downloadSource,
-          force: true,
+        var installOptions = {
+          source: ZoteroTranslateFilesConfig.getDownloadSource(),
+          onStart: function () {
+            setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-installing");
+            progress = showInstallProgress();
+          },
           onProgress: function (value) {
             if (!progress || !progress.item) return;
             progress.item.setProgress(value.overall);
             progress.item.setText(value.stage);
           },
-        });
+        };
+        var pythonPath = await ZoteroTranslateFilesInstaller.repairEnvironment(installOptions);
+        if (!pythonPath) {
+          updateInstallStatus(document);
+          return;
+        }
         if (progress && progress.item) {
           progress.item.setProgress(100);
           progress.item.setText("BabelDOC 环境已就绪。");
@@ -339,7 +345,16 @@ var ZoteroTranslateFilesPreferences = (function () {
         setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-ready");
       } catch (error) {
         var detail = ZoteroTranslateFilesConfig.redact(error && error.message ? error.message : error);
-        setPlainText(document, PANE_ID + "-environment-status", "环境安装失败：" + detail);
+        var repairMessageIDs = {
+          TRANSLATION_RUNNING: "babeldoc-for-zotero-pref-environment-repair-busy",
+          ENVIRONMENT_MAINTENANCE_BUSY: "babeldoc-for-zotero-pref-environment-maintenance-busy",
+          ENVIRONMENT_DELETE_FAILED: "babeldoc-for-zotero-pref-environment-repair-delete-failed",
+          ENVIRONMENT_DELETE_PROTECTED: "babeldoc-for-zotero-pref-environment-repair-logs-protected",
+          REPAIR_QUEUE_UNAVAILABLE: "babeldoc-for-zotero-pref-environment-repair-queue-unavailable",
+        };
+        var repairMessageID = error && repairMessageIDs[error.code];
+        if (repairMessageID) setMessage(document, PANE_ID + "-environment-status", repairMessageID);
+        else setPlainText(document, PANE_ID + "-environment-status", "环境安装失败：" + detail);
         if (progress && progress.item) {
           if (typeof progress.item.setError === "function") progress.item.setError();
           progress.item.setText("环境安装失败。");
