@@ -17,6 +17,7 @@
   - 6luna 的改动连续 2 轮导致测试或打包失败，且下一轮仍未修复。
   环境问题，以及后续轮次提出的新审查意见，都不计入。升级后仍由 6.1sol 审查，提交信息注明升级原因并告知用户，下一个任务恢复由 6luna 编写。
 - **常规分工**：日常代码一律交给 6luna 编写。只有触发上面的升级指标，或用户就某个具体任务明确要求时，才由 Claude Opus 5.5 编写；该任务完成后恢复原分工。
+- **Codex 额度**（详见 AGENTS.md）：调用 6luna 前，先从 `%USERPROFILE%\.codex\sessions` 最新的 `token_count` 事件读取 `rate_limits.primary.used_percent` 和 `resets_at`。剩余 0% 时由 Claude Opus 5.5 直接编写，额度恢复后改回 6luna。6.1sol 审查等额度恢复后再进行。这种切换不计入升级指标。
 - **context7（强制）**：
   - 写任务说明前，先用 context7 查询相关文档，并把结论写进说明；
   - 两个 Codex 模型调用时都开启 context7 MCP；

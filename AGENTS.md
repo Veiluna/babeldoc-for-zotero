@@ -28,6 +28,14 @@
 - 提交信息注明 "Implemented by Claude Opus 5.5 (escalated: <触发的指标>)"，并告知用户；
 - 下一个任务恢复由 6luna 编写。
 
+## Codex 额度规则：5 小时额度用尽时改由 Claude Opus 5.5 编写
+
+- 每次调用 6luna 之前，Claude 先从 Codex 会话日志查询 5 小时额度：取 `%USERPROFILE%\.codex\sessions\**\rollout-*.jsonl` 中时间戳最新的 `token_count` 事件，读 `rate_limits.primary`（`window_minutes` = 300）的 `used_percent` 和 `resets_at`。
+- 剩余额度为 0%（`used_percent` ≥ 100）且 `resets_at` 尚未到达时，直接改由 **Claude Opus 5.5** 编写代码，不再调用 6luna。到达 `resets_at` 后（或日志显示额度已恢复），恢复由 6luna 编写。
+- 这种切换不属于升级，也不计入升级指标。提交信息注明 "Implemented by Claude Opus 5.5 (Codex 5h quota exhausted)"。
+- 审查仍由 6.1sol 负责，同样消耗 Codex 额度。额度用尽时，审查等额度恢复后再进行，`PASS` 之前不提交。
+- context7 规则照常适用。
+
 ## 文档查询（context7，强制）
 
 - **编写代码前必须查询**：任何模型（6luna，或升级后的 Claude Opus 5.5）在编写或修改调用库、接口的代码之前，都必须先用 context7 MCP（resolve-library-id → query-docs）查询**实际所用版本**的文档，并按文档实现，不得凭记忆使用参数名、函数签名或默认值。涉及的库和接口包括 Zotero 插件 API、Firefox/Gecko ESR 140、OpenAI Chat Completions 参数（如 `max_tokens` 与 `max_completion_tokens`、`temperature` 是否支持）、BabelDOC 0.6.4、PyMuPDF、Python 标准库等。
