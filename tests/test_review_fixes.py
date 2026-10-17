@@ -35,6 +35,37 @@ def _paragraph(text, y, y2, label="text"):
     )
 
 
+def test_first_page_author_block_is_preserved():
+    assert runner._EMAIL_EVIDENCE_RE.search("x@host.tld")
+    assert runner._EMAIL_EVIDENCE_RE.search("d.essam{v4}@adfa.edu.au")
+
+    author_block = _paragraph(
+        "Lisa Liu{v1}, Gints Engelen{v2}, Timothy Lynar Daryl Essam Wouter Joosen "
+        "Universityof New South Wales, Canberra{v3}l.liuthorrold, t.lynar, "
+        "d.essam{v4}@adfa.edu.au{v5}imec-DistriNet, KU Leuven{v6}gints.engelen, "
+        "wouter.joosen{v7}@kuleuven.be",
+        300,
+        400,
+        label="plain text",
+    )
+    assert runner._is_first_page_author_block(author_block, 0)
+    assert not runner._is_first_page_author_block(author_block, 1)
+
+    ordinary_email = _paragraph("Lisa Liu l.liu@adfa.edu.au", 300, 400)
+    assert runner._is_first_page_author_block(ordinary_email, 0)
+
+    sentence = _paragraph(
+        "Correspondence should be addressed to the first author at "
+        "l.liu@adfa.edu.au for further details.",
+        300,
+        400,
+    )
+    assert not runner._is_first_page_author_block(sentence, 0)
+
+    title = _paragraph("A Robust Translation Framework", 300, 400)
+    assert not runner._is_first_page_author_block(title, 0)
+
+
 def test_repeated_running_headers_are_preserved_even_when_labeled_body_text():
     pages = []
     headers = []
@@ -619,6 +650,7 @@ def test_other_errors_are_not_retried_and_the_slot_is_counted_once():
 
 
 if __name__ == "__main__":
+    test_first_page_author_block_is_preserved()
     test_completion_adapts_to_unsupported_token_and_sampling_parameters()
     test_other_errors_are_not_retried_and_the_slot_is_counted_once()
     test_author_bylines_need_evidence_and_skip_edit_distance()

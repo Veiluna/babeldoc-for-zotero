@@ -859,9 +859,11 @@ def _looks_like_name_list(text: str) -> bool:
 # Evidence that a line is an author byline rather than a title-cased heading:
 # an e-mail address, or an affiliation marker attached to a name ("Liu{v1}",
 # "Liu1", "Liu*", "Liu†").
+_EMAIL_EVIDENCE_PATTERN = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\}\s*@\s*[\w.-]+"
+_EMAIL_EVIDENCE_RE = re.compile(_EMAIL_EVIDENCE_PATTERN)
 _AUTHOR_EVIDENCE_RE = re.compile(
-    r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\}\s*@\s*[\w.-]+"
-    r"|[a-z]\{\s*v\s*\d+\s*\}|[a-z](?:\d{1,2}|[*†‡§¶]+)(?=[\s,;]|$)"
+    _EMAIL_EVIDENCE_PATTERN
+    + r"|[a-z]\{\s*v\s*\d+\s*\}|[a-z](?:\d{1,2}|[*†‡§¶]+)(?=[\s,;]|$)"
 )
 
 
@@ -897,6 +899,16 @@ def verbatim_output_allowed(text: str) -> bool:
         if re.fullmatch(r"[a-z]+(?:['’-][a-z]+)*", word):
             lowercase.append(word)
     return len(lowercase) < _PROSE_MIN_LOWERCASE_WORDS
+
+
+def _is_first_page_author_block(paragraph: Any, page_index: int) -> bool:
+    text = getattr(paragraph, "unicode", "") or ""
+    has_email_evidence = bool(_EMAIL_EVIDENCE_RE.search(text))
+    return (
+        page_index == 0
+        and has_email_evidence
+        and verbatim_output_allowed(text)
+    )
 
 
 def _looks_like_english_prose(text: str) -> bool:
@@ -3890,6 +3902,7 @@ def _install_min_request_patches(
                     id(paragraph) in request_state["reference_paragraph_ids"]
                     or id(paragraph) in repeated_marginal_ids
                     or _paragraph_is_marginal_or_stamp(paragraph, item["page"])
+                    or _is_first_page_author_block(paragraph, item["position"][0])
                 ):
                     request_state["preserved_paragraph_ids"].add(id(paragraph))
                     if pbar is not None:

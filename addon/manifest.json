@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Translate Files for Zotero",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Translate PDF attachments into Simplified Chinese while preserving layout.",
   "author": "Veiluna",
   "icons": {
