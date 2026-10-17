@@ -63,6 +63,7 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         *,
         repair_enabled: bool,
         bad_fragment_repairs: bool = False,
+        echo_first_fragment: bool = False,
     ) -> tuple[subprocess.CompletedProcess[str], dict[str, object] | None, list[dict[str, object]], int, str | None, list[str]]:
         if BABELDOC_PYTHON is None:
             self.fail(
@@ -78,6 +79,7 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
             MockOpenAIHandler,
             bad_fragments=True,
             bad_fragment_repairs=bad_fragment_repairs,
+            echo_first_fragment=echo_first_fragment,
         )
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -214,7 +216,21 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
             and record.get("fragment_id") == selected_group
         ]
         self.assertEqual(len(main_items), 2, main_items)
-        self.assertEqual(len(repaired_items), 2, repaired_items)
+        self.assertEqual(
+            len(repaired_items),
+            2,
+            {
+                "repair_records": [record for record in records if record.get("phase") == "repair"],
+                "result": result,
+                "main_group": [
+                    record
+                    for record in records
+                    if record.get("phase") == "main"
+                    and record.get("fragment_id") == selected_group
+                ],
+                "stdout": completed.stdout[-1500:],
+            },
+        )
         self.assertTrue(all(item["outcome"] == "repaired" for item in repaired_items))
         self.assertEqual(result["repair_request_count"], 1)
         self.assertLessEqual(result["requests"], result["main_minimum_requests"] + 1)
@@ -322,6 +338,51 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         for main_item in main_items:
             source = _compact(main_item.get("preview", ""))
             self.assertTrue(source and source in compact_pdf_text, main_item)
+
+    def test_verbatim_fragment_is_kept_out_of_group_repair_and_failures(self) -> None:
+        completed, result, records, request_count, selected_group, text_blocks = self._run_job(
+            repair_enabled=True,
+            bad_fragment_repairs=True,
+            echo_first_fragment=True,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=f"runner failed\nstdout:\n{completed.stdout[-5000:]}\nstderr:\n{completed.stderr[-5000:]}",
+        )
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        main_items = [
+            record
+            for record in records
+            if record.get("event") == "item_outcome"
+            and record.get("phase") == "main"
+            and record.get("fragment_id") == selected_group
+        ]
+        kept_items = [item for item in main_items if item.get("outcome") == "kept_verbatim"]
+        repair_items = [
+            record
+            for record in records
+            if record.get("event") == "item_outcome"
+            and record.get("phase") == "repair"
+            and record.get("fragment_id") == selected_group
+        ]
+        self.assertEqual(len(kept_items), 1, main_items)
+        self.assertEqual(len(repair_items), 1, repair_items)
+        self.assertEqual(repair_items[0].get("outcome"), "retained_source")
+        self.assertTrue(result.get("mono"))
+        self.assertEqual(request_count, result["requests"])
+        self.assertEqual(result["repair_request_count"], 1)
+        repair_summary = next(
+            record for record in records if record.get("event") == "repair_summary"
+        )
+        self.assertEqual(repair_summary.get("failed_items"), 1, repair_summary)
+        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
+        self.assertIsNotNone(warning_match, completed.stdout[-5000:])
+        warning = json.loads(warning_match.group(1))
+        self.assertEqual(warning["failed_paragraphs"], 1, warning)
+        compact_pdf_text = "".join(text_blocks)
+        source = _compact(kept_items[0].get("preview", ""))
+        self.assertTrue(source and source in compact_pdf_text, kept_items[0])
 
 
 if __name__ == "__main__":

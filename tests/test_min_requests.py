@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import re
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -1060,8 +1061,8 @@ def test_fragment_validation_and_placeholder_integrity() -> None:
     assert not empty_result["usable"] and not empty_result["checks"]["non_empty"]
 
     identical_result = runner.validate_translation_output(source, source, {}, len)
-    assert not identical_result["usable"]
-    assert identical_result["checks"]["identical_english"]
+    assert identical_result["usable"]
+    assert identical_result["checks"]["kept_verbatim"]
 
     placeholder_item = {"required_placeholders": [{"token": "{v1}", "count": 1}]}
     missing = runner.validate_translation_output("formula {v1}", "公式", placeholder_item, len)
@@ -1252,6 +1253,84 @@ def test_fragment_validation_and_placeholder_integrity() -> None:
     assert "g1" in empty_sibling_issue, "an invalid split sibling must invalidate the whole group"
 
 
+def test_verbatim_model_output_keeps_original_and_skips_paragraph_writeback() -> None:
+    source = "<style id='metric'>{v1}</style>  42"
+    echoed = "<style id='metric'>{ V 1 }< / STYLE >\t42"
+    writes: list[str] = []
+
+    outcome, result = runner._apply_translation_output(
+        source,
+        echoed,
+        lambda: writes.append("written") or True,
+    )
+
+    assert outcome == "kept_verbatim"
+    assert result is False
+    assert writes == []
+    quality = runner.validate_translation_output(
+        source,
+        echoed,
+        {
+            "required_placeholders": [
+                {"token": "<style id='metric'>", "count": 1},
+                {"token": "{v1}", "count": 1},
+                {"token": "</style>", "count": 1},
+            ]
+        },
+        len,
+    )
+    assert quality["usable"]
+    assert quality["checks"]["kept_verbatim"]
+
+    changed, changed_result = runner._apply_translation_output(
+        source,
+        "<style id='metric'>{v1}</style>  43",
+        lambda: writes.append("written") or True,
+    )
+    assert changed == "translated"
+    assert changed_result is True
+    assert writes == ["written"]
+
+    # BabelDOC normalizes runs of 20+ punctuation marks before its writeback
+    # hook. The hook must compare against the accepted model output instead.
+    punctuation_echo = "10" + "." * 21 + "42"
+    babeldoc_output = re.sub(r"[. 。…，]{20,}", ".", punctuation_echo)
+    outcome, result = runner._apply_translation_output(
+        punctuation_echo,
+        babeldoc_output,
+        lambda: writes.append("written") or True,
+        model_output=punctuation_echo,
+    )
+    assert outcome == "kept_verbatim"
+    assert result is False
+    assert writes == ["written"]
+
+
+def test_group_apply_failure_preserves_later_verbatim_acceptance() -> None:
+    source = "10" + "." * 21 + "42"
+    accepted_outputs = {
+        1: {"text": "translated sibling"},
+        2: {"text": source},
+    }
+    runner._clear_unkept_fragment_outputs(
+        accepted_outputs, {1, 2}, {2}
+    )
+    assert 1 not in accepted_outputs
+    assert accepted_outputs[2]["text"] == source
+
+    babeldoc_output = re.sub(r"[. 。…，]{20,}", ".", accepted_outputs[2]["text"])
+    writes: list[str] = []
+    outcome, result = runner._apply_translation_output(
+        source,
+        babeldoc_output,
+        lambda: writes.append("written") or True,
+        model_output=accepted_outputs[2]["text"],
+    )
+    assert outcome == "kept_verbatim"
+    assert result is False
+    assert writes == []
+
+
 def test_final_fragment_group_rollback_counts_prior_request_successes() -> None:
     first = SimpleNamespace(
         unicode="first source",
@@ -1325,6 +1404,49 @@ def test_final_fragment_group_rollback_counts_prior_request_successes() -> None:
     assert request_state["final_fragment_failure_ids"] == restored_ids
     assert policy.failed_paragraphs == 2
     assert policy.decision()["kind"] == "translation_failed"
+
+
+def test_fragment_group_rollback_does_not_count_verbatim_member() -> None:
+    kept = SimpleNamespace(
+        unicode="123", pdf_paragraph_composition=["kept composition"]
+    )
+    failed = SimpleNamespace(
+        unicode="789 translated", pdf_paragraph_composition=["translated composition"]
+    )
+    kept_composition = kept.pdf_paragraph_composition
+    failed_composition = ["failed original composition"]
+    snapshots = {
+        id(kept): (kept, "123", kept_composition),
+        id(failed): (failed, "789", failed_composition),
+    }
+    request_state = {
+        "document_paragraph_snapshots": snapshots,
+        "translated_paragraph_ids": {id(failed)},
+    }
+    policy = runner.TranslationPolicy()
+    policy._record_attempt(kept)
+    policy._record_attempt(failed)
+    policy.record_failure(kept, "provisional failure before its output arrived")
+
+    restored_ids = runner.rollback_fragment_group(
+        policy,
+        request_state,
+        [{"paragraph": kept}, {"paragraph": failed}],
+        "sibling writeback failed",
+        exempt_failure_ids={id(kept)},
+    )
+
+    assert restored_ids == {id(kept), id(failed)}
+    assert kept.unicode == "123" and failed.unicode == "789"
+    assert kept.pdf_paragraph_composition is kept_composition
+    assert failed.pdf_paragraph_composition is failed_composition
+    assert request_state["final_fragment_failure_ids"] == restored_ids
+    assert not request_state["translated_paragraph_ids"]
+    assert policy.failed_paragraphs == 2
+    runner._mark_paragraph_kept_verbatim(request_state, policy, kept)
+    assert policy.failed_paragraphs == 1
+    assert request_state["kept_verbatim_paragraph_ids"] == {id(kept)}
+    assert request_state["final_fragment_failure_ids"] == {id(failed)}
 
 
 def test_references_margins_and_body_font_scale_policy() -> None:
@@ -1647,7 +1769,10 @@ if __name__ == "__main__":
     test_partial_output_validation_and_original_composition_restore()
     test_html_api_error_is_summarized_without_markup()
     test_fragment_validation_and_placeholder_integrity()
+    test_verbatim_model_output_keeps_original_and_skips_paragraph_writeback()
+    test_group_apply_failure_preserves_later_verbatim_acceptance()
     test_final_fragment_group_rollback_counts_prior_request_successes()
+    test_fragment_group_rollback_does_not_count_verbatim_member()
     test_references_margins_and_body_font_scale_policy()
     test_request_cap_stops_before_an_extra_call()
     test_attempt_and_failure_counts_follow_submitted_batches()

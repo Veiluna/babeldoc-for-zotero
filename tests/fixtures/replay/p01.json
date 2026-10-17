@@ -315,7 +315,7 @@
   "page": 4,
   "index": 10,
   "preview": "192.168.10.3",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -339,13 +339,13 @@
   "page": 4,
   "index": 14,
   "preview": "192.168.10.50-",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 15,
   "preview": "205.174.165.68",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -357,13 +357,13 @@
   "page": 4,
   "index": 17,
   "preview": "192.168.10.51-",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 18,
   "preview": "205.174.165.66",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -387,19 +387,19 @@
   "page": 4,
   "index": 22,
   "preview": "(32, 64)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 23,
   "preview": "192.168.10.19-",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 24,
   "preview": "192168.10.17",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -417,19 +417,19 @@
   "page": 4,
   "index": 27,
   "preview": "(32-64)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 28,
   "preview": "192.168.10.16-",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 29,
   "preview": "192.168.10.12",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -441,7 +441,7 @@
   "page": 4,
   "index": 31,
   "preview": "192.168.10.9",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -453,7 +453,7 @@
   "page": 4,
   "index": 33,
   "preview": "192.168.10.5",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -465,7 +465,7 @@
   "page": 4,
   "index": 35,
   "preview": "192.168.10.8",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -489,19 +489,19 @@
   "page": 4,
   "index": 39,
   "preview": "32-64)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 40,
   "preview": "192.168.10.14-",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 41,
   "preview": "192.168.10.15",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -513,7 +513,7 @@
   "page": 4,
   "index": 43,
   "preview": "192.168.10.25",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -567,25 +567,25 @@
   "page": 4,
   "index": 52,
   "preview": "205.174.165.73",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 53,
   "preview": "205.174.165.69",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 54,
   "preview": "205.174.165.70",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 55,
   "preview": "205.174.165.71",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,

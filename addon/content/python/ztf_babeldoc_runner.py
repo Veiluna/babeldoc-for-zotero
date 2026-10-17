@@ -737,6 +737,44 @@ def _canonical_placeholder_token(token: str) -> str:
     return "literal:" + token
 
 
+def _normalized_verbatim_parts(text: str) -> tuple[tuple[str, str], ...]:
+    """Normalize whitespace and BabelDOC placeholders for an echo comparison."""
+    parts: list[tuple[str, str]] = []
+    start = 0
+    for match in _PLACEHOLDER_TOKEN_RE.finditer(text):
+        plain_text = " ".join(text[start : match.start()].split())
+        if plain_text:
+            parts.append(("text", plain_text))
+        parts.append(("placeholder", _canonical_placeholder_token(match.group(0))))
+        start = match.end()
+    plain_text = " ".join(text[start:].split())
+    if plain_text:
+        parts.append(("text", plain_text))
+    return tuple(parts)
+
+
+def _is_verbatim_output(source: Any, translated: Any) -> bool:
+    return (
+        isinstance(source, str)
+        and isinstance(translated, str)
+        and _normalized_verbatim_parts(source) == _normalized_verbatim_parts(translated)
+    )
+
+
+def _apply_translation_output(
+    source: Any,
+    translated: Any,
+    writeback: Any,
+    *,
+    model_output: Any = None,
+) -> tuple[str, Any]:
+    """Skip BabelDOC writeback for a canonical echo; otherwise apply it."""
+    comparison_output = translated if model_output is None else model_output
+    if _is_verbatim_output(source, comparison_output):
+        return "kept_verbatim", False
+    return "translated", writeback()
+
+
 def _fragment_group_output_issues(
     input_items: list[dict[str, Any]],
     output_items: list[dict[str, Any]],
@@ -835,48 +873,9 @@ def _is_fragment_item(item: dict[str, Any]) -> bool:
     )
 
 
-_ENGLISH_FUNCTION_WORDS = frozenset(
-    "a an and are as at be by for from in is of on or that the to with".split()
-)
-
-
-_NAME_TOKEN_RE = re.compile(r"[A-Z][a-z]+(?:[-'][A-Z][a-z]+)*|[A-Z]\.")
-
-
-def _looks_like_name_list(text: str) -> bool:
-    """An author line: two or more comma/"and"-separated names of 2–4 tokens,
-    each token a capitalized name or an initial ("Lisa Liu, D. Essam")."""
-    parts = [part.strip() for part in re.split(r",|;|&|\band\b", text) if part.strip()]
-    if len(parts) < 2:
-        return False
-    for part in parts:
-        tokens = part.split()
-        if not 2 <= len(tokens) <= 4:
-            return False
-        if not all(_NAME_TOKEN_RE.fullmatch(token) for token in tokens):
-            return False
-    return True
-
-
-# Evidence that a line is an author byline rather than a title-cased heading:
-# an e-mail address, or an affiliation marker attached to a name ("Liu{v1}",
-# "Liu1", "Liu*", "Liu†").
+# The first-page author-block rule requires an e-mail address as evidence.
 _EMAIL_EVIDENCE_PATTERN = r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\}\s*@\s*[\w.-]+"
 _EMAIL_EVIDENCE_RE = re.compile(_EMAIL_EVIDENCE_PATTERN)
-_AUTHOR_EVIDENCE_RE = re.compile(
-    _EMAIL_EVIDENCE_PATTERN
-    + r"|[a-z]\{\s*v\s*\d+\s*\}|[a-z](?:\d{1,2}|[*†‡§¶]+)(?=[\s,;]|$)"
-)
-
-
-def _is_author_byline(text: str) -> bool:
-    """A name list with author evidence; shape alone is not enough."""
-    if not _AUTHOR_EVIDENCE_RE.search(text):
-        return False
-    plain = _URL_EMAIL_DOMAIN_RE.sub(" ", _PLACEHOLDER_TOKEN_RE.sub(" ", text))
-    plain = re.sub(r"\{[^{}]*\}", " ", plain)
-    plain = re.sub(r"(?<=[a-z])(?:\d{1,2}|[*†‡§¶]+)", "", plain)
-    return _looks_like_name_list(re.sub(r"[^A-Za-z.,;&' -]", " ", plain))
 
 
 _PROSE_MIN_LOWERCASE_WORDS = 4
@@ -911,28 +910,6 @@ def _is_first_page_author_block(paragraph: Any, page_index: int) -> bool:
         and has_email_evidence
         and verbatim_output_allowed(text)
     )
-
-
-def _looks_like_english_prose(text: str) -> bool:
-    """Whether text (ignoring links/placeholders) must be translated.
-
-    Verbatim output is acceptable only for links, identifiers of at most two
-    words ("HTTP", "Random Forest", "CIC-IDS-2017") and author bylines with
-    evidence (e-mail or affiliation markers). Anything else with two ordinary
-    lowercase words, any English function word (including "a"), or three or
-    more words is prose — e.g. "A Novel Deep Learning Architecture", an
-    all-caps heading or "Neural Network Models, Experimental Results".
-    """
-    if _is_author_byline(text):
-        return False
-    text = _URL_EMAIL_DOMAIN_RE.sub(" ", _PLACEHOLDER_TOKEN_RE.sub(" ", text))
-    if len(_ORDINARY_WORD_RE.findall(text)) >= 2:
-        return True
-    words = [word for word in re.findall(r"[A-Za-z]+", text)
-             if len(word) >= 2 or word.casefold() == "a"]
-    if any(word.casefold() in _ENGLISH_FUNCTION_WORDS for word in words) and len(words) >= 2:
-        return True
-    return len(words) >= 3
 
 
 def _source_english_residue_ratio(source: str, translated: str) -> float:
@@ -1005,6 +982,7 @@ def validate_translation_output(
     """Check output before BabelDOC can pass it to placeholder restoration/typesetting."""
     checks: dict[str, Any] = {
         "non_empty": isinstance(translated, str) and bool(translated.strip()),
+        "kept_verbatim": False,
         "identical_english": False,
         "source_english_residue_ratio": 0.0,
         "length_ratio": None,
@@ -1015,6 +993,10 @@ def validate_translation_output(
         return {"usable": False, "reason": "模型返回空译文，已进入合并补译。", "checks": checks}
 
     output = str(translated)
+    if _is_verbatim_output(source, output):
+        checks["kept_verbatim"] = True
+        return {"usable": True, "reason": "模型原样返回，保留原段落与排版。", "checks": checks}
+
     source_words = _ordinary_english_words(source)
     has_ordinary_words = len(source_words) >= 2
     # Identical output is fine only for abbreviations, names, numbers and
@@ -1534,8 +1516,11 @@ def rollback_fragment_group(
     request_state: dict[str, Any],
     group_members: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     reason: str,
+    exempt_failure_ids: set[int] | None = None,
 ) -> set[int]:
-    """Restore and count every linked fragment when its rollback is final."""
+    """Restore a linked group, excluding verbatim members from failure counts."""
+    if exempt_failure_ids is None:
+        exempt_failure_ids = set()
     paragraph_ids = {
         id(member["paragraph"])
         for member in group_members
@@ -1550,9 +1535,30 @@ def rollback_fragment_group(
     request_state.setdefault("final_fragment_failure_ids", set()).update(paragraph_ids)
     for member in group_members:
         paragraph = member.get("paragraph")
-        if paragraph is not None:
+        if paragraph is not None and id(paragraph) not in exempt_failure_ids:
             policy.record_failure(paragraph, reason)
     return paragraph_ids
+
+
+def _clear_unkept_fragment_outputs(
+    accepted_outputs: dict[int, dict[str, Any]],
+    member_ids: set[int],
+    kept_verbatim_ids: set[int],
+) -> None:
+    for member_id in member_ids - kept_verbatim_ids:
+        accepted_outputs.pop(member_id, None)
+
+
+def _mark_paragraph_kept_verbatim(
+    request_state: dict[str, Any], policy: Any, paragraph: Any
+) -> None:
+    if paragraph is None:
+        return
+    paragraph_id = id(paragraph)
+    request_state.setdefault("kept_verbatim_paragraph_ids", set()).add(paragraph_id)
+    request_state.get("final_fragment_failure_ids", set()).discard(paragraph_id)
+    request_state.get("translated_paragraph_ids", set()).discard(paragraph_id)
+    policy.clear_failure(paragraph)
 
 
 def record_submitted_paragraphs(
@@ -1973,6 +1979,16 @@ class TranslationPolicy(logging.Handler):
                     "BabelDOC produced an unusable batch translation."
                 )
 
+    def clear_failure(self, paragraph: Any) -> None:
+        """Remove a provisional failure once a later model echo keeps the source."""
+        if paragraph is None:
+            return
+        with self._lock:
+            self._failed_paragraph_ids.discard(id(paragraph))
+            self.failed_paragraphs = (
+                len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
+            )
+
     def instrument(self, il_translator_class: type) -> None:
         """Count paragraphs with text in both batch and fallback translation paths."""
         policy = self
@@ -2262,7 +2278,11 @@ def _install_min_request_patches(
 
     original_post_translate_paragraph = ILTranslator.post_translate_paragraph
 
-    def log_applied(paragraph: Any, overridden: bool) -> None:
+    def log_applied(
+        paragraph: Any,
+        overridden: bool,
+        outcome: str = "translated",
+    ) -> None:
         accepted = request_state.get("accepted_outputs", {}).pop(id(paragraph), None)
         if accepted is None:
             return
@@ -2273,8 +2293,8 @@ def _install_min_request_patches(
                 "event": "item_outcome",
                 "phase": "main",
                 "id": accepted.get("item_id"),
-                "outcome": "translated",
-                "reason": "",
+                "outcome": outcome,
+                "reason": "模型原样返回，保留原段落与排版。" if outcome == "kept_verbatim" else "",
                 "babeldoc_check_overridden": overridden,
                 "fragment": bool(metadata.get("fragment")),
                 "fragment_type": metadata.get("fragment_type"),
@@ -2287,8 +2307,23 @@ def _install_min_request_patches(
 
     @functools.wraps(original_post_translate_paragraph)
     def post_translate_paragraph_with_log(instance: Any, paragraph: Any, *args: Any, **kwargs: Any) -> Any:
-        result = original_post_translate_paragraph(instance, paragraph, *args, **kwargs)
-        log_applied(paragraph, overridden=False)
+        translate_input = args[1] if len(args) > 1 else kwargs.get("translate_input")
+        translated_text = args[2] if len(args) > 2 else kwargs.get("translated_text")
+        source = getattr(translate_input, "unicode", None)
+        accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
+        if accepted is None:
+            return original_post_translate_paragraph(
+                instance, paragraph, *args, **kwargs
+            )
+        outcome, result = _apply_translation_output(
+            source,
+            translated_text,
+            lambda: original_post_translate_paragraph(instance, paragraph, *args, **kwargs),
+            model_output=accepted.get("text"),
+        )
+        if outcome == "kept_verbatim":
+            _mark_paragraph_kept_verbatim(request_state, policy, paragraph)
+        log_applied(paragraph, overridden=False, outcome=outcome)
         return result
 
     ILTranslator.post_translate_paragraph = post_translate_paragraph_with_log
@@ -2306,14 +2341,21 @@ def _install_min_request_patches(
         tracker = args[3] if len(args) > 3 else accepted.get("tracker")
         pbar = args[2] if len(args) > 2 else None
         try:
-            original_post_translate_paragraph(
-                owner, paragraph, tracker, accepted["translate_input"], accepted["text"]
+            translate_input = accepted["translate_input"]
+            outcome, _ = _apply_translation_output(
+                getattr(translate_input, "unicode", None),
+                accepted["text"],
+                lambda: original_post_translate_paragraph(
+                    owner, paragraph, tracker, translate_input, accepted["text"]
+                ),
             )
+            if outcome == "kept_verbatim":
+                _mark_paragraph_kept_verbatim(request_state, policy, paragraph)
         except Exception as error:
             request_state.get("accepted_outputs", {}).pop(id(paragraph), None)
             queue_unapplied_for_repair(paragraph, accepted, error)
         else:
-            log_applied(paragraph, overridden=True)
+            log_applied(paragraph, overridden=True, outcome=outcome)
         if pbar is not None and hasattr(pbar, "advance"):
             pbar.advance(1)
         return True
@@ -2368,8 +2410,14 @@ def _install_min_request_patches(
                 request_state.get("document_paragraph_snapshots", {}), member_ids
             )
             request_state.get("translated_paragraph_ids", set()).difference_update(member_ids)
-            for member_id in member_ids:
-                request_state.get("accepted_outputs", {}).pop(member_id, None)
+            kept_verbatim_ids = request_state.get(
+                "kept_verbatim_paragraph_ids", set()
+            )
+            _clear_unkept_fragment_outputs(
+                request_state.get("accepted_outputs", {}),
+                member_ids,
+                kept_verbatim_ids,
+            )
 
     def _font_policy_body(paragraph: Any) -> bool:
         if id(paragraph) not in request_state.get("translated_paragraph_ids", set()):
@@ -3025,6 +3073,32 @@ def _install_min_request_patches(
                         member_keys_by_item_id[str(input_item.get("id", item_index))] = str(
                             id(prepared_paragraphs[paragraph_index])
                         )
+                kept_verbatim_paragraph_ids = request_state.setdefault(
+                    "kept_verbatim_paragraph_ids", set()
+                )
+                outputs_by_item_id = {
+                    str(output_item.get("id")): output_item
+                    for output_item in outputs
+                    if isinstance(output_item, dict) and output_item.get("id") is not None
+                }
+                for item_index, input_item in enumerate(parsed_prompt[1]):
+                    item_id = str(input_item.get("id", item_index))
+                    output_item = outputs_by_item_id.get(item_id, {})
+                    if output_item.get("_ztf_failed") or output_item.get("_ztf_deferred"):
+                        continue
+                    if not _is_verbatim_output(
+                        input_item.get("input"), output_item.get("output")
+                    ):
+                        continue
+                    try:
+                        paragraph_index = int(item_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= paragraph_index < len(prepared_paragraphs):
+                        kept_paragraph = prepared_paragraphs[paragraph_index]
+                        _mark_paragraph_kept_verbatim(
+                            request_state, policy, kept_paragraph
+                        )
                 fragment_group_issues = _fragment_group_output_issues(
                     parsed_prompt[1],
                     outputs,
@@ -3056,7 +3130,13 @@ def _install_min_request_patches(
                     )
                     if final_group_failure:
                         group_member_ids = rollback_fragment_group(
-                            policy, request_state, group_members, reason
+                            policy,
+                            request_state,
+                            group_members,
+                            reason,
+                            exempt_failure_ids=(
+                                group_member_ids & kept_verbatim_paragraph_ids
+                            ),
                         )
                     else:
                         restore_paragraph_snapshots(
@@ -3071,6 +3151,8 @@ def _install_min_request_patches(
                         for group_member in group_members:
                             member_paragraph = group_member["paragraph"]
                             member_key = id(member_paragraph)
+                            if member_key in kept_verbatim_paragraph_ids:
+                                continue
                             if member_key in repair_records:
                                 continue
                             member_translate_input, member_metadata = (
@@ -3102,6 +3184,8 @@ def _install_min_request_patches(
                         continue
                     for group_member in group_members:
                         member_paragraph = group_member["paragraph"]
+                        if id(member_paragraph) in kept_verbatim_paragraph_ids:
+                            continue
                         member_prepared_result = group_member.get(
                             "prepared_result"
                         ) or ()
@@ -3170,6 +3254,7 @@ def _install_min_request_patches(
                     fragment_group_failure = (
                         invalid_fragment_groups.get(str(metadata.get("fragment_id")))
                         if metadata.get("fragment_id")
+                        and id(paragraph) not in kept_verbatim_paragraph_ids
                         else None
                     )
                     checks: dict[str, Any] = {}
@@ -3226,6 +3311,8 @@ def _install_min_request_patches(
                         ):
                             policy.record_failure(paragraph, item_reason)
                     elif usable and paragraph is not None:
+                        if checks.get("kept_verbatim"):
+                            kept_verbatim_paragraph_ids.add(id(paragraph))
                         request_state.setdefault("translated_paragraph_ids", set()).add(id(paragraph))
                         # BabelDOC applies the text later and may still reject it
                         # with its own length check; keep what we accepted so the
@@ -3342,7 +3429,13 @@ def _install_min_request_patches(
         if request_state.get("repair_pass_ran"):
             return
         request_state["repair_pass_ran"] = True
-        repair_records = list(request_state.get("repair_records", {}).values())
+        kept_verbatim_paragraph_ids = request_state.get(
+            "kept_verbatim_paragraph_ids", set()
+        )
+        queued_repair_records = request_state.get("repair_records", {})
+        for paragraph_id in kept_verbatim_paragraph_ids:
+            queued_repair_records.pop(paragraph_id, None)
+        repair_records = list(queued_repair_records.values())
         if not repair_failed or not repair_records:
             return
 
@@ -3364,6 +3457,8 @@ def _install_min_request_patches(
         for group_id in represented_group_ids:
             for member in fragment_group_members.get(group_id, ()):
                 paragraph = member["paragraph"]
+                if id(paragraph) in kept_verbatim_paragraph_ids:
+                    continue
                 if id(paragraph) in records_by_paragraph:
                     continue
                 prepared_result = member.get("prepared_result") or ()
@@ -3603,6 +3698,19 @@ def _install_min_request_patches(
             {},
             repair_member_keys,
         )
+        repair_kept_verbatim_paragraph_ids: set[int] = set()
+        for repair_id, record in records_by_repair_id.items():
+            output_item = outputs_by_id.get(repair_id, {})
+            if output_item.get("_ztf_failed") or output_item.get("_ztf_deferred"):
+                continue
+            if _is_verbatim_output(
+                repair_items[repair_id].get("input"), output_item.get("output")
+            ):
+                paragraph_id = id(record["paragraph"])
+                repair_kept_verbatim_paragraph_ids.add(paragraph_id)
+                _mark_paragraph_kept_verbatim(
+                    request_state, policy, record["paragraph"]
+                )
         failed_repair_groups = set(repair_group_issues)
         for group_id, reason in repair_group_issues.items():
             rollback_fragment_group(
@@ -3610,6 +3718,7 @@ def _install_min_request_patches(
                 request_state,
                 fragment_group_members.get(group_id, ()),
                 reason,
+                exempt_failure_ids=kept_verbatim_paragraph_ids,
             )
 
         repair_quality_by_id: dict[int, dict[str, Any]] = {}
@@ -3631,7 +3740,11 @@ def _install_min_request_patches(
             )
             repair_translation_by_id[repair_id] = translated
             group_id = str(record.get("metadata", {}).get("fragment_id") or "")
-            if group_id in failed_repair_groups:
+            if (
+                group_id in failed_repair_groups
+                and id(record["paragraph"])
+                not in repair_kept_verbatim_paragraph_ids
+            ):
                 quality = {
                     "usable": False,
                     "reason": repair_group_issues[group_id],
@@ -3640,11 +3753,17 @@ def _install_min_request_patches(
             repair_quality_by_id[repair_id] = quality
 
         applied_by_id: dict[int, bool] = {}
+        kept_verbatim_by_id: set[int] = set()
         for repair_id, record in records_by_repair_id.items():
             quality = repair_quality_by_id[repair_id]
             translated = repair_translation_by_id.get(repair_id)
             applied = False
-            if quality["usable"]:
+            if quality["usable"] and quality["checks"].get("kept_verbatim"):
+                kept_verbatim_by_id.add(repair_id)
+                request_state.get("translated_paragraph_ids", set()).discard(
+                    id(record["paragraph"])
+                )
+            elif quality["usable"]:
                 try:
                     applied = bool(
                         document_translator.il_translator.post_translate_paragraph(
@@ -3680,7 +3799,11 @@ def _install_min_request_patches(
                 if str(record.get("metadata", {}).get("fragment_id") or "")
                 == group_id
             ]
-            if any(not applied_by_id.get(repair_id, False) for repair_id in group_repair_ids):
+            if any(
+                not applied_by_id.get(repair_id, False)
+                and repair_id not in kept_verbatim_by_id
+                for repair_id in group_repair_ids
+            ):
                 reason = "A linked fragment repair could not be applied; the original group was retained."
                 repair_group_issues[group_id] = reason
                 failed_repair_groups.add(group_id)
@@ -3689,13 +3812,19 @@ def _install_min_request_patches(
                     request_state,
                     fragment_group_members.get(group_id, ()),
                     reason,
+                    exempt_failure_ids=kept_verbatim_paragraph_ids,
                 )
 
         for repair_id, record in records_by_repair_id.items():
             quality = repair_quality_by_id[repair_id]
             group_id = str(record.get("metadata", {}).get("fragment_id") or "")
             translated = repair_translation_by_id.get(repair_id)
-            if group_id in failed_repair_groups:
+            if repair_id in kept_verbatim_by_id:
+                applied = False
+                record["repair_status"] = "kept_verbatim"
+                record["repair_reason"] = "模型原样返回，保留原段落与排版。"
+                record["repair_checks"] = quality["checks"]
+            elif group_id in failed_repair_groups:
                 applied = False
                 record["repair_status"] = "failed"
                 record["repair_reason"] = repair_group_issues[group_id]
@@ -3709,7 +3838,7 @@ def _install_min_request_patches(
                     record["repair_status"] = "failed"
                     record["repair_reason"] = quality.get("reason") or "补译未通过检查，已保留原文。"
                     record["repair_checks"] = quality.get("checks", {})
-            if not applied:
+            if not applied and repair_id not in kept_verbatim_by_id:
                 policy.record_failure(record.get("paragraph"), record["repair_reason"])
 
             _write_job_log(
@@ -3718,8 +3847,16 @@ def _install_min_request_patches(
                     "event": "item_outcome",
                     "phase": "repair",
                     "id": repair_id,
-                    "outcome": "repaired" if applied else "retained_source",
-                    "reason": "" if applied else record.get("repair_reason", ""),
+                    "outcome": (
+                        "kept_verbatim"
+                        if repair_id in kept_verbatim_by_id
+                        else "repaired" if applied else "retained_source"
+                    ),
+                    "reason": (
+                        ""
+                        if applied or repair_id in kept_verbatim_by_id
+                        else record.get("repair_reason", "")
+                    ),
                     "checks": record.get("repair_checks", {}),
                     "fragment": record.get("fragment", False),
                     "fragment_type": record.get("metadata", {}).get("fragment_type"),
@@ -3737,7 +3874,14 @@ def _install_min_request_patches(
                 "event": "repair_summary",
                 "repair_request_count": request_state.get("repair_request_count", 0),
                 "repaired_items": sum(record.get("repair_status") == "repaired" for record in repair_records),
-                "failed_items": sum(record.get("repair_status") != "repaired" for record in repair_records),
+                "kept_verbatim_items": sum(
+                    record.get("repair_status") == "kept_verbatim"
+                    for record in repair_records
+                ),
+                "failed_items": sum(
+                    record.get("repair_status") not in {"repaired", "kept_verbatim"}
+                    for record in repair_records
+                ),
             },
             api_key,
         )

@@ -393,13 +393,13 @@
   "page": 3,
   "index": 19,
   "preview": "2,830,743",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 20,
   "preview": "2,827,726",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -555,13 +555,13 @@
   "page": 3,
   "index": 46,
   "preview": "[128,025] +31,339",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 47,
   "preview": "24.48%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -597,13 +597,13 @@
   "page": 3,
   "index": 53,
   "preview": "[1,246,034] +918,543",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 54,
   "preview": "73.72%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -621,7 +621,7 @@
   "page": 3,
   "index": 57,
   "preview": "1.97%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -645,25 +645,25 @@
   "page": 3,
   "index": 61,
   "preview": "[230,124] +3,680",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 62,
   "preview": "1.60%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 63,
   "preview": "[923,824] +884,408",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 64,
   "preview": "95.73%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -681,7 +681,7 @@
   "page": 3,
   "index": 67,
   "preview": "2.96%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -711,7 +711,7 @@
   "page": 3,
   "index": 72,
   "preview": "0.17%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -741,7 +741,7 @@
   "page": 3,
   "index": 77,
   "preview": "0.24%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -771,7 +771,7 @@
   "page": 3,
   "index": 82,
   "preview": "9.09%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -801,19 +801,19 @@
   "page": 3,
   "index": 87,
   "preview": "11.11%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 88,
   "preview": "[160,639] +63,381",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 89,
   "preview": "39.46%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -825,13 +825,13 @@
   "page": 3,
   "index": 91,
   "preview": "[158,804] +61,003",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 92,
   "preview": "38.41%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -861,7 +861,7 @@
   "page": 3,
   "index": 97,
   "preview": "0.02%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -873,7 +873,7 @@
   "page": 3,
   "index": 99,
   "preview": "0.21%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -891,7 +891,7 @@
   "page": 3,
   "index": 102,
   "preview": "0.07%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -921,7 +921,7 @@
   "page": 3,
   "index": 107,
   "preview": "14.29%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -933,7 +933,7 @@
   "page": 3,
   "index": 109,
   "preview": "1.15%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -951,7 +951,7 @@
   "page": 3,
   "index": 112,
   "preview": "0.31%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -963,7 +963,7 @@
   "page": 3,
   "index": 114,
   "preview": "0.87%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -1089,7 +1089,7 @@
   "page": 4,
   "index": 11,
   "preview": "25.05%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1131,7 +1131,7 @@
   "page": 4,
   "index": 18,
   "preview": "25.06%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1155,7 +1155,7 @@
   "page": 4,
   "index": 22,
   "preview": "32.70%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1191,7 +1191,7 @@
   "page": 4,
   "index": 28,
   "preview": "56.34%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1227,7 +1227,7 @@
   "page": 4,
   "index": 34,
   "preview": "29.65%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1257,7 +1257,7 @@
   "page": 4,
   "index": 39,
   "preview": "49.93%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1293,7 +1293,7 @@
   "page": 4,
   "index": 45,
   "preview": "49.80%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1317,7 +1317,7 @@
   "page": 4,
   "index": 49,
   "preview": "95.16%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1353,7 +1353,7 @@
   "page": 4,
   "index": 55,
   "preview": "94.48%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1389,7 +1389,7 @@
   "page": 4,
   "index": 61,
   "preview": "50.06%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1419,7 +1419,7 @@
   "page": 4,
   "index": 66,
   "preview": "53.85%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1467,7 +1467,7 @@
   "page": 4,
   "index": 74,
   "preview": "24.71%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1497,7 +1497,7 @@
   "page": 4,
   "index": 79,
   "preview": "50.43%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1533,7 +1533,7 @@
   "page": 4,
   "index": 85,
   "preview": "86.86%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1593,7 +1593,7 @@
   "page": 4,
   "index": 95,
   "preview": "49.65%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1617,7 +1617,7 @@
   "page": 4,
   "index": 99,
   "preview": "33.22%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1647,7 +1647,7 @@
   "page": 4,
   "index": 104,
   "preview": "94.47%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1701,7 +1701,7 @@
   "page": 4,
   "index": 113,
   "preview": "21.88%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1761,7 +1761,7 @@
   "page": 4,
   "index": 123,
   "preview": "76.84%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1797,7 +1797,7 @@
   "page": 4,
   "index": 129,
   "preview": "54.02%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1833,7 +1833,7 @@
   "page": 4,
   "index": 135,
   "preview": "49.97%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -2013,7 +2013,7 @@
   "page": 5,
   "index": 17,
   "preview": "4,872",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2049,7 +2049,7 @@
   "page": 5,
   "index": 23,
   "preview": "1,053",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2235,7 +2235,7 @@
   "page": 5,
   "index": 54,
   "preview": "36,889",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2859,25 +2859,25 @@
   "page": 7,
   "index": 75,
   "preview": "1 39.67 100",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 76,
   "preview": "2 99.27 99.54",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 77,
   "preview": "3 90.86 100",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 78,
   "preview": "4 99.93 100",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -2889,25 +2889,25 @@
   "page": 7,
   "index": 80,
   "preview": "1 56.81 100",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 81,
   "preview": "2 98.91 99.43",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 82,
   "preview": "3 95.19 100",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 83,
   "preview": "4 99.96 99.99",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -4677,13 +4677,13 @@
   "page": 8,
   "index": 143,
   "preview": "2,827,726",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 144,
   "preview": "64,561,010",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -4725,25 +4725,25 @@
   "page": 8,
   "index": 151,
   "preview": "188,571",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 152,
   "preview": "6.67%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 153,
   "preview": "4,862,181",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 154,
   "preview": "7.53%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -4755,25 +4755,25 @@
   "page": 8,
   "index": 156,
   "preview": "188,489",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 157,
   "preview": "6.67%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 158,
   "preview": "4,781,570",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 159,
   "preview": "7.40%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -4785,25 +4785,25 @@
   "page": 8,
   "index": 161,
   "preview": "412,330",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 162,
   "preview": "14.58%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 163,
   "preview": "12,655,025",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 164,
   "preview": "19.60%",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,

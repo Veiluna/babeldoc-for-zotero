@@ -138,6 +138,7 @@ class MockOpenAIServer(HTTPServer):
         count_file: str | None = None,
         bad_fragments: bool = False,
         bad_fragment_repairs: bool = False,
+        echo_first_fragment: bool = False,
         long_short_labels: bool = False,
         echo_pattern: str | None = None,
         synthetic: bool = False,
@@ -148,6 +149,7 @@ class MockOpenAIServer(HTTPServer):
         self.request_count = 0
         self.bad_fragments = bad_fragments
         self.bad_fragment_repairs = bad_fragment_repairs
+        self.echo_first_fragment = echo_first_fragment
         # Translate inputs of <= 4 tokens at exactly 3x their token count, like
         # "Recall" -> "召回率": valid for the runner, rejected by BabelDOC's own
         # 0.3 < ratio < 3 check, so it exercises the runner's override path.
@@ -249,6 +251,13 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
                 # collapse runs of whitespace.
                 translated = " ".join(source_text.split())
                 self.server.echo_count += 1
+            elif (
+                self.server.echo_first_fragment
+                and not is_repair
+                and fragment_group == self.server.bad_fragment_group
+                and _fragment_part(item) == "first"
+            ):
+                translated = source_text
             elif (
                 is_repair
                 and self.server.bad_fragment_repairs

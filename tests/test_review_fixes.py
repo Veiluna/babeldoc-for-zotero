@@ -266,19 +266,18 @@ def test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved():
     assert runner._paragraph_is_marginal_or_stamp(licence, page), "explicit licence sentence counts anywhere"
 
 
-def test_untranslated_short_phrases_are_rejected_but_identifiers_pass():
-    # Sentences (four or more plain lowercase words) left in English are rejected.
+def test_verbatim_outputs_are_kept_without_content_rules():
     for phrase in ("of the system design", "in all of our experiments", "as shown in the table"):
         result = runner.validate_translation_output(phrase, phrase, {}, len)
-        assert not result["usable"], phrase
+        assert result["usable"] and result["checks"]["kept_verbatim"], phrase
     fragment = {"fragment_id": "cross-column:a:b", "fragment_part": "second"}
     result = runner.validate_translation_output(
         "of the system design", "of the system design", fragment, len
     )
-    assert not result["usable"]
+    assert result["usable"] and result["checks"]["kept_verbatim"]
     for identifier in ("HTTP", "CIC-IDS-2017", "pcap", "Random Forest"):
         result = runner.validate_translation_output(identifier, identifier, {}, len)
-        assert result["usable"], identifier
+        assert result["usable"] and result["checks"]["kept_verbatim"], identifier
     words = lambda text: max(1, len(text.split()))  # rough token count: 3 → 1
     mixed = runner.validate_translation_output("of the system", "系统的", {}, words)
     assert mixed["usable"]
@@ -473,12 +472,11 @@ def test_urls_emails_and_author_lines_may_stay_verbatim():
     ):
         result = runner.validate_translation_output(text, text, {}, words)
         assert result["usable"], (text, result)
-    # Ordinary prose next to a URL is still checked.
+    # Exact prose echoes are retained by the same comparison as any other text.
     prose = "see the project page at https://example.org for the data and the code"
-    assert not runner.validate_translation_output(prose, prose, {}, words)["usable"]
-    # Short headings, names, labels and author lines are not policed by rules:
-    # the prompt asks the model to translate headings and keep names/labels, and
-    # an unchanged short item is accepted instead of costing a repair request.
+    prose_echo = runner.validate_translation_output(prose, prose, {}, words)
+    assert prose_echo["usable"] and prose_echo["checks"]["kept_verbatim"]
+    # Exact output equality applies to headings and labels as it does to other text.
     for label_like in (
         "II. BACKGROUND AND RELATED WORK",
         "DDoS - LOIC-UDP",
@@ -526,7 +524,7 @@ def test_provider_message_is_only_a_fixed_category():
     assert "Alice" not in content and "labelling" not in content and key not in content
 
 
-def test_author_bylines_need_evidence_and_skip_edit_distance():
+def test_verbatim_outputs_and_existing_short_label_policy():
     long_counter = lambda text: max(1, len(text) // 2)  # > 20 tokens like the real tokenizer (36)
     byline = "Lisa Liu{v1}, Gints Engelen{v2}, Timothy Lynar {l.liu, t.lynar, d.essam}@adfa.edu.au"
     assert long_counter(byline) > 20
@@ -653,7 +651,7 @@ if __name__ == "__main__":
     test_first_page_author_block_is_preserved()
     test_completion_adapts_to_unsupported_token_and_sampling_parameters()
     test_other_errors_are_not_retried_and_the_slot_is_counted_once()
-    test_author_bylines_need_evidence_and_skip_edit_distance()
+    test_verbatim_outputs_and_existing_short_label_policy()
     test_urls_emails_and_author_lines_may_stay_verbatim()
     test_provider_message_is_only_a_fixed_category()
     test_body_text_near_the_page_top_is_not_a_stamp()
@@ -668,7 +666,7 @@ if __name__ == "__main__":
     test_placeholder_diagnostics_are_redacted_before_truncation()
     test_log_summary_never_keeps_echoed_metadata_or_bodies()
     test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved()
-    test_untranslated_short_phrases_are_rejected_but_identifiers_pass()
+    test_verbatim_outputs_are_kept_without_content_rules()
     test_repeated_running_headers_are_preserved_even_when_labeled_body_text()
     test_repeated_marginal_threshold_scales_with_document_length()
     test_formula_placeholder_moved_into_style_span_is_rejected()
