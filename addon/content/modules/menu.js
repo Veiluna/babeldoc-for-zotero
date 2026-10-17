@@ -1,8 +1,8 @@
 /* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesQueue */
 
 var ZoteroTranslateFilesMenu = (function () {
-  var MENU_ID = "zotero-translate-files-translate-pdf";
-  var FTL_ID = "zotero-translate-files-menu-label";
+  var MENU_ID = "babeldoc-for-zotero-translate-pdf";
+  var FTL_ID = "babeldoc-for-zotero-menu-label";
   var windows = new Map();
 
   function selectedItemsForWindow(window) {

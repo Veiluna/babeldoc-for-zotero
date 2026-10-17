@@ -165,7 +165,7 @@ var ZoteroTranslateFilesRunner = (function () {
 
       var dataDir = PathUtils.join(
         Zotero.DataDirectory.dir,
-        "zotero-translate-files"
+        "babeldoc-for-zotero"
       );
       await Zotero.File.createDirectoryIfMissingAsync(dataDir);
       var logDir = PathUtils.join(dataDir, "logs");

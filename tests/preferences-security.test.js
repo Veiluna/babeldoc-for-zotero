@@ -27,9 +27,9 @@ async function testConnection(
     },
   };
   const elements = {
-    "zotero-translate-files-preferences": pane,
-    "zotero-translate-files-preferences-browse": { addEventListener() {} },
-    "zotero-translate-files-preferences-test": button,
+    "babeldoc-for-zotero-preferences": pane,
+    "babeldoc-for-zotero-preferences-browse": { addEventListener() {} },
+    "babeldoc-for-zotero-preferences-test": button,
   };
   const document = {
     l10n: {
@@ -51,7 +51,7 @@ async function testConnection(
   // Real token-parameter helpers from config.js, with a recording Prefs stub.
   const prefsSet = [];
   const prefValues = new Map([
-    ["extensions.zotero-translate-files.tokenParam", tokenParam],
+    ["extensions.babeldoc-for-zotero.tokenParam", tokenParam],
   ]);
   const configContext = {
     Zotero: {
@@ -114,8 +114,8 @@ async function testConnection(
   await testClick({ currentTarget: button });
 
   return {
-    status: messages.get("zotero-translate-files-preferences-api-status"),
-    statusElement: elements["zotero-translate-files-preferences-api-status"],
+    status: messages.get("babeldoc-for-zotero-preferences-api-status"),
+    statusElement: elements["babeldoc-for-zotero-preferences-api-status"],
     request: requests[0],
     requests,
     prefsSet,
@@ -131,7 +131,7 @@ async function testConnection(
   const escapedJSON = '{"error":{"message":"Invalid key: DEMO\\/SECRET-ONLY"}}';
   assert.ok(escapedJSON.includes("DEMO\\/SECRET-ONLY"), "fixture must contain an escaped slash");
   const jsonCase = await testConnection({ response: { status: 401, responseText: escapedJSON } }, apiKey);
-  assert.equal(jsonCase.status.messageID, "zotero-translate-files-pref-api-http-error");
+  assert.equal(jsonCase.status.messageID, "babeldoc-for-zotero-pref-api-http-error");
   assert.ok(!jsonCase.status.args.body.includes(apiKey), "decoded JSON must not expose the configured key");
   assert.ok(jsonCase.status.args.body.includes("[已隐藏]"), "decoded JSON should show the redaction marker");
 
@@ -165,13 +165,13 @@ async function testConnection(
       { status: 200, responseText: '{"choices":[]}' },
     ],
   });
-  assert.equal(adaptCase.status.messageID, "zotero-translate-files-pref-api-success");
+  assert.equal(adaptCase.status.messageID, "babeldoc-for-zotero-pref-api-success");
   assert.equal(adaptCase.requests.length, 2);
   assert.equal(JSON.parse(adaptCase.requests[0].options.body).max_tokens, 16);
   const retryBody = JSON.parse(adaptCase.requests[1].options.body);
   assert.equal(retryBody.max_completion_tokens, 16);
   assert.ok(!("max_tokens" in retryBody));
-  assert.deepEqual(adaptCase.prefsSet, [["extensions.zotero-translate-files.tokenParam", "max_completion_tokens"]]);
+  assert.deepEqual(adaptCase.prefsSet, [["extensions.babeldoc-for-zotero.tokenParam", "max_completion_tokens"]]);
 
   // The saved max_completion_tokens dialect can also be switched back when a
   // provider changes routes and rejects it in favor of max_tokens.
@@ -189,11 +189,11 @@ async function testConnection(
       { status: 200, responseText: '{"choices":[]}' },
     ],
   }, undefined, undefined, null, "max_completion_tokens");
-  assert.equal(reverseCase.status.messageID, "zotero-translate-files-pref-api-success");
+  assert.equal(reverseCase.status.messageID, "babeldoc-for-zotero-pref-api-success");
   assert.equal(reverseCase.requests.length, 2);
   assert.equal(JSON.parse(reverseCase.requests[0].options.body).max_completion_tokens, 16);
   assert.equal(JSON.parse(reverseCase.requests[1].options.body).max_tokens, 16);
-  assert.deepEqual(reverseCase.prefsSet, [["extensions.zotero-translate-files.tokenParam", "max_tokens"]]);
+  assert.deepEqual(reverseCase.prefsSet, [["extensions.babeldoc-for-zotero.tokenParam", "max_tokens"]]);
 
   // When `param` is absent, fallback recognizes the rejected name, not the
   // replacement suggested later in the same response.
@@ -209,7 +209,7 @@ async function testConnection(
   // Any other 400 is reported as-is, without a retry.
   const otherCase = await testConnection({ responses: [{ status: 400, responseText: '{"error":{"message":"model not found"}}' }] });
   assert.equal(otherCase.requests.length, 1);
-  assert.equal(otherCase.status.messageID, "zotero-translate-files-pref-api-http-error");
+  assert.equal(otherCase.status.messageID, "babeldoc-for-zotero-pref-api-http-error");
 
   const numericApiKey = "1234567890";
   const numericJSON = '{"error":{"api_key":1234567890}}';
@@ -224,30 +224,30 @@ async function testConnection(
   const statusError = new Error("HTTP request failed");
   statusError.xhr = { status: 429, responseText: "rate limit for DEMO/SECRET-ONLY" };
   const statusErrorCase = await testConnection({ error: statusError }, apiKey);
-  assert.equal(statusErrorCase.status.messageID, "zotero-translate-files-pref-api-http-error");
+  assert.equal(statusErrorCase.status.messageID, "babeldoc-for-zotero-pref-api-http-error");
   assert.equal(statusErrorCase.status.args.status, 429);
   assert.ok(!statusErrorCase.status.args.body.includes(apiKey), "exception response bodies must redact the API key");
 
   const zoteroStatusError = new Error("HTTP request failed");
   zoteroStatusError.xmlhttp = { status: 503, responseText: "server unavailable" };
   const zoteroStatusCase = await testConnection({ error: zoteroStatusError }, apiKey);
-  assert.equal(zoteroStatusCase.status.messageID, "zotero-translate-files-pref-api-http-error");
+  assert.equal(zoteroStatusCase.status.messageID, "babeldoc-for-zotero-pref-api-http-error");
   assert.equal(zoteroStatusCase.status.args.status, 503, "Zotero 10 HTTP errors expose their XHR as xmlhttp");
 
   const timeoutCase = await testConnection({ error: new jsonCase.TimeoutException("Request timed out") }, apiKey);
-  assert.equal(timeoutCase.status.messageID, "zotero-translate-files-pref-api-timeout");
+  assert.equal(timeoutCase.status.messageID, "babeldoc-for-zotero-pref-api-timeout");
   assert.ok(!JSON.stringify(timeoutCase.status).includes(apiKey), "timeout messages must not expose the API key");
 
   const networkCase = await testConnection({ error: new Error("network failure containing DEMO/SECRET-ONLY") }, apiKey);
-  assert.equal(networkCase.status.messageID, "zotero-translate-files-pref-api-network-error");
+  assert.equal(networkCase.status.messageID, "babeldoc-for-zotero-pref-api-network-error");
   assert.ok(!JSON.stringify(networkCase.status).includes(apiKey), "network messages must not expose the API key");
 
   const zeroStatusCase = await testConnection({ response: { status: 0, responseText: "" } }, apiKey);
-  assert.equal(zeroStatusCase.status.messageID, "zotero-translate-files-pref-api-network-error");
+  assert.equal(zeroStatusCase.status.messageID, "babeldoc-for-zotero-pref-api-network-error");
   assert.ok(!JSON.stringify(zeroStatusCase.status).includes(apiKey), "status 0 network messages must not expose the API key");
 
   const successCase = await testConnection({ response: { status: 204, responseText: "" } }, apiKey);
-  assert.equal(successCase.status.messageID, "zotero-translate-files-pref-api-success");
+  assert.equal(successCase.status.messageID, "babeldoc-for-zotero-pref-api-success");
   assert.equal(successCase.status.args.status, 204);
 
   const invalidSettingsCase = await testConnection(
@@ -271,7 +271,7 @@ async function testConnection(
     const blockedCase = await testConnection({ response: { status: 200, responseText: "{}" } }, apiKey, url);
     assert.equal(
       blockedCase.status.messageID,
-      "zotero-translate-files-pref-api-key-in-url",
+      "babeldoc-for-zotero-pref-api-key-in-url",
       "URLs containing the API key must be rejected before making a request",
     );
     assert.equal(blockedCase.request, undefined, "a rejected URL must never reach Zotero.HTTP.request");

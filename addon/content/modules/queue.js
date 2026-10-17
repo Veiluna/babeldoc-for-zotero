@@ -15,7 +15,7 @@ var ZoteroTranslateFilesQueue = (function () {
     if (ZoteroTranslateFiles && typeof ZoteroTranslateFiles.log === "function") {
       ZoteroTranslateFiles.log("queue: " + message);
     } else if (Zotero && typeof Zotero.debug === "function") {
-      Zotero.debug("Translate Files for Zotero queue: " + message);
+      Zotero.debug("BabelDOC for Zotero: queue: " + message);
     }
   }
 
@@ -66,6 +66,9 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   function getFailureCause(text, kind) {
+    if (kind === "babeldoc_version") {
+      return "BabelDOC 版本不匹配，请运行 scripts/install-babeldoc.ps1 安装 0.6.4";
+    }
     if (kind === "request_cap" || /request_cap|单篇请求上限/i.test(text)) {
       return "已达到单篇请求次数上限，任务已停止";
     }
@@ -193,10 +196,10 @@ var ZoteroTranslateFilesQueue = (function () {
       if (document && document.l10n && typeof document.l10n.formatValue === "function") {
         if (mainWindow.MozXULElement &&
             typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
-          mainWindow.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+          mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
         }
         return await document.l10n.formatValue(
-          "zotero-translate-files-log-path",
+          "babeldoc-for-zotero-log-path",
           { path: String(path) },
         ) || fallback;
       }
@@ -209,7 +212,7 @@ var ZoteroTranslateFilesQueue = (function () {
   function showNotice(descriptions) {
     try {
       var progress = new Zotero.ProgressWindow({ closeOnClick: true });
-      progress.changeHeadline("Translate Files for Zotero");
+      progress.changeHeadline("BabelDOC for Zotero");
       for (var description of descriptions) progress.addDescription(description);
       progress.show();
       progress.startCloseTimer(4000);
@@ -288,7 +291,7 @@ var ZoteroTranslateFilesQueue = (function () {
     if (!missing.length) return null;
 
     return new Error(
-      "请先打开 Zotero 设置 → Translate Files for Zotero，填写：" + missing.join("、") + "。"
+      "请先打开 Zotero 设置 → BabelDOC for Zotero，填写：" + missing.join("、") + "。"
     );
   }
 
@@ -622,7 +625,7 @@ var ZoteroTranslateFilesQueue = (function () {
       }
       try {
         if (Zotero && typeof Zotero.debug === "function") {
-          Zotero.debug("Translate Files for Zotero: " + failure.logMessage);
+          Zotero.debug("BabelDOC for Zotero: " + failure.logMessage);
         } else {
           log(failure.logMessage);
         }

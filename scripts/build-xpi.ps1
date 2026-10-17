@@ -42,10 +42,10 @@ try {
         throw "The Zotero update_url must end with $updateURLSuffix and use HTTPS."
     }
     $releaseRoot = $updateURL.Substring(0, $updateURL.Length - $updateURLSuffix.Length)
-    $updateLink = "$releaseRoot/releases/download/v$version/zotero-translate-files-$version.xpi"
+    $updateLink = "$releaseRoot/releases/download/v$version/babeldoc-for-zotero-$version.xpi"
 
     $null = New-Item -Path $buildPath -ItemType Directory -Force
-    $outputPath = Join-Path $buildPath "zotero-translate-files-$version.xpi"
+    $outputPath = Join-Path $buildPath "babeldoc-for-zotero-$version.xpi"
     $updatesOutputPath = Join-Path $buildPath 'updates.json'
 
     Add-Type -AssemblyName System.IO.Compression

@@ -6,7 +6,7 @@ var startupGeneration = 0;
 
 function log(message) {
   if (typeof Zotero !== "undefined" && Zotero.debug) {
-    Zotero.debug("Translate Files for Zotero: " + message);
+    Zotero.debug("BabelDOC for Zotero: " + message);
   }
 }
 
@@ -48,7 +48,7 @@ function onMainWindowLoad({ window }) {
   if (!ZoteroTranslateFiles || !window || window.closed) return;
 
   // FTL files are auto-registered by Zotero from locale/<locale>/.
-  window.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+  window.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
   ZoteroTranslateFiles.addToWindow(window);
 }
 
@@ -61,7 +61,7 @@ function onMainWindowUnload({ window }) {
 function removeFTLFromWindow(window) {
   if (!window || !window.document) return;
   var link = window.document.querySelector(
-    'link[rel="localization"][href="zotero-translate-files.ftl"]'
+    'link[rel="localization"][href="babeldoc-for-zotero.ftl"]'
   );
   if (link) link.remove();
 }

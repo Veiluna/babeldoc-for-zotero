@@ -1,14 +1,14 @@
 ﻿<#
 .SYNOPSIS
-创建隔离的 Miniconda 环境并安装 BabelDOC。
+为 BabelDOC for Zotero 创建隔离的 Miniconda 环境并安装 BabelDOC。
 
 .DESCRIPTION
-使用指定的 Conda 安装在 EnvPrefix 下创建 Python 环境，安装 BabelDOC，并默认预下载其字体和布局模型资源。
+使用指定的 Conda 安装在 EnvPrefix 下创建 Python 环境，安装 BabelDOC 0.6.4，并默认预下载其字体和布局模型资源。
 脚本不会激活环境，也不会修改 PATH 或 shell 配置。可通过 SkipWarmup 跳过资源预下载，或通过 OfflineAssets
 从离线资源路径恢复资源。
 
-参数：CondaPath 指定 Conda 路径；EnvPrefix 指定环境目录；PythonVersion 默认为 3.12；BabelDocVersion 用于固定
-BabelDOC 版本；SkipWarmup 跳过资源准备；IndexUrl 指定 pip 镜像；OfflineAssets 指定离线资源文件或目录。
+参数：CondaPath 指定 Conda 路径；EnvPrefix 指定环境目录；PythonVersion 默认为 3.12；BabelDocVersion 默认为 0.6.4，
+也可用于指定其他版本；SkipWarmup 跳过资源准备；IndexUrl 指定 pip 镜像；OfflineAssets 指定离线资源文件或目录。
 
 .PARAMETER CondaPath
 可选的 conda.exe 路径或 Miniconda 安装根目录。省略时依次检查 PATH、CONDA_EXE 和常见安装目录。
@@ -20,7 +20,7 @@ Conda 环境的完整路径。默认值为 LOCALAPPDATA 下的 zotero-translate-
 要安装的 Python 版本，默认 3.12。
 
 .PARAMETER BabelDocVersion
-可选的 BabelDOC 版本固定值，例如 0.6.4。省略时安装与当前 Python 版本兼容的最新版。
+要安装的 BabelDOC 版本，默认固定为 0.6.4。
 
 .PARAMETER SkipWarmup
 跳过 BabelDOC 字体和布局模型资源的预下载。
@@ -46,7 +46,7 @@ param(
     [string]$CondaPath,
     [string]$EnvPrefix,
     [string]$PythonVersion = '3.12',
-    [string]$BabelDocVersion,
+    [string]$BabelDocVersion = '0.6.4',
     [switch]$SkipWarmup,
     [string]$IndexUrl,
     [string]$OfflineAssets

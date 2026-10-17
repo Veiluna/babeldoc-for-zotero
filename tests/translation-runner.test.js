@@ -156,7 +156,7 @@ function makeHarness(options = {}) {
     Zotero: {
       Prefs: {
         get(name) {
-          const prefix = "extensions.zotero-translate-files.";
+          const prefix = "extensions.babeldoc-for-zotero.";
           const values = {
             baseURL: options.baseURL || "https://api.example.test/v1/chat/completions",
             apiKey,
@@ -205,8 +205,8 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner"));
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
-  assert.ok(harness.createdDirectories.includes("C:\\Zotero\\zotero-translate-files"));
-  assert.ok(harness.createdDirectories.includes("C:\\Zotero\\zotero-translate-files\\logs"));
+  assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero"));
+  assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero\\logs"));
   assert.equal(harness.createdDirectories.length, 4, "data, logs, job, and BabelDOC working directories should be created");
 
   const call = harness.calls[0];
@@ -250,7 +250,7 @@ async function reportsRequestCountsInProgressAndResult() {
     requestCount: 3,
     repairRequestCount: 1,
     fragmentItemCount: 2,
-    logPath: "C:\\Zotero\\zotero-translate-files\\logs\\job.jsonl",
+    logPath: "C:\\Zotero\\babeldoc-for-zotero\\logs\\job.jsonl",
   });
   const result = await harness.runner.translate(harness.item, {
     onProgress: value => harness.progress.push(value),
@@ -269,7 +269,7 @@ async function reportsRequestCountsInProgressAndResult() {
   assert.equal(result.requestCount, 3);
   assert.equal(result.repairRequestCount, 1);
   assert.equal(result.fragmentItemCount, 2);
-  assert.equal(result.logPath, "C:\\Zotero\\zotero-translate-files\\logs\\job.jsonl");
+  assert.equal(result.logPath, "C:\\Zotero\\babeldoc-for-zotero\\logs\\job.jsonl");
   await result.cleanup();
 }
 

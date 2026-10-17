@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import contextlib
+import builtins
 import importlib.util
 import io
 import json
 import logging
 import logging.handlers
+import os
 import queue
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 
 RUNNER_PATH = Path(__file__).parents[1] / "addon" / "content" / "python" / "ztf_babeldoc_runner.py"
@@ -30,6 +33,56 @@ def make_record(
     if error is not None:
         record.exc_info = (type(error), error, None)
     return record
+
+
+def test_installed_babeldoc_version_allows_startup() -> None:
+    with patch.object(runner.importlib.metadata, "version", return_value="0.6.4") as version:
+        assert runner.babeldoc_version_error() is None
+        version.assert_called_once_with("BabelDOC")
+
+
+def test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc() -> None:
+    output = io.StringIO()
+    original_import = builtins.__import__
+
+    def reject_babeldoc_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "babeldoc" or name.startswith("babeldoc."):
+            raise AssertionError("BabelDOC must not be imported for a version mismatch")
+        return original_import(name, *args, **kwargs)
+
+    with patch.object(runner.importlib.metadata, "version", return_value="0.6.3"):
+        with patch("builtins.__import__", side_effect=reject_babeldoc_import):
+            with patch.dict(os.environ, {"ZTF_OPENAI_API_KEY": "TEST-API-KEY"}):
+                with contextlib.redirect_stdout(output):
+                    exit_code = runner.main()
+
+    assert exit_code != 0
+    event_lines = [line for line in output.getvalue().splitlines() if line.startswith("ZTF_ERROR ")]
+    assert len(event_lines) == 1
+    event = json.loads(event_lines[0][len("ZTF_ERROR "):])
+    assert event["kind"] == "babeldoc_version"
+    assert event["message"] == (
+        "需要 BabelDOC 0.6.4，当前为 0.6.3。请重新运行 scripts/install-babeldoc.ps1。"
+    )
+    assert "TEST-API-KEY" not in output.getvalue()
+
+
+def test_missing_babeldoc_package_uses_the_same_error_kind() -> None:
+    output = io.StringIO()
+    missing = runner.importlib.metadata.PackageNotFoundError("BabelDOC")
+    with patch.object(runner.importlib.metadata, "version", side_effect=missing):
+        with patch.dict(os.environ, {"ZTF_OPENAI_API_KEY": "TEST-API-KEY"}):
+            with contextlib.redirect_stdout(output):
+                exit_code = runner.main()
+
+    assert exit_code != 0
+    event_lines = [line for line in output.getvalue().splitlines() if line.startswith("ZTF_ERROR ")]
+    assert len(event_lines) == 1
+    event = json.loads(event_lines[0][len("ZTF_ERROR "):])
+    assert event["kind"] == "babeldoc_version"
+    assert event["message"] == (
+        "需要 BabelDOC 0.6.4，当前为 未安装。请重新运行 scripts/install-babeldoc.ps1。"
+    )
 
 
 def run_policy(failures: list[str | None], completion_tokens: int) -> tuple[runner.TranslationPolicy, dict | None]:
@@ -532,6 +585,9 @@ def test_warning_protocol_redacts_keys_with_json_escape_characters_before_encodi
 
 
 if __name__ == "__main__":
+    test_installed_babeldoc_version_allows_startup()
+    test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
+    test_missing_babeldoc_package_uses_the_same_error_kind()
     test_zero_completion_tokens_fails_with_first_underlying_error()
     test_partial_failures_warn_when_some_paragraphs_succeeded()
     test_first_error_message_excludes_traceback_text()

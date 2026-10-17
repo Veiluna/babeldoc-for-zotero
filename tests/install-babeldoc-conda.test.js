@@ -7,6 +7,12 @@ const installerPath = path.resolve(__dirname, "../scripts/install-babeldoc.ps1")
 const constraintsPath = path.resolve(__dirname, "../scripts/babeldoc-constraints.txt");
 const installerSource = fs.readFileSync(installerPath, "utf8");
 
+assert.match(installerSource, /\[string\]\$BabelDocVersion\s*=\s*'0\.6\.4'/);
+assert.match(
+  installerSource,
+  /\.PARAMETER BabelDocVersion[\s\S]*?默认固定为 0\.6\.4。/,
+);
+
 assert.ok(fs.existsSync(constraintsPath), "BabelDOC pip constraints file must exist");
 const constraintsSource = fs.readFileSync(constraintsPath, "utf8");
 assert.match(constraintsSource, /^#.*BabelDOC imports `?bitstring\.BitStream`?.*bitstring 5/m);

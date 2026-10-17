@@ -1,7 +1,7 @@
 /* global Zotero, ChromeUtils */
 
 var ZoteroTranslateFilesPreferences = (function () {
-  var PANE_ID = "zotero-translate-files-preferences";
+  var PANE_ID = "babeldoc-for-zotero-preferences";
 
   function setMessage(document, elementID, messageID, args) {
     var element = document.getElementById(elementID);
@@ -107,7 +107,7 @@ var ZoteroTranslateFilesPreferences = (function () {
   }
 
   function setHTTPError(document, statusID, responseOrError, apiKey) {
-    setMessage(document, statusID, "zotero-translate-files-pref-api-http-error", {
+    setMessage(document, statusID, "babeldoc-for-zotero-pref-api-http-error", {
       status: getHTTPStatus(responseOrError) || "?",
       body: shortErrorBody(getHTTPResponseText(responseOrError), apiKey),
     });
@@ -153,29 +153,29 @@ var ZoteroTranslateFilesPreferences = (function () {
   function setPathStatus(document, settings) {
     var path = settings.babeldocPath;
     if (!path) {
-      setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-empty");
+      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-empty");
       return;
     }
 
     if (!pathIsFile(path)) {
-      setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-babeldoc-missing");
+      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-babeldoc-missing");
       return;
     }
 
     var pythonPath = ZoteroTranslateFilesConfig.resolvePythonFromBabelDOCPath(path);
     if (!pythonPath) {
-      setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-unrecognized");
+      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-unrecognized");
       return;
     }
 
     if (!pathIsFile(pythonPath)) {
-      setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-python-missing", {
+      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-python-missing", {
         path: pythonPath,
       });
       return;
     }
 
-    setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-success", {
+    setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-success", {
       path: pythonPath,
     });
   }
@@ -183,13 +183,13 @@ var ZoteroTranslateFilesPreferences = (function () {
   async function testAPI(document, window, settings) {
     var statusID = PANE_ID + "-api-status";
     if (!settings.baseURL || !settings.apiKey || !settings.model) {
-      setMessage(document, statusID, "zotero-translate-files-pref-api-missing");
+      setMessage(document, statusID, "babeldoc-for-zotero-pref-api-missing");
       return;
     }
 
     var endpoint = ZoteroTranslateFilesConfig.chatCompletionsURL(settings.baseURL);
     if (urlContainsAPIKey(endpoint, settings.apiKey)) {
-      setMessage(document, statusID, "zotero-translate-files-pref-api-key-in-url");
+      setMessage(document, statusID, "babeldoc-for-zotero-pref-api-key-in-url");
       return;
     }
 
@@ -234,9 +234,9 @@ var ZoteroTranslateFilesPreferences = (function () {
         ZoteroTranslateFilesConfig.setTokenParam(tokenParam);
       }
       if (status === 0) {
-        setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
+        setMessage(document, statusID, "babeldoc-for-zotero-pref-api-network-error");
       } else if (status >= 200 && status < 300) {
-        setMessage(document, statusID, "zotero-translate-files-pref-api-success", {
+        setMessage(document, statusID, "babeldoc-for-zotero-pref-api-success", {
           status: status,
         });
       } else {
@@ -247,10 +247,10 @@ var ZoteroTranslateFilesPreferences = (function () {
       if (status) {
         setHTTPError(document, statusID, error, settings.apiKey);
       } else if (isTimeoutError(error)) {
-        setMessage(document, statusID, "zotero-translate-files-pref-api-timeout");
+        setMessage(document, statusID, "babeldoc-for-zotero-pref-api-timeout");
       } else {
         // Avoid exception messages here because request details can contain the API key.
-        setMessage(document, statusID, "zotero-translate-files-pref-api-network-error");
+        setMessage(document, statusID, "babeldoc-for-zotero-pref-api-network-error");
       }
     }
   }
@@ -268,10 +268,10 @@ var ZoteroTranslateFilesPreferences = (function () {
       try {
         if (mainWindow.MozXULElement &&
             typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
-          mainWindow.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+          mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
         }
         var label = await mainWindow.document.l10n.formatValue(
-          "zotero-translate-files-pref-pane-label"
+          "babeldoc-for-zotero-pref-pane-label"
         );
         if (label) return label;
       } catch (error) {
@@ -282,15 +282,15 @@ var ZoteroTranslateFilesPreferences = (function () {
     if (Zotero.Plugins && typeof Zotero.Plugins.getName === "function") {
       return Zotero.Plugins.getName(data.id);
     }
-    return "Translate Files for Zotero";
+    return "BabelDOC for Zotero";
   }
 
   async function pickBabelDOCPath(document, window) {
     var title = "Select BabelDOC executable";
     var filterTitle = "Executable files (*.exe)";
     if (document.l10n && typeof document.l10n.formatValue === "function") {
-      title = await document.l10n.formatValue("zotero-translate-files-pref-picker-title");
-      filterTitle = await document.l10n.formatValue("zotero-translate-files-pref-picker-filter");
+      title = await document.l10n.formatValue("babeldoc-for-zotero-pref-picker-title");
+      filterTitle = await document.l10n.formatValue("babeldoc-for-zotero-pref-picker-filter");
     }
 
     var picker = new (ChromeUtils.importESModule(
@@ -315,14 +315,14 @@ var ZoteroTranslateFilesPreferences = (function () {
 
     document.getElementById(PANE_ID + "-browse").addEventListener("click", function () {
       pickBabelDOCPath(document, window).catch(function () {
-        setMessage(document, PANE_ID + "-path-status", "zotero-translate-files-pref-path-picker-error");
+        setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-picker-error");
       });
     });
 
     document.getElementById(PANE_ID + "-test").addEventListener("click", async function (event) {
       var button = event.currentTarget;
       button.disabled = true;
-      setMessage(document, PANE_ID + "-api-status", "zotero-translate-files-pref-api-checking");
+      setMessage(document, PANE_ID + "-api-status", "babeldoc-for-zotero-pref-api-checking");
       try {
         var settings = ZoteroTranslateFilesConfig.getSettings();
         setPathStatus(document, settings);

@@ -2,18 +2,47 @@
 
 // Shared by the preferences pane and the translation runner.
 var ZoteroTranslateFilesConfig = (function () {
+  var PREFERENCE_PREFIX = "extensions.babeldoc-for-zotero.";
+  var LEGACY_PREFERENCE_PREFIX = "extensions.zotero-translate-files.";
+  var LEGACY_MIGRATION_PREFERENCE = PREFERENCE_PREFIX + "legacyPrefsMigrated";
+
   var preferences = {
-    baseURL: "extensions.zotero-translate-files.baseURL",
-    apiKey: "extensions.zotero-translate-files.apiKey",
-    model: "extensions.zotero-translate-files.model",
-    babeldocPath: "extensions.zotero-translate-files.babeldocPath",
-    maxOutputTokens: "extensions.zotero-translate-files.maxOutputTokens",
-    maxRequests: "extensions.zotero-translate-files.maxRequests",
-    repairFailed: "extensions.zotero-translate-files.repairFailed",
-    translateReferences: "extensions.zotero-translate-files.translateReferences",
+    baseURL: PREFERENCE_PREFIX + "baseURL",
+    apiKey: PREFERENCE_PREFIX + "apiKey",
+    model: PREFERENCE_PREFIX + "model",
+    babeldocPath: PREFERENCE_PREFIX + "babeldocPath",
+    maxOutputTokens: PREFERENCE_PREFIX + "maxOutputTokens",
+    maxRequests: PREFERENCE_PREFIX + "maxRequests",
+    repairFailed: PREFERENCE_PREFIX + "repairFailed",
+    translateReferences: PREFERENCE_PREFIX + "translateReferences",
     // Learned, not user-facing: "max_tokens" or "max_completion_tokens".
-    tokenParam: "extensions.zotero-translate-files.tokenParam",
+    tokenParam: PREFERENCE_PREFIX + "tokenParam",
   };
+
+  function migrateLegacyPreferences() {
+    if (Zotero.Prefs.get(LEGACY_MIGRATION_PREFERENCE, true) === true) return 0;
+
+    var migrated = 0;
+    Object.keys(preferences).forEach(function (name) {
+      var currentPreference = preferences[name];
+      var legacyPreference = LEGACY_PREFERENCE_PREFIX + name;
+      if (!Zotero.Prefs.prefHasUserValue(currentPreference, true) &&
+          Zotero.Prefs.prefHasUserValue(legacyPreference, true)) {
+        Zotero.Prefs.set(
+          currentPreference,
+          Zotero.Prefs.get(legacyPreference, true),
+          true
+        );
+        migrated++;
+      }
+    });
+
+    Zotero.Prefs.set(LEGACY_MIGRATION_PREFERENCE, true, true);
+    if (Zotero.debug) {
+      Zotero.debug("BabelDOC for Zotero: migrated " + migrated + " legacy preferences");
+    }
+    return migrated;
+  }
 
   var TOKEN_LIMIT_PARAMETERS = ["max_tokens", "max_completion_tokens"];
   var ADAPTABLE_PARAMETERS = TOKEN_LIMIT_PARAMETERS;
@@ -253,6 +282,7 @@ var ZoteroTranslateFilesConfig = (function () {
   }
 
   return {
+    migrateLegacyPreferences: migrateLegacyPreferences,
     getSettings: getSettings,
     setTokenParam: setTokenParam,
     tokenLimitAdaptation: tokenLimitAdaptation,

@@ -10,12 +10,12 @@ const source = fs.readFileSync(
 
 const apiKey = "DEMO/SECRET-ONLY";
 const preferences = {
-  "extensions.zotero-translate-files.baseURL": "https://example.test/v1",
-  "extensions.zotero-translate-files.apiKey": apiKey,
-  "extensions.zotero-translate-files.model": "test-model",
-  "extensions.zotero-translate-files.babeldocPath": "C:\\babeldoc\\python.exe",
-  "extensions.zotero-translate-files.maxOutputTokens": 8192,
-  "extensions.zotero-translate-files.maxRequests": 20,
+  "extensions.babeldoc-for-zotero.baseURL": "https://example.test/v1",
+  "extensions.babeldoc-for-zotero.apiKey": apiKey,
+  "extensions.babeldoc-for-zotero.model": "test-model",
+  "extensions.babeldoc-for-zotero.babeldocPath": "C:\\babeldoc\\python.exe",
+  "extensions.babeldoc-for-zotero.maxOutputTokens": 8192,
+  "extensions.babeldoc-for-zotero.maxRequests": 20,
 };
 const context = {
   Zotero: {
@@ -30,13 +30,13 @@ vm.runInNewContext(source, context, { filename: "config.js" });
 const settings = context.ZoteroTranslateFilesConfig.getSettings();
 assert.equal(settings.maxOutputTokens, 8192);
 assert.equal(settings.maxRequests, 20);
-preferences["extensions.zotero-translate-files.maxOutputTokens"] = 1023;
+preferences["extensions.babeldoc-for-zotero.maxOutputTokens"] = 1023;
 assert.throws(
   () => context.ZoteroTranslateFilesConfig.getSettings(),
   /模型单次最大输出 token 数必须是大于或等于 1024 的整数/,
 );
-preferences["extensions.zotero-translate-files.maxOutputTokens"] = 4096;
-preferences["extensions.zotero-translate-files.maxRequests"] = 0;
+preferences["extensions.babeldoc-for-zotero.maxOutputTokens"] = 4096;
+preferences["extensions.babeldoc-for-zotero.maxRequests"] = 0;
 assert.throws(
   () => context.ZoteroTranslateFilesConfig.getSettings(),
   /单篇最多请求次数必须是大于或等于 1 的整数/,
@@ -46,7 +46,7 @@ assert.equal(
   "invalid setting: [已隐藏]",
   "redaction must read the configured API key even when another preference is invalid",
 );
-preferences["extensions.zotero-translate-files.maxRequests"] = 20;
+preferences["extensions.babeldoc-for-zotero.maxRequests"] = 20;
 
 const message = context.ZoteroTranslateFilesConfig.redact(
   "invalid key " + apiKey + "; Authorization: Bearer bearer-secret-value; sk-1234567890"

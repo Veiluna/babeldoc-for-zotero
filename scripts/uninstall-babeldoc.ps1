@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-删除 Translate Files for Zotero 插件使用的 BabelDOC Conda 环境。
+删除 BabelDOC for Zotero 使用的 BabelDOC Conda 环境。
 
 .DESCRIPTION
 删除 EnvPrefix 指定的目录。默认会先要求确认；只有明确指定 RemoveCache 时才会删除

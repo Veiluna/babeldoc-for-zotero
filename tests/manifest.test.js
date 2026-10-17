@@ -15,16 +15,16 @@ assert.notDeepEqual(
 
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 assert.equal(manifest.manifest_version, 2);
-assert.equal(manifest.name, "Translate Files for Zotero");
+assert.equal(manifest.name, "BabelDOC for Zotero");
 assert.match(manifest.description, /Translate PDF attachments/);
 assert.equal(manifest.version, "0.2.6");
 
 const zotero = manifest.applications && manifest.applications.zotero;
 assert.ok(zotero, "applications.zotero is required");
-assert.equal(zotero.id, "zotero-translate-files@veiluna.github.io");
+assert.equal(zotero.id, "babeldoc-for-zotero@veiluna.github.io");
 assert.equal(
   zotero.update_url,
-  "https://github.com/Veiluna/zotero-translate-files/releases/download/release/updates.json"
+  "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json"
 );
 assert.equal(new URL(zotero.update_url).protocol, "https:");
 assert.equal(zotero.strict_min_version, "6.999");
@@ -137,7 +137,7 @@ const release = updatesManifest.addons[zotero.id].updates[0];
 assert.equal(release.version, manifest.version);
 assert.equal(
   release.update_link,
-  "https://github.com/Veiluna/zotero-translate-files/releases/download/v0.2.6/zotero-translate-files-0.2.6.xpi"
+  "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.2.6/babeldoc-for-zotero-0.2.6.xpi"
 );
 assert.equal(release.applications.zotero.strict_min_version, zotero.strict_min_version);
 assert.equal(release.applications.zotero.strict_max_version, zotero.strict_max_version);
@@ -182,7 +182,7 @@ function readZipEntryNames(xpiPath) {
 const expectedXpiPath = path.join(
   repositoryRoot,
   "build",
-  `zotero-translate-files-${manifest.version}.xpi`
+  `babeldoc-for-zotero-${manifest.version}.xpi`
 );
 let packageEntries;
 if (fs.existsSync(expectedXpiPath)) {
@@ -202,7 +202,7 @@ if (fs.existsSync(builtUpdatesPath)) {
   assert.equal(builtRelease.version, manifest.version);
   assert.equal(
     builtRelease.update_link,
-    `https://github.com/Veiluna/zotero-translate-files/releases/download/v${manifest.version}/zotero-translate-files-${manifest.version}.xpi`
+    `https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v${manifest.version}/babeldoc-for-zotero-${manifest.version}.xpi`
   );
   assert.equal(builtRelease.applications.zotero.strict_min_version, zotero.strict_min_version);
   assert.equal(builtRelease.applications.zotero.strict_max_version, zotero.strict_max_version);

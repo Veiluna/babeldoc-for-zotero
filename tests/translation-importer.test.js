@@ -5,13 +5,13 @@ const vm = require("node:vm");
 
 for (const locale of ["zh-CN", "en-US"]) {
   const resource = fs.readFileSync(
-    path.join(__dirname, `../addon/locale/${locale}/zotero-translate-files.ftl`),
+    path.join(__dirname, `../addon/locale/${locale}/babeldoc-for-zotero.ftl`),
     "utf8",
   );
   for (const messageID of [
-    "zotero-translate-files-import-tag-warning-title",
-    "zotero-translate-files-import-tag-warning-description",
-    "zotero-translate-files-import-tag-warning-default-name",
+    "babeldoc-for-zotero-import-tag-warning-title",
+    "babeldoc-for-zotero-import-tag-warning-description",
+    "babeldoc-for-zotero-import-tag-warning-default-name",
   ]) {
     assert.match(resource, new RegExp(`^${messageID}\\s*=`, "m"),
       `${locale} defines ${messageID}`);
@@ -228,20 +228,20 @@ const context = {
       return {
         MozXULElement: {
           insertFTLIfNeeded(resource) {
-            assert.equal(resource, "zotero-translate-files.ftl");
+            assert.equal(resource, "babeldoc-for-zotero.ftl");
           },
         },
         document: {
           l10n: {
             async formatValue(messageID, args) {
               localizedMessageCalls.push({ messageID, args });
-              if (messageID === "zotero-translate-files-import-tag-warning-title") {
+              if (messageID === "babeldoc-for-zotero-import-tag-warning-title") {
                 return "译本已添加，但无法标记为已翻译";
               }
-              if (messageID === "zotero-translate-files-import-tag-warning-default-name") {
+              if (messageID === "babeldoc-for-zotero-import-tag-warning-default-name") {
                 return "中文译本";
               }
-              if (messageID === "zotero-translate-files-import-tag-warning-description") {
+              if (messageID === "babeldoc-for-zotero-import-tag-warning-description") {
                 return `${args.title} 已添加到 Zotero，但未能添加“已翻译”标记。`;
               }
               return messageID;
@@ -343,7 +343,7 @@ function makeLinkedReplacement(options, id, dateAdded) {
     "child attachments use parentItemID rather than collection membership options");
   assert.deepEqual(context.Zotero.File.getValidFileNameCalls, ["Smith: 2020? - Title.zh.pdf"]);
   assert.deepEqual(translated.getTags(), [
-    { tag: "zotero-translate-files:translated", type: 1 },
+    { tag: "babeldoc-for-zotero:translated", type: 1 },
   ]);
   assert.equal(translated.saved, true);
   assert.equal(context.ZoteroTranslateFilesAttachments.isTranslatedAttachment(translated), true);
@@ -481,7 +481,7 @@ function makeLinkedReplacement(options, id, dateAdded) {
   assert.equal(tagWarningWindow.itemProgress.label, "中文译本",
     "the default attachment name comes from Fluent");
   assert.ok(localizedMessageCalls.some(call =>
-    call.messageID === "zotero-translate-files-import-tag-warning-description"));
+    call.messageID === "babeldoc-for-zotero-import-tag-warning-description"));
 
   const injectionTitle = '<a onmouseover="void(0)">paper</a>';
   const injectionOriginal = makeOriginal({ parentItemID: 85, id: 851, title: injectionTitle });

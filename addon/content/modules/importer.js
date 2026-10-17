@@ -251,7 +251,7 @@ var ZoteroTranslateFilesImporter = (function () {
         mainWindow.MozXULElement
         && typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function"
       ) {
-        mainWindow.MozXULElement.insertFTLIfNeeded("zotero-translate-files.ftl");
+        mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
       }
       var l10n = mainWindow.document.l10n;
       if (!l10n || typeof l10n.formatValue !== "function") return messageID;
@@ -262,12 +262,12 @@ var ZoteroTranslateFilesImporter = (function () {
   }
 
   async function showTagWarning(title) {
-    var headline = await localizedMessage("zotero-translate-files-import-tag-warning-title");
+    var headline = await localizedMessage("babeldoc-for-zotero-import-tag-warning-title");
     var attachmentName = await localizedMessage(
-      "zotero-translate-files-import-tag-warning-default-name",
+      "babeldoc-for-zotero-import-tag-warning-default-name",
     );
     var description = await localizedMessage(
-      "zotero-translate-files-import-tag-warning-description",
+      "babeldoc-for-zotero-import-tag-warning-description",
       { title: String(title || attachmentName) },
     );
     try {

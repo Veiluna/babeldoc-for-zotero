@@ -55,7 +55,7 @@ function makeHarness(options = {}) {
     Zotero: {
       Prefs: {
         get(name) {
-          const prefix = "extensions.zotero-translate-files.";
+          const prefix = "extensions.babeldoc-for-zotero.";
           return settings[name.slice(prefix.length)];
         },
       },
@@ -340,6 +340,19 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
   validationHarness.flushAlerts();
   assert.match(validationHarness.alerts[0].message, /翻译设置无效/);
   assert.doesNotMatch(validationHarness.alerts[0].message, /请求过于频繁或额度不足/);
+
+  const versionHarness = makeHarness();
+  const versionError = new Error("version mismatch");
+  versionError.kind = "babeldoc_version";
+  versionHarness.queue.onJobFailed(
+    { attachmentID: 100, attachmentTitle: "Unsupported BabelDOC version" },
+    versionError,
+  );
+  versionHarness.flushAlerts();
+  assert.match(
+    versionHarness.alerts[0].message,
+    /BabelDOC 版本不匹配，请运行 scripts\/install-babeldoc\.ps1 安装 0\.6\.4/,
+  );
 
   const requestCapHarness = makeHarness();
   const requestCapError = new Error("upstream quota response");

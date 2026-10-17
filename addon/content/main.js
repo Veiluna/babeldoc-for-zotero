@@ -17,6 +17,7 @@ var ZoteroTranslateFiles = {
   },
 
   init(data) {
+    ZoteroTranslateFilesConfig.migrateLegacyPreferences();
     this.id = data.id;
     this.version = data.version;
     this.rootURI = data.rootURI;
@@ -76,7 +77,7 @@ var ZoteroTranslateFiles = {
 
   log(message) {
     if (typeof Zotero !== "undefined" && Zotero.debug) {
-      Zotero.debug("Translate Files for Zotero: " + message);
+      Zotero.debug("BabelDOC for Zotero: " + message);
     }
   },
 };

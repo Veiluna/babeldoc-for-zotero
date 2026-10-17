@@ -44,7 +44,8 @@ function makeRegularItem(id, attachmentIDs) {
   };
 }
 
-const translatedID = "zotero-translate-files:translated";
+const translatedID = "babeldoc-for-zotero:translated";
+const legacyTranslatedID = "zotero-translate-files:translated";
 const attachmentsByID = new Map([
   [1, makeAttachment(1, { stored: true })],
   [2, makeAttachment(2, { linked: true })],
@@ -56,6 +57,11 @@ const attachmentsByID = new Map([
     tags: [{ tag: translatedID }],
   })],
   [6, makeAttachment(6, { stored: true })],
+  [7, makeAttachment(7, {
+    title: "paper（中文译本）",
+    stored: true,
+    tags: [{ tag: legacyTranslatedID }],
+  })],
 ]);
 
 const context = {
@@ -72,11 +78,13 @@ vm.runInNewContext(source, context, { filename: "attachments.js" });
 const attachments = context.ZoteroTranslateFilesAttachments;
 assert.equal(attachments.TRANSLATED_ATTACHMENT_TAG, translatedID);
 assert.equal(attachments.isTranslatedAttachment(attachmentsByID.get(5)), true);
+assert.equal(attachments.isTranslatedAttachment(attachmentsByID.get(7)), true,
+  "legacy translated tags still identify old plugin output");
 assert.equal(attachments.isTranslatedAttachment(attachmentsByID.get(4)), false,
   "the translated title suffix alone must not classify a user attachment as plugin output");
 
 const selectedItems = [
-  makeRegularItem(100, [1, 2, 3, 4, 5, 6]),
+  makeRegularItem(100, [1, 2, 3, 4, 5, 6, 7]),
   attachmentsByID.get(1),
   { isNote: () => true },
 ];

@@ -1,6 +1,8 @@
-# Translate Files for Zotero
+# BabelDOC for Zotero
 
 当前版本：**0.2.6**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+
+Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 
 ## 功能简介
 
@@ -40,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-babeldoc.ps1
 | `-CondaPath` | Conda 安装目录或 `conda.exe` 路径；省略时自动查找。 |
 | `-EnvPrefix` | 环境目录；默认是 `%LOCALAPPDATA%\zotero-translate-files\babeldoc-env`。 |
 | `-PythonVersion` | Python 版本，默认 `3.12`。 |
-| `-BabelDocVersion` | 可选的 BabelDOC 版本，例如 `0.6.4`；省略时安装与 Python 版本兼容的最新版。 |
+| `-BabelDocVersion` | BabelDOC 版本；默认固定为 `0.6.4`。 |
 | `-SkipWarmup` | 跳过 BabelDOC 字体和布局模型资源预下载。 |
 | `-IndexUrl` | 指定 pip 包索引。国内用户可按需使用镜像，例如清华 PyPI 镜像；该参数只传给 pip。 |
 | `-OfflineAssets` | 从已有的 BabelDOC 资源文件或目录恢复字体和模型资源。它不离线安装 Conda/Python 依赖。 |
@@ -65,9 +67,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-babeldoc.ps1 `
 powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 ```
 
-脚本会把插件打包到 `build\zotero-translate-files-<版本>.xpi`。也可以直接使用已构建的 `.xpi` 文件。
+脚本会把插件打包到 `build\babeldoc-for-zotero-<版本>.xpi`。也可以直接使用已构建的 `.xpi` 文件。
 
-打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。清单中的自动更新地址为 `https://github.com/Veiluna/zotero-translate-files/releases/download/release/updates.json`。由于此 GitHub 仓库目前是私有仓库，Zotero 在仓库或发布资源公开前无法读取更新清单，自动更新检查会静默失败；这不影响从本地 XPI 安装和使用。
+打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。清单中的自动更新地址为 `https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json`。由于此 GitHub 仓库目前是私有仓库，Zotero 在仓库或发布资源公开前无法读取更新清单，自动更新检查会静默失败；这不影响从本地 XPI 安装和使用。
 
 ### 4. 在 Zotero 安装插件
 
@@ -75,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 
 ### 5. 填写插件设置
 
-打开 Zotero **设置 → Translate Files for Zotero**，填写：
+打开 Zotero **设置 → BabelDOC for Zotero**，填写：
 
 1. **接口地址**：例如 `https://api.example.com/v1`。插件会把根地址归一化为 Chat Completions endpoint，例如 `https://api.example.com/v1/chat/completions`。主机根地址会补成 `/v1/chat/completions`；版本路径（如 `/v1`）和 `/v1beta/openai` 会补上 `/chat/completions`；已填写完整的 `/chat/completions` endpoint 保持不变。
 2. **API key**：接口服务提供的密钥。
@@ -84,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 5. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
 6. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
 
-这些设置分别使用 Zotero 偏好键 `extensions.zotero-translate-files.baseURL`、`extensions.zotero-translate-files.apiKey`、`extensions.zotero-translate-files.model`、`extensions.zotero-translate-files.babeldocPath`、`extensions.zotero-translate-files.maxOutputTokens`、`extensions.zotero-translate-files.maxRequests`、`extensions.zotero-translate-files.repairFailed` 和 `extensions.zotero-translate-files.translateReferences`。
+这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.babeldocPath`、`extensions.babeldoc-for-zotero.maxOutputTokens`、`extensions.babeldoc-for-zotero.maxRequests`、`extensions.babeldoc-for-zotero.repairFailed` 和 `extensions.babeldoc-for-zotero.translateReferences`。
 
 点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求，并检查 BabelDOC 可执行文件及对应的 Python 路径是否存在。它不会运行一次完整的 PDF 翻译。
 
@@ -172,7 +174,7 @@ python tests/test_min_requests.py
 - **失败段落合并补译**默认开启。主翻译完成后，所有空输出、缺失项、质量检查失败或占位符不匹配的段落进入一次合并补译流程。补译请求会携带前后段落作为只读上下文；为满足输出 token 上限，补译可能分成多个请求，但都计入“单篇最多请求次数”。补译仍失败的段落保留原文并计入失败数。
 - **翻译参考文献**默认关闭。检测到 References / Bibliography / 参考文献标题或参考文献版面类后，后续文献条目会留在原文。页眉、页脚、页码、IEEE 授权下载戳、DOI、ISBN 与版权边注也会保留原样，不发送给模型；即使版面分析把页眉页脚误标为正文，只要同一段文字（忽略其中的数字）在两页以上的页面顶部或底部重复出现，也会按页眉页脚保留。
 - 正文段落按原始字号分组；同组最终字号比例目标相差不超过 5%。系统先压缩段间距，再使用字号组的共同缩放比例，比例下限为 0.8。只有单段在压缩段间距并缩到 0.8 后仍无法排下时，才允许该段单独低于下限，并记录在日志里。图表、表格和独立公式不应用此正文策略，包含行内公式的正文仍会参与分组。
-- 每个任务会在 Zotero 数据目录的 `zotero-translate-files/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
+- 每个任务会在 Zotero 数据目录的 `babeldoc-for-zotero/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
 
 设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
 
@@ -191,7 +193,7 @@ python tests/test_min_requests.py
 
 ## 0.2.3 改进
 
-- 部分模型（包括 chatanywhere 上的部分模型）不再接受 `max_tokens`，要求改用 `max_completion_tokens`；也有模型不接受 `temperature`。服务端会先返回不消耗额度的 HTTP 400。插件遇到这种拒绝时，会自动换成对方要求的参数，在同一次计数的请求里重发一次，并记住结果：测试连接成功后，以及翻译完成后，都会保存到隐藏设置 `extensions.zotero-translate-files.tokenParam`，之后的请求直接使用。其他错误不重试。
+- 部分模型（包括 chatanywhere 上的部分模型）不再接受 `max_tokens`，要求改用 `max_completion_tokens`；也有模型不接受 `temperature`。服务端会先返回不消耗额度的 HTTP 400。插件遇到这种拒绝时，会自动换成对方要求的参数，在同一次计数的请求里重发一次，并记住结果：测试连接成功后，以及翻译完成后，都会保存到隐藏设置 `extensions.babeldoc-for-zotero.tokenParam`，之后的请求直接使用。其他错误不重试。
 
 ## 0.2.2 改进
 

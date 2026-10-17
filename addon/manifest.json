@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "name": "Translate Files for Zotero",
+  "name": "BabelDOC for Zotero",
   "version": "0.2.6",
   "description": "Translate PDF attachments into Simplified Chinese while preserving layout.",
   "author": "Veiluna",
@@ -9,8 +9,8 @@
   },
   "applications": {
     "zotero": {
-      "id": "zotero-translate-files@veiluna.github.io",
-      "update_url": "https://github.com/Veiluna/zotero-translate-files/releases/download/release/updates.json",
+      "id": "babeldoc-for-zotero@veiluna.github.io",
+      "update_url": "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json",
       "strict_min_version": "6.999",
       "strict_max_version": "10.*"
     }

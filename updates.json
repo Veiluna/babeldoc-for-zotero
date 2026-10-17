@@ -1,10 +1,10 @@
 {
   "addons": {
-    "zotero-translate-files@veiluna.github.io": {
+    "babeldoc-for-zotero@veiluna.github.io": {
       "updates": [
         {
           "version": "0.2.6",
-          "update_link": "https://github.com/Veiluna/zotero-translate-files/releases/download/v0.2.6/zotero-translate-files-0.2.6.xpi",
+          "update_link": "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.2.6/babeldoc-for-zotero-0.2.6.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "6.999",

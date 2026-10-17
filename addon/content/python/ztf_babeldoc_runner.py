@@ -6,6 +6,7 @@ import contextlib
 import datetime
 import functools
 import html
+import importlib.metadata
 import json
 import logging
 import logging.handlers
@@ -21,6 +22,7 @@ from difflib import SequenceMatcher
 from typing import Any
 
 
+EXPECTED_BABELDOC_VERSION = "0.6.4"
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -4101,6 +4103,20 @@ def _install_min_request_patches(
     llm_module.PriorityThreadPoolExecutor = DeferredTranslationExecutor
 
 
+def babeldoc_version_error() -> str | None:
+    try:
+        installed_version = importlib.metadata.version("BabelDOC")
+    except importlib.metadata.PackageNotFoundError:
+        installed_version = "未安装"
+
+    if installed_version != EXPECTED_BABELDOC_VERSION:
+        return (
+            f"需要 BabelDOC {EXPECTED_BABELDOC_VERSION}，当前为 {installed_version}。"
+            "请重新运行 scripts/install-babeldoc.ps1。"
+        )
+    return None
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -4110,6 +4126,15 @@ def main() -> int:
     if not api_key:
         print("Missing ZTF_OPENAI_API_KEY environment variable.", file=sys.stderr, flush=True)
         return 2
+
+    version_error = babeldoc_version_error()
+    if version_error:
+        _emit(
+            "ZTF_ERROR ",
+            {"message": version_error, "kind": "babeldoc_version"},
+            api_key,
+        )
+        return 1
 
     # The key is added to Python's in-memory argv only. The OS-level command line contains runner.py,
     # never this value; the plugin also asserts the key is absent from Subprocess.call arguments.
