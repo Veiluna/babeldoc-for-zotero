@@ -61,12 +61,16 @@ for (const relativePath of [
 
 assert.match(read("addon/content/preferences.js"), /return "BabelDOC for Zotero"/);
 assert.match(read("addon/content/modules/queue.js"), /progress\.changeHeadline\("BabelDOC for Zotero"\)/);
+assert.equal(manifest.version, "0.4.0");
+assert.match(read("addon/bootstrap.js"), /content\/modules\/installer\.js/);
+assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero\.downloadSource/);
+assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero-pref-section-environment/);
 
 const readme = read("README.md");
 assert.match(readme, /^# BabelDOC for Zotero$/m);
 assert.match(readme, /设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载/);
 assert.match(readme, /build\\babeldoc-for-zotero-<版本>\.xpi/);
-assert.match(read("scripts/install-babeldoc.ps1"), /为 BabelDOC for Zotero 创建/);
-assert.match(read("scripts/uninstall-babeldoc.ps1"), /删除 BabelDOC for Zotero 使用的/);
+assert.match(read("addon/content/modules/installer.js"), /UV_VERSION = "0\.13\.1"/);
+assert.match(read("README.md"), /首次翻译时，插件会在 `%LOCALAPPDATA%\\babeldoc-for-zotero`/);
 
 process.stdout.write("BabelDOC for Zotero branding regression cases passed\n");

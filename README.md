@@ -1,6 +1,6 @@
 # BabelDOC for Zotero
 
-当前版本：**0.2.6**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机安装的 BabelDOC 和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.4.0**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机自动安装的 BabelDOC 环境和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 
@@ -18,48 +18,12 @@ Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translat
 
 - Windows 和 Windows PowerShell 5.1。
 - Zotero 7–10。当前主要支持 Zotero 10.0.6（64 位）；插件清单声明的版本范围为 6.999 至 10.*。
-- Miniconda。安装脚本会创建独立的 Python 3.12 环境，不会激活环境，也不会修改 PATH。
+- 首次翻译时，插件会在 `%LOCALAPPDATA%\babeldoc-for-zotero` 创建独立的 Python 3.12 环境；无需安装 Miniconda，也不会修改 PATH。
 - 一个可用的 OpenAI 兼容 Chat Completions 接口、API key 和模型名。
 
 ## 安装
 
-### 1. 安装 Miniconda
-
-如果尚未安装，请先安装 Windows 版 Miniconda。安装时无需将 Conda 加入 PATH；安装脚本会查找常见位置，也可以通过 `-CondaPath` 指定 Miniconda 安装目录或 `conda.exe`。
-
-### 2. 安装 BabelDOC
-
-在仓库根目录打开 Windows PowerShell，运行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-babeldoc.ps1
-```
-
-`-ExecutionPolicy Bypass` 只对这次 PowerShell 命令生效。常用参数如下：
-
-| 参数 | 作用 |
-| --- | --- |
-| `-CondaPath` | Conda 安装目录或 `conda.exe` 路径；省略时自动查找。 |
-| `-EnvPrefix` | 环境目录；默认是 `%LOCALAPPDATA%\zotero-translate-files\babeldoc-env`。 |
-| `-PythonVersion` | Python 版本，默认 `3.12`。 |
-| `-BabelDocVersion` | BabelDOC 版本；默认固定为 `0.6.4`。 |
-| `-SkipWarmup` | 跳过 BabelDOC 字体和布局模型资源预下载。 |
-| `-IndexUrl` | 指定 pip 包索引。国内用户可按需使用镜像，例如清华 PyPI 镜像；该参数只传给 pip。 |
-| `-OfflineAssets` | 从已有的 BabelDOC 资源文件或目录恢复字体和模型资源。它不离线安装 Conda/Python 依赖。 |
-
-例如，指定 Miniconda 路径和 pip 镜像：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-babeldoc.ps1 `
-  -CondaPath 'G:\ProgramData\miniconda3' `
-  -IndexUrl 'https://pypi.tuna.tsinghua.edu.cn/simple'
-```
-
-使用已有离线资源时，可添加 `-OfflineAssets 'D:\babeldoc-assets.zip'`。安装脚本默认会预下载资源；若添加 `-SkipWarmup`，则会跳过在线预下载，也会跳过指定的离线资源恢复。
-
-安装脚本使用 [scripts/babeldoc-constraints.txt](scripts/babeldoc-constraints.txt) 固定依赖约束 `bitstring<5`，以兼容 BabelDOC 对 `bitstring.BitStream` 的使用。安装完成后，脚本会输出 BabelDOC 可执行文件路径。
-
-### 3. 打包插件
+### 1. 打包插件
 
 在仓库根目录运行：
 
@@ -71,24 +35,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 
 打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。清单中的自动更新地址为 `https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json`。由于此 GitHub 仓库目前是私有仓库，Zotero 在仓库或发布资源公开前无法读取更新清单，自动更新检查会静默失败；这不影响从本地 XPI 安装和使用。
 
-### 4. 在 Zotero 安装插件
+### 2. 在 Zotero 安装插件
 
 打开 Zotero 的 **工具 → 插件**，选择 **从文件安装**，然后选中 `.xpi` 文件。
 
-### 5. 填写插件设置
+### 3. 填写插件设置并首次翻译
 
 打开 Zotero **设置 → BabelDOC for Zotero**，填写：
 
 1. **接口地址**：例如 `https://api.example.com/v1`。插件会把根地址归一化为 Chat Completions endpoint，例如 `https://api.example.com/v1/chat/completions`。主机根地址会补成 `/v1/chat/completions`；版本路径（如 `/v1`）和 `/v1beta/openai` 会补上 `/chat/completions`；已填写完整的 `/chat/completions` endpoint 保持不变。
 2. **API key**：接口服务提供的密钥。
 3. **模型名**：接口服务支持的模型名称。
-4. **BabelDOC 路径**：粘贴安装脚本输出的路径。可填写环境中的 `Scripts\babeldoc.exe`，也可填写环境根目录下的 `python.exe`。
-5. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
-6. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
+4. **模型单次最大输出 token 数**：默认 `8192`，最小为 `1024`。估算按源文 token 的约 `1.6` 倍加每段 `20` token，并保留 `10%` 余量；超过预算的段落会按阅读顺序装入后续请求。
+5. **单篇最多请求次数**：默认 `20`，最小为 `1`。每次实际 Chat Completions 调用都计数，包括响应截断后的续传和拆分请求。Chatanywhere 对单篇有 `100` 次硬上限，建议保持较低值；到达本项上限后插件会停止任务，避免继续消耗接口额度。
+6. **下载源**：默认使用国内镜像，也可切换到官方源。首次翻译会自动下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型（通常需要数分钟并下载数百 MB）；也可在此页点击“安装 / 修复环境”提前安装。
 
-这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.babeldocPath`、`extensions.babeldoc-for-zotero.maxOutputTokens`、`extensions.babeldoc-for-zotero.maxRequests`、`extensions.babeldoc-for-zotero.repairFailed` 和 `extensions.babeldoc-for-zotero.translateReferences`。
+这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.maxOutputTokens`、`extensions.babeldoc-for-zotero.maxRequests`、`extensions.babeldoc-for-zotero.repairFailed`、`extensions.babeldoc-for-zotero.translateReferences` 和 `extensions.babeldoc-for-zotero.downloadSource`。
 
-点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求，并检查 BabelDOC 可执行文件及对应的 Python 路径是否存在。它不会运行一次完整的 PDF 翻译。
+点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求。它不会运行一次完整的 PDF 翻译。
 
 ## 使用
 
@@ -127,21 +91,11 @@ API key 保存在 Zotero 的 `prefs.js` 偏好设置文件中，**以明文存�
 
 ### 为什么第一次翻译较慢？
 
-首次运行可能需要下载 BabelDOC 的字体、布局模型等资源，PDF 页面分析和翻译也需要时间。资源缓存通常位于 `%USERPROFILE%\.cache\babeldoc`。
+首次翻译会自动安装 BabelDOC 环境并下载字体、布局模型等资源；进度窗口会显示当前安装步骤。资源缓存位于 `%USERPROFILE%\.cache\babeldoc`。
 
 ### 如何卸载？
 
-在 Zotero **工具 → 插件** 中移除本插件。BabelDOC 的 Conda 环境可以单独卸载：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-babeldoc.ps1
-```
-
-脚本默认删除 `%LOCALAPPDATA%\zotero-translate-files\babeldoc-env` 前要求确认，并保留 BabelDOC 资源缓存。添加 `-Force` 可跳过环境删除确认；只有明确添加 `-RemoveCache` 才会删除 `%USERPROFILE%\.cache\babeldoc`。例如，确认后同时删除环境和缓存：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-babeldoc.ps1 -Force -RemoveCache
-```
+在 Zotero **工具 → 插件** 中移除本插件。若要删除它下载的运行环境和缓存，请手动删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 与 `%USERPROFILE%\.cache\babeldoc`。
 
 ## 测试
 

@@ -136,6 +136,10 @@ function makeHarness(options = {}) {
   };
 
   const context = {
+    ZoteroTranslateFilesInstaller: {
+      async isReady() { return true; },
+      async ensureReady() { return pythonPath; },
+    },
     ChromeUtils: {
       importESModule(uri) {
         if (uri.endsWith("Subprocess.sys.mjs")) return { Subprocess: subprocess };
@@ -161,7 +165,6 @@ function makeHarness(options = {}) {
             baseURL: options.baseURL || "https://api.example.test/v1/chat/completions",
             apiKey,
             model: "test-model",
-            babeldocPath: "C:\\babeldoc\\Scripts\\babeldoc.exe",
           };
           return values[name.slice(prefix.length)];
         },

@@ -55,7 +55,6 @@ const oldPrefix = "extensions.zotero-translate-files.";
     [oldPrefix + "baseURL"]: "https://example.test/v1",
     [oldPrefix + "apiKey"]: secret,
     [oldPrefix + "model"]: "test-model",
-    [oldPrefix + "babeldocPath"]: "C:\\babeldoc\\python.exe",
     [oldPrefix + "maxOutputTokens"]: 4096,
     [oldPrefix + "maxRequests"]: 12,
     [oldPrefix + "repairFailed"]: false,
@@ -66,7 +65,7 @@ const oldPrefix = "extensions.zotero-translate-files.";
     [newPrefix + "baseURL"]: "",
     [newPrefix + "apiKey"]: "",
     [newPrefix + "model"]: "",
-    [newPrefix + "babeldocPath"]: "",
+    [newPrefix + "downloadSource"]: "china",
     [newPrefix + "maxOutputTokens"]: 8192,
     [newPrefix + "maxRequests"]: 20,
     [newPrefix + "repairFailed"]: true,
@@ -79,12 +78,11 @@ const oldPrefix = "extensions.zotero-translate-files.";
   );
 
   assert.equal(typeof state.config.migrateLegacyPreferences, "function");
-  assert.equal(state.config.migrateLegacyPreferences(), 9);
+  assert.equal(state.config.migrateLegacyPreferences(), 8);
   for (const name of [
     "baseURL",
     "apiKey",
     "model",
-    "babeldocPath",
     "maxOutputTokens",
     "maxRequests",
     "repairFailed",
@@ -96,7 +94,8 @@ const oldPrefix = "extensions.zotero-translate-files.";
   assert.equal(state.values.get(newPrefix + "legacyPrefsMigrated"), true);
   assert.equal(state.userValues.has(newPrefix + "legacyPrefsMigrated"), true);
   assert.equal(state.logs.length, 1);
-  assert.match(state.logs[0], /9/);
+  assert.match(state.logs[0], /8/);
+  assert.equal(state.values.has(newPrefix + "babeldocPath"), false, "the removed path preference is not migrated");
   assert.equal(state.logs.join("\n").includes(secret), false);
 }
 

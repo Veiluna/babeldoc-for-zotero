@@ -25,6 +25,7 @@ async function startup({ id, version, rootURI }) {
     if (generation !== startupGeneration) return;
 
     Services.scriptloader.loadSubScript(rootURI + "content/modules/config.js");
+    Services.scriptloader.loadSubScript(rootURI + "content/modules/installer.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/attachments.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/importer.js");
     Services.scriptloader.loadSubScript(rootURI + "content/preferences.js");

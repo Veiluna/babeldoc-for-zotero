@@ -13,7 +13,7 @@ const preferences = {
   "extensions.babeldoc-for-zotero.baseURL": "https://example.test/v1",
   "extensions.babeldoc-for-zotero.apiKey": apiKey,
   "extensions.babeldoc-for-zotero.model": "test-model",
-  "extensions.babeldoc-for-zotero.babeldocPath": "C:\\babeldoc\\python.exe",
+  "extensions.babeldoc-for-zotero.downloadSource": "china",
   "extensions.babeldoc-for-zotero.maxOutputTokens": 8192,
   "extensions.babeldoc-for-zotero.maxRequests": 20,
 };
@@ -30,6 +30,7 @@ vm.runInNewContext(source, context, { filename: "config.js" });
 const settings = context.ZoteroTranslateFilesConfig.getSettings();
 assert.equal(settings.maxOutputTokens, 8192);
 assert.equal(settings.maxRequests, 20);
+assert.equal(settings.downloadSource, "china");
 preferences["extensions.babeldoc-for-zotero.maxOutputTokens"] = 1023;
 assert.throws(
   () => context.ZoteroTranslateFilesConfig.getSettings(),

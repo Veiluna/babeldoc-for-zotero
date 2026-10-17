@@ -7,92 +7,71 @@
     <html:link rel="localization" href="babeldoc-for-zotero.ftl" />
   </linkset>
 
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-base-url"
-                data-l10n-id="babeldoc-for-zotero-pref-base-url" />
-    <html:input id="babeldoc-for-zotero-preferences-base-url"
-                type="text"
-                preference="extensions.babeldoc-for-zotero.baseURL"
-                autocomplete="off" />
-  </html:div>
+  <groupbox orient="vertical">
+    <label><html:h2 data-l10n-id="babeldoc-for-zotero-pref-section-service" /></label>
+    <html:div style="display:grid;grid-template-columns:190px minmax(0,1fr);align-items:center;column-gap:12px;row-gap:8px">
+      <html:label for="babeldoc-for-zotero-preferences-base-url" data-l10n-id="babeldoc-for-zotero-pref-base-url" />
+      <html:input id="babeldoc-for-zotero-preferences-base-url" type="text"
+                  preference="extensions.babeldoc-for-zotero.baseURL" autocomplete="off" />
+      <html:label for="babeldoc-for-zotero-preferences-api-key" data-l10n-id="babeldoc-for-zotero-pref-api-key" />
+      <html:input id="babeldoc-for-zotero-preferences-api-key" type="password"
+                  preference="extensions.babeldoc-for-zotero.apiKey" autocomplete="off" />
+      <html:label for="babeldoc-for-zotero-preferences-model" data-l10n-id="babeldoc-for-zotero-pref-model" />
+      <html:input id="babeldoc-for-zotero-preferences-model" type="text"
+                  preference="extensions.babeldoc-for-zotero.model" autocomplete="off" />
+      <html:span />
+      <html:div>
+        <html:button id="babeldoc-for-zotero-preferences-test" type="button"
+                     data-l10n-id="babeldoc-for-zotero-pref-test" />
+        <html:span id="babeldoc-for-zotero-preferences-api-status" role="status" aria-live="polite"
+                   data-l10n-id="babeldoc-for-zotero-pref-api-idle" />
+      </html:div>
+    </html:div>
+  </groupbox>
 
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-api-key"
-                data-l10n-id="babeldoc-for-zotero-pref-api-key" />
-    <html:input id="babeldoc-for-zotero-preferences-api-key"
-                type="password"
-                preference="extensions.babeldoc-for-zotero.apiKey"
-                autocomplete="off" />
-  </html:div>
+  <groupbox orient="vertical">
+    <label><html:h2 data-l10n-id="babeldoc-for-zotero-pref-section-options" /></label>
+    <html:div style="display:grid;grid-template-columns:190px minmax(0,1fr);align-items:center;column-gap:12px;row-gap:8px">
+      <html:label for="babeldoc-for-zotero-preferences-max-output-tokens" data-l10n-id="babeldoc-for-zotero-pref-max-output-tokens" />
+      <html:input id="babeldoc-for-zotero-preferences-max-output-tokens" type="number" min="1024" step="1"
+                  preference="extensions.babeldoc-for-zotero.maxOutputTokens" />
+      <html:label for="babeldoc-for-zotero-preferences-max-requests" data-l10n-id="babeldoc-for-zotero-pref-max-requests" />
+      <html:input id="babeldoc-for-zotero-preferences-max-requests" type="number" min="1" step="1"
+                  preference="extensions.babeldoc-for-zotero.maxRequests" />
+      <html:span />
+      <html:label><html:input id="babeldoc-for-zotero-preferences-repair-failed" type="checkbox"
+                              preference="extensions.babeldoc-for-zotero.repairFailed" />
+        <html:span data-l10n-id="babeldoc-for-zotero-pref-repair-failed" />
+      </html:label>
+      <html:span />
+      <html:label><html:input id="babeldoc-for-zotero-preferences-translate-references" type="checkbox"
+                              preference="extensions.babeldoc-for-zotero.translateReferences" />
+        <html:span data-l10n-id="babeldoc-for-zotero-pref-translate-references" />
+      </html:label>
+      <html:span />
+      <html:p data-l10n-id="babeldoc-for-zotero-pref-request-help" style="margin:0" />
+    </html:div>
+  </groupbox>
 
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-model"
-                data-l10n-id="babeldoc-for-zotero-pref-model" />
-    <html:input id="babeldoc-for-zotero-preferences-model"
-                type="text"
-                preference="extensions.babeldoc-for-zotero.model"
-                autocomplete="off" />
-  </html:div>
-
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-max-output-tokens"
-                data-l10n-id="babeldoc-for-zotero-pref-max-output-tokens" />
-    <html:input id="babeldoc-for-zotero-preferences-max-output-tokens"
-                type="number"
-                min="1024"
-                step="1"
-                preference="extensions.babeldoc-for-zotero.maxOutputTokens" />
-  </html:div>
-
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-max-requests"
-                data-l10n-id="babeldoc-for-zotero-pref-max-requests" />
-    <html:input id="babeldoc-for-zotero-preferences-max-requests"
-                type="number"
-                min="1"
-                step="1"
-                preference="extensions.babeldoc-for-zotero.maxRequests" />
-  </html:div>
-
-  <html:div>
-    <html:input id="babeldoc-for-zotero-preferences-repair-failed"
-                type="checkbox"
-                preference="extensions.babeldoc-for-zotero.repairFailed" />
-    <html:label for="babeldoc-for-zotero-preferences-repair-failed"
-                data-l10n-id="babeldoc-for-zotero-pref-repair-failed" />
-  </html:div>
-
-  <html:div>
-    <html:input id="babeldoc-for-zotero-preferences-translate-references"
-                type="checkbox"
-                preference="extensions.babeldoc-for-zotero.translateReferences" />
-    <html:label for="babeldoc-for-zotero-preferences-translate-references"
-                data-l10n-id="babeldoc-for-zotero-pref-translate-references" />
-  </html:div>
-
-  <html:div>
-    <html:label for="babeldoc-for-zotero-preferences-babeldoc-path"
-                data-l10n-id="babeldoc-for-zotero-pref-babeldoc-path" />
-    <html:input id="babeldoc-for-zotero-preferences-babeldoc-path"
-                type="text"
-                preference="extensions.babeldoc-for-zotero.babeldocPath"
-                autocomplete="off" />
-    <html:button id="babeldoc-for-zotero-preferences-browse"
-                 type="button"
-                 data-l10n-id="babeldoc-for-zotero-pref-browse" />
-  </html:div>
-
-  <html:p data-l10n-id="babeldoc-for-zotero-pref-request-help" />
-  <html:p data-l10n-id="babeldoc-for-zotero-pref-babeldoc-help" />
-  <html:button id="babeldoc-for-zotero-preferences-test"
-               type="button"
-               data-l10n-id="babeldoc-for-zotero-pref-test" />
-  <html:div id="babeldoc-for-zotero-preferences-api-status"
-            role="status"
-            aria-live="polite"
-            data-l10n-id="babeldoc-for-zotero-pref-api-idle" />
-  <html:div id="babeldoc-for-zotero-preferences-path-status"
-            role="status"
-            aria-live="polite"
-            data-l10n-id="babeldoc-for-zotero-pref-path-idle" />
+  <groupbox orient="vertical">
+    <label><html:h2 data-l10n-id="babeldoc-for-zotero-pref-section-environment" /></label>
+    <html:div style="display:grid;grid-template-columns:190px minmax(0,1fr);align-items:center;column-gap:12px;row-gap:8px">
+      <html:label for="babeldoc-for-zotero-preferences-download-source" data-l10n-id="babeldoc-for-zotero-pref-download-source" />
+      <menulist id="babeldoc-for-zotero-preferences-download-source" preference="extensions.babeldoc-for-zotero.downloadSource">
+        <menupopup>
+          <menuitem value="china" data-l10n-id="babeldoc-for-zotero-pref-source-china" />
+          <menuitem value="official" data-l10n-id="babeldoc-for-zotero-pref-source-official" />
+        </menupopup>
+      </menulist>
+      <html:span />
+      <html:div id="babeldoc-for-zotero-preferences-environment-status" role="status" aria-live="polite"
+                data-l10n-id="babeldoc-for-zotero-pref-environment-missing" />
+      <html:span />
+      <html:button id="babeldoc-for-zotero-preferences-install" type="button"
+                   data-l10n-id="babeldoc-for-zotero-pref-install-environment" />
+      <html:span />
+      <html:p id="babeldoc-for-zotero-preferences-environment-path" data-l10n-id="babeldoc-for-zotero-pref-environment-path"
+              style="margin:0" />
+    </html:div>
+  </groupbox>
 </vbox>

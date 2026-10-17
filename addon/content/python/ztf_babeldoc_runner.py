@@ -5009,7 +5009,7 @@ def babeldoc_version_error() -> str | None:
     if installed_version != EXPECTED_BABELDOC_VERSION:
         return (
             f"需要 BabelDOC {EXPECTED_BABELDOC_VERSION}，当前为 {installed_version}。"
-            "请重新运行 scripts/install-babeldoc.ps1。"
+            "请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”。"
         )
     return None
 

@@ -36,7 +36,6 @@ function makeHarness(options = {}) {
     baseURL: "https://example.test/v1",
     apiKey: "key",
     model: "model",
-    babeldocPath: "C:\\babeldoc\\python.exe",
   };
   const context = {
     ZoteroTranslateFiles: { log: message => logs.push(String(message)) },
@@ -171,7 +170,7 @@ async function validatesSettingsBeforeStarting() {
   const failures = [];
   let runnerCalls = 0;
   const harness = makeHarness({
-    settings: { baseURL: "", apiKey: "", model: "", babeldocPath: "" },
+    settings: { baseURL: "", apiKey: "", model: "" },
     runner: { translate: async () => { runnerCalls++; return "output.pdf"; } },
   });
   harness.queue.onJobFailed = (job, error) => failures.push(error.message);
@@ -184,7 +183,7 @@ async function validatesSettingsBeforeStarting() {
   assert.equal(failures.length, 1);
   assert.match(failures[0], /Zotero 设置/);
   assert.match(failures[0], /API Base URL/);
-  assert.match(failures[0], /BabelDOC 路径/);
+  assert.doesNotMatch(failures[0], /BabelDOC 路径/);
 }
 
 async function rechecksTranslatablePDFBeforeRunnerStarts() {
@@ -261,7 +260,6 @@ async function failureAlertsAreDeferredRedactedAndQueueContinues() {
       baseURL: "https://example.test/v1",
       apiKey: secret,
       model: "model",
-      babeldocPath: "C:\\babeldoc\\python.exe",
     },
     runner: {
       async translate(item) {
@@ -308,10 +306,10 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
     ["insufficient_quota", "请求过于频繁或额度不足（接口可能已达到请求次数上限）"],
     ["BabelDOC 不支持包含查询参数的 API 地址", "BabelDOC 不支持包含查询参数的接口地址"],
     ["ConnectError: ECONNREFUSED", "无法连接到接口地址"],
-    ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
-    ["python.exe not found", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
-    ["找不到 BabelDOC 环境中的 python.exe", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
-    ["No module named 'babeldoc'", "找不到 BabelDOC，请检查设置中的路径或运行安装脚本"],
+    ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
+    ["python.exe not found", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
+    ["找不到 BabelDOC 环境中的 python.exe", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
+    ["No module named 'babeldoc'", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
     ["PDF 文件不可用：附件可能尚未下载", "PDF 文件不存在（可能尚未下载）"],
     ["BabelDOC 没有返回可导入的译本文件。", "BabelDOC 未生成可导入的中文 PDF"],
     ["Zotero 未能创建译本附件。", "无法导入中文译本"],
@@ -351,7 +349,7 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
   versionHarness.flushAlerts();
   assert.match(
     versionHarness.alerts[0].message,
-    /BabelDOC 版本不匹配，请运行 scripts\/install-babeldoc\.ps1 安装 0\.6\.4/,
+    /自动安装的 BabelDOC 环境版本不正确，请在设置中点击“安装 \/ 修复环境”/,
   );
 
   const requestCapHarness = makeHarness();
@@ -425,7 +423,6 @@ async function failureLogsOmitRunnerAndHandlerErrors() {
       baseURL: "https://example.test/v1",
       apiKey: secret,
       model: "model",
-      babeldocPath: "C:\\babeldoc\\python.exe",
     },
     runner: {
       translate: async () => { throw new Error("request failed with key " + secret); },
@@ -442,7 +439,6 @@ async function failureLogsOmitRunnerAndHandlerErrors() {
       baseURL: "https://example.test/v1",
       apiKey: secret,
       model: "model",
-      babeldocPath: "C:\\babeldoc\\python.exe",
     },
     runner: {
       translate: async () => { throw new Error("runner error " + secret); },

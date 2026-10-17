@@ -1,4 +1,4 @@
-/* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesConfig, ChromeUtils, IOUtils, PathUtils */
+/* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesConfig, ZoteroTranslateFilesInstaller, ChromeUtils, IOUtils, PathUtils */
 
 var ZoteroTranslateFilesRunner = (function () {
   var RUNNER_FILENAME = "ztf_babeldoc_runner.py";
@@ -130,8 +130,8 @@ var ZoteroTranslateFilesRunner = (function () {
     try {
       if (signal && signal.aborted) throw new Error("翻译任务已取消。");
       if (!settings.apiKey) throw new Error("请先在 Zotero 设置中填写 API key。");
-      if (!settings.baseURL || !settings.model || !settings.babeldocPath) {
-        throw new Error("请先填写 API Base URL、模型名和 BabelDOC 路径。");
+      if (!settings.baseURL || !settings.model) {
+        throw new Error("请先填写 API Base URL 和模型名。");
       }
 
       var normalizedEndpoint = ZoteroTranslateFilesConfig.chatCompletionsURL(settings.baseURL);
@@ -154,11 +154,15 @@ var ZoteroTranslateFilesRunner = (function () {
         throw new Error("PDF 文件不可用：附件可能尚未下载，或链接文件已移动。");
       }
 
-      var pythonPath = ZoteroTranslateFilesConfig.resolvePythonFromBabelDOCPath(
-        settings.babeldocPath
-      );
+      var pythonPath = await ZoteroTranslateFilesInstaller.ensureReady({
+        signal: signal,
+        source: settings.downloadSource,
+        onProgress: function (progress) {
+          try { onProgress(progress); } catch (error) { /* Progress UI must not block setup. */ }
+        },
+      });
       if (!isExistingFile(pythonPath)) {
-        throw new Error("找不到 BabelDOC 环境中的 python.exe，请检查设置里的可执行文件路径。");
+        throw new Error("无法找到自动安装的 BabelDOC Python 环境，请在设置中点击“安装 / 修复环境”。");
       }
 
       var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
@@ -407,7 +411,8 @@ var ZoteroTranslateFilesRunner = (function () {
       }
       var wrappedError = new Error(redact(error && error.message ? error.message : error, apiKey));
       if (error && error.kind) wrappedError.kind = error.kind;
-      if (logPath) wrappedError.logPath = logPath;
+      if (error && error.logPath) wrappedError.logPath = error.logPath;
+      else if (logPath) wrappedError.logPath = logPath;
       throw wrappedError;
     } finally {
       if (signal && abortListener) signal.removeEventListener("abort", abortListener);

@@ -28,8 +28,8 @@ async function testConnection(
   };
   const elements = {
     "babeldoc-for-zotero-preferences": pane,
-    "babeldoc-for-zotero-preferences-browse": { addEventListener() {} },
     "babeldoc-for-zotero-preferences-test": button,
+    "babeldoc-for-zotero-preferences-install": { addEventListener() {} },
   };
   const document = {
     l10n: {
@@ -78,7 +78,7 @@ async function testConnection(
         baseURL,
         apiKey,
         model: "test-model",
-        babeldocPath: "",
+        downloadSource: "china",
         tokenParam: realConfig.getSettings().tokenParam,
       };
     },
@@ -87,9 +87,6 @@ async function testConnection(
     chatCompletionsURL(baseURL) {
       if (baseURL.includes("?")) return baseURL;
       return baseURL.replace(/\/+$/, "") + "/chat/completions";
-    },
-    resolvePythonFromBabelDOCPath() {
-      return "";
     },
   };
   class TimeoutException extends Error {}
@@ -107,7 +104,18 @@ async function testConnection(
     },
   };
   const window = {};
-  const context = { ChromeUtils: {}, Zotero, ZoteroTranslateFilesConfig: config, window };
+  const context = {
+    ChromeUtils: {},
+    Zotero,
+    ZoteroTranslateFilesConfig: config,
+    ZoteroTranslateFilesInstaller: {
+      baseDir() { return "C:\\Users\\test\\AppData\\Local\\babeldoc-for-zotero"; },
+      isInstalling() { return false; },
+      async isReady() { return false; },
+      async ensureReady() { return "C:\\env\\python.exe"; },
+    },
+    window,
+  };
 
   vm.runInNewContext(preferencesSource, context, { filename: "preferences.js" });
   window.ZoteroTranslateFilesPreferences.initializePane(document, window);
