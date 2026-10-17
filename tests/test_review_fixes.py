@@ -58,6 +58,40 @@ def test_repeated_running_headers_are_preserved_even_when_labeled_body_text():
     assert id(unique_edge) not in preserved
 
 
+def test_repeated_marginal_threshold_scales_with_document_length():
+    pages = []
+    legend_paragraphs = []
+    header_paragraphs = []
+    for number in range(10):
+        paragraphs = []
+        if number in (6, 7):
+            legend = _paragraph("New Dataset", 760, 772)
+            legend_paragraphs.append(legend)
+            paragraphs.append(legend)
+        if number < 9:
+            header = _paragraph("2022 IEEE Conference Header", 760, 772)
+            header_paragraphs.append(header)
+            paragraphs.append(header)
+        pages.append(_page(paragraphs))
+
+    preserved = runner.collect_repeated_marginal_ids(SimpleNamespace(page=pages))
+    assert not any(id(paragraph) in preserved for paragraph in legend_paragraphs)
+    assert all(id(paragraph) in preserved for paragraph in header_paragraphs)
+
+    short_document = SimpleNamespace(
+        page=[
+            _page([_paragraph("Repeated short document header", 760, 772)]),
+            _page([_paragraph("Repeated short document header", 760, 772)]),
+            _page([]),
+        ]
+    )
+    short_preserved = runner.collect_repeated_marginal_ids(short_document)
+    assert all(
+        id(page.pdf_paragraph[0]) in short_preserved
+        for page in short_document.page[:2]
+    )
+
+
 def _placeholder_item():
     return {
         "required_placeholders": [
@@ -604,6 +638,7 @@ if __name__ == "__main__":
     test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved()
     test_untranslated_short_phrases_are_rejected_but_identifiers_pass()
     test_repeated_running_headers_are_preserved_even_when_labeled_body_text()
+    test_repeated_marginal_threshold_scales_with_document_length()
     test_formula_placeholder_moved_into_style_span_is_rejected()
     test_fragment_links_name_item_ids_in_the_same_request()
     test_kept_abbreviations_are_not_counted_as_untranslated_english()

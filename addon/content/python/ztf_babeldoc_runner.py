@@ -1240,11 +1240,14 @@ def collect_repeated_marginal_ids(document: Any, min_pages: int = 2) -> set[int]
     """Find running headers/footers that BabelDOC labels as ordinary body text.
 
     Short text in the top/bottom edge band whose digit-normalized form appears
-    on at least ``min_pages`` different pages is a running header or footer.
+    on at least ``max(min_pages, 2, ceil(page_count / 3))`` different pages is
+    a running header or footer.
     """
+    pages = getattr(document, "page", ()) or ()
+    required_pages = max(min_pages, 2, math.ceil(len(pages) / 3))
     pages_by_text: dict[str, set[int]] = {}
     candidates: list[tuple[str, int]] = []
-    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+    for page_index, page in enumerate(pages):
         for paragraph in getattr(page, "pdf_paragraph", ()) or ():
             text = str(getattr(paragraph, "unicode", "") or "")
             if not text.strip() or len(text) > 200:
@@ -1257,7 +1260,7 @@ def collect_repeated_marginal_ids(document: Any, min_pages: int = 2) -> set[int]
     return {
         paragraph_id
         for key, paragraph_id in candidates
-        if len(pages_by_text.get(key, ())) >= min_pages
+        if len(pages_by_text.get(key, ())) >= required_pages
     }
 
 
