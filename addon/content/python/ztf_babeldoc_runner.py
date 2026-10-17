@@ -28,7 +28,10 @@ CONSISTENCY_SYSTEM_PROMPT = (
     "Translate the complete document as one unit. Translate technical terms, "
     "abbreviations, and named entities consistently across every item. Use the "
     "translation chosen at the first occurrence again for later occurrences. Keep "
-    "abbreviations, formulas, citations, and placeholders unchanged. An item with "
+    "abbreviations, formulas, citations, and placeholders unchanged. Keep person "
+    "names, author lines, affiliations, e-mail addresses, URLs, dataset or attack "
+    "labels and other identifiers as they are (they may be returned unchanged); "
+    "translate every sentence of body text. An item with "
     "fragment_id is one part (fragment_part first or second) of a sentence split across "
     "a column or page break; continues_in / continued_from give the id of the other part "
     "when it is in the same request. Translate only that item's own fragment, so that "
@@ -872,10 +875,28 @@ def _is_author_byline(text: str) -> bool:
     return _looks_like_name_list(re.sub(r"[^A-Za-z.,;&' -]", " ", plain))
 
 
+_PROSE_MIN_LOWERCASE_WORDS = 4
+
+
 def verbatim_output_allowed(text: str) -> bool:
-    """Whether an unchanged output is a correct "translation" of ``text``:
-    links, identifiers of at most two words, or an evidenced author byline."""
-    return not _looks_like_english_prose(text)
+    """Whether text may stay as it is (names, author/affiliation lines, labels,
+    identifiers, links): only real sentences are checked for being left in
+    English. A sentence has at least four plain lowercase words; tokens with
+    ".", "@", digits or braces (e-mails, placeholders) do not count. The prompt
+    tells the model to keep such items unchanged, so no further rules here."""
+    # Count raw tokens: one carrying a placeholder ("mean{v1}") is not a word.
+    # A trailing full stop ends a sentence ("design.") unless the word is a
+    # short abbreviation ("avg.", "std.", "min.", "max."), which never counts.
+    lowercase = []
+    for token in (text or "").split():
+        word = token.strip(",;:()[]\"'!?")
+        if word.endswith(".") and not word.endswith(".."):
+            word = word[:-1]
+            if len(word) < 4:
+                continue
+        if re.fullmatch(r"[a-z]+(?:['’-][a-z]+)*", word):
+            lowercase.append(word)
+    return len(lowercase) < _PROSE_MIN_LOWERCASE_WORDS
 
 
 def _looks_like_english_prose(text: str) -> bool:
@@ -986,7 +1007,10 @@ def validate_translation_output(
     # identifiers ("HTTP", "CIC-IDS-2017", a lone "pcap"); two or more ordinary
     # lowercase words ("of the system") mean the text was simply not translated.
     identical = " ".join(output.split()) == " ".join(source.split())
-    verbatim_ok = identical and verbatim_output_allowed(source)
+    # Label-like sources (names, author lines, labels) skip every
+    # "left in English" heuristic; the prompt asks to keep them unchanged.
+    label_like = verbatim_output_allowed(source)
+    verbatim_ok = identical and label_like
     if identical and not verbatim_ok:
         checks["identical_english"] = True
         return {"usable": False, "reason": "模型返回了未翻译的英文原文，已进入合并补译。", "checks": checks}
@@ -998,7 +1022,7 @@ def validate_translation_output(
     # No Chinese at all and every ordinary source word still there: an English
     # echo, even if only punctuation or spacing was changed.
     if (
-        not verbatim_ok
+        not label_like
         and has_ordinary_words
         and not re.search("[㐀-鿿]", plain_output)
         and all(word in output_words for word in source_words)
@@ -1009,7 +1033,7 @@ def validate_translation_output(
             "reason": "译文仍是英文原句，已进入合并补译。",
             "checks": checks,
         }
-    if not verbatim_ok and residue_ratio >= 0.72:
+    if not label_like and residue_ratio >= 0.72:
         return {
             "usable": False,
             "reason": "译文仍保留大部分英文原句，已进入合并补译。",
@@ -1108,7 +1132,7 @@ def validate_translation_output(
     # Confirmed verbatim content (links, short identifiers, evidenced bylines)
     # is identical by design; the length/edit-distance heuristics do not apply.
     # Placeholder checks above still ran.
-    if not _is_fragment_item(item) and not verbatim_ok:
+    if not _is_fragment_item(item) and not label_like:
         try:
             input_tokens = max(1, int(token_counter(source)))
             output_tokens = max(0, int(token_counter(output)))

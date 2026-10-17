@@ -32,3 +32,6 @@ zotero-translate-files-pref-path-success = BabelDOC 路径有效；Python：{ $p
 zotero-translate-files-pref-path-picker-error = 无法打开文件选择器。
 zotero-translate-files-pref-picker-title = 选择 BabelDOC 可执行文件
 zotero-translate-files-pref-picker-filter = 可执行文件（*.exe）
+zotero-translate-files-import-tag-warning-title = 译本已添加，但无法标记为已翻译
+zotero-translate-files-import-tag-warning-description = { $title } 已添加到 Zotero，但未能添加“已翻译”标记。
+zotero-translate-files-import-tag-warning-default-name = 中文译本

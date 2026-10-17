@@ -32,3 +32,6 @@ zotero-translate-files-pref-path-success = BabelDOC path is valid; Python: { $pa
 zotero-translate-files-pref-path-picker-error = The file picker could not be opened.
 zotero-translate-files-pref-picker-title = Select BabelDOC executable
 zotero-translate-files-pref-picker-filter = Executable files (*.exe)
+zotero-translate-files-import-tag-warning-title = Translation added, but could not be marked as translated
+zotero-translate-files-import-tag-warning-description = { $title } was added to Zotero, but could not be marked as translated.
+zotero-translate-files-import-tag-warning-default-name = Chinese translation

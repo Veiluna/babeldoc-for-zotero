@@ -202,11 +202,14 @@ def test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved():
 
 
 def test_untranslated_short_phrases_are_rejected_but_identifiers_pass():
-    for phrase in ("of the system", "in our experiments", "as shown in"):
+    # Sentences (four or more plain lowercase words) left in English are rejected.
+    for phrase in ("of the system design", "in all of our experiments", "as shown in the table"):
         result = runner.validate_translation_output(phrase, phrase, {}, len)
         assert not result["usable"], phrase
     fragment = {"fragment_id": "cross-column:a:b", "fragment_part": "second"}
-    result = runner.validate_translation_output("of the system", "of the system", fragment, len)
+    result = runner.validate_translation_output(
+        "of the system design", "of the system design", fragment, len
+    )
     assert not result["usable"]
     for identifier in ("HTTP", "CIC-IDS-2017", "pcap", "Random Forest"):
         result = runner.validate_translation_output(identifier, identifier, {}, len)
@@ -408,13 +411,15 @@ def test_urls_emails_and_author_lines_may_stay_verbatim():
     # Ordinary prose next to a URL is still checked.
     prose = "see the project page at https://example.org for the data and the code"
     assert not runner.validate_translation_output(prose, prose, {}, words)["usable"]
-    # Headings / titles must still be translated, with or without function words.
-    for heading in (
+    # Short headings, names, labels and author lines are not policed by rules:
+    # the prompt asks the model to translate headings and keep names/labels, and
+    # an unchanged short item is accepted instead of costing a repair request.
+    for label_like in (
         "II. BACKGROUND AND RELATED WORK",
-        "A Novel Deep Learning Architecture",
-        "NEURAL NETWORK BASED INTRUSION DETECTION",
+        "DDoS - LOIC-UDP",
+        "Web Attack - XSS",
     ):
-        assert not runner.validate_translation_output(heading, heading, {}, words)["usable"], heading
+        assert runner.validate_translation_output(label_like, label_like, {}, words)["usable"], label_like
     # Bare domains outside any fixed TLD list.
     for domain in ("inf.ethz.ch", "kth.se/research/data", "data.example.us"):
         assert runner.validate_translation_output(domain, domain, {}, words)["usable"], domain
@@ -464,9 +469,24 @@ def test_author_bylines_need_evidence_and_skip_edit_distance():
     assert result["usable"], result
     for marked in ("John Smith1 and Jane Doe2", "A. Smith*, B. Jones†"):
         assert runner.validate_translation_output(marked, marked, {}, long_counter)["usable"], marked
-    # Shape alone is not author evidence: title-cased headings must be translated.
-    for heading in ("Neural Network Models, Experimental Results", "John Smith and Jane Doe"):
-        assert not runner.validate_translation_output(heading, heading, {}, long_counter)["usable"], heading
+    # The Liu 2022 author/affiliation block from the user's run stays as it is.
+    liu = (
+        "Lisa Liu{v1}, Gints Engelen{v2}, Timothy Lynar Daryl Essam Wouter Joosen "
+        "Universityof New South Wales, Canberra{v3}l.liuthorrold, t.lynar, "
+        "d.essam{v4}@adfa.edu.au{v5}imec-DistriNet, KU Leuven{v6}"
+        "gints.engelen, wouter.joosen{v7}@kuleuven.be"
+    )
+    assert runner.validate_translation_output(liu, liu, {}, long_counter)["usable"]
+    # Tokens carrying placeholders are not plain words.
+    formula_list = "mean{v1} variance{v2} skewness{v3} kurtosis{v4}"
+    assert runner.verbatim_output_allowed(formula_list)
+    # Abbreviations with a full stop are not words; a sentence's last word is.
+    assert runner.verbatim_output_allowed("avg. std. min. max.")
+    assert not runner.verbatim_output_allowed("of the system design.")
+    # A formatted short label translated with little change is not "too similar".
+    label = "<style id='1'>10</style><style id='3'>5 </style>Web Attack - XSS"
+    translated = "<style id='1'>10</style><style id='3'>5 </style>Web 攻击 - XSS"
+    assert runner.validate_translation_output(label, translated, {}, long_counter)["usable"]
     # Placeholder checks still apply to verbatim bylines.
     item = {"required_placeholders": [{"token": "{v1}", "count": 1}, {"token": "{v2}", "count": 1}]}
     dropped = "Lisa Liu, Gints Engelen{v2}, Timothy Lynar {l.liu, t.lynar, d.essam}@adfa.edu.au"
