@@ -10,6 +10,7 @@ var ZoteroTranslateFilesQueue = (function () {
   var currentProgress = null;
   var stopped = true;
   var idleWaiters = [];
+  var maintenanceLocked = false;
 
   function log(message) {
     if (ZoteroTranslateFiles && typeof ZoteroTranslateFiles.log === "function") {
@@ -67,7 +68,7 @@ var ZoteroTranslateFilesQueue = (function () {
 
   function getFailureCause(text, kind) {
     if (kind === "babeldoc_version") {
-      return "BabelDOC 版本不匹配，请运行 scripts/install-babeldoc.ps1 安装 0.6.4";
+      return "自动安装的 BabelDOC 环境版本不正确，请在设置中点击“安装 / 修复环境”";
     }
     if (kind === "request_cap" || /request_cap|单篇请求上限/i.test(text)) {
       return "已达到单篇请求次数上限，任务已停止";
@@ -94,7 +95,7 @@ var ZoteroTranslateFilesQueue = (function () {
       return "PDF 文件不存在（可能尚未下载）";
     }
     if (/找不到 BabelDOC|(?:python|babeldoc)(?:\.exe)?[^\r\n]{0,80}(?:not found|missing|does not exist|cannot find|未找到|找不到|不存在)|(?:ENOENT|NS_ERROR_FILE_NOT_FOUND|WinError 2)|No module named ['\"]?babeldoc|ModuleNotFoundError[^\r\n]*babeldoc/i.test(text)) {
-      return "找不到 BabelDOC，请检查设置中的路径或运行安装脚本";
+      return "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”";
     }
     if (/ECONN(?:REFUSED|RESET|ABORTED)|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ERR_NETWORK|APIConnectionError|ConnectionError|ConnectError|connection.{0,30}(?:refused|reset|failed|error|timed out)|failed to connect|could not connect|network is unreachable|无法连接|连接失败/i.test(text)) {
       return "无法连接到接口地址";
@@ -105,8 +106,8 @@ var ZoteroTranslateFilesQueue = (function () {
     if (/导入|译本附件|创建译本|无法生成译本|\bimport(?:er)?\b/i.test(text)) {
       return "无法导入中文译本";
     }
-    if (/API Base URL|API key|模型名|BabelDOC 路径|Zotero 设置|settings?.{0,30}(?:missing|incomplete)/i.test(text)) {
-      return "翻译设置不完整，请检查接口地址、API key、模型名和 BabelDOC 路径";
+    if (/API Base URL|API key|模型名|Zotero 设置|settings?.{0,30}(?:missing|incomplete)/i.test(text)) {
+      return "翻译设置不完整，请检查接口地址、API key 和模型名";
     }
     return "翻译过程中发生错误，请查看技术详情";
   }
@@ -287,7 +288,6 @@ var ZoteroTranslateFilesQueue = (function () {
     if (!settings.baseURL) missing.push("API Base URL");
     if (!settings.apiKey) missing.push("API key");
     if (!settings.model) missing.push("模型名");
-    if (!settings.babeldocPath) missing.push("BabelDOC 路径");
     if (!missing.length) return null;
 
     return new Error(
@@ -519,7 +519,7 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   function startNext() {
-    if (stopped || currentJob) {
+    if (stopped || currentJob || maintenanceLocked) {
       notifyIdle();
       return;
     }
@@ -602,6 +602,23 @@ var ZoteroTranslateFilesQueue = (function () {
       });
     },
 
+    acquireMaintenanceLock: function () {
+      if (currentJob) return { acquired: false, reason: "translation" };
+      if (maintenanceLocked) return { acquired: false, reason: "maintenance" };
+      maintenanceLocked = true;
+      var released = false;
+      return {
+        acquired: true,
+        release: function () {
+          if (released) return;
+          released = true;
+          maintenanceLocked = false;
+          if (stopped) notifyIdle();
+          else startNext();
+        },
+      };
+    },
+
     cancelAll: function () {
       stopped = true;
       for (var job of pending) queuedIDs.delete(String(job.attachmentID));
@@ -642,6 +659,10 @@ var ZoteroTranslateFilesQueue = (function () {
       importer = value || null;
     },
   };
+
+  try { Zotero.__babeldocForZoteroQueue = api; } catch (error) {
+    // The installer can still use this module's direct global API when exposed.
+  }
 
   return api;
 })();

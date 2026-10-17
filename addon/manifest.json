@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "BabelDOC for Zotero",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Translate PDF attachments into Simplified Chinese while preserving layout.",
   "author": "Veiluna",
   "icons": {

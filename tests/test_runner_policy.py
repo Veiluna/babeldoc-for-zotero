@@ -62,7 +62,7 @@ def test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc() 
     event = json.loads(event_lines[0][len("ZTF_ERROR "):])
     assert event["kind"] == "babeldoc_version"
     assert event["message"] == (
-        "需要 BabelDOC 0.6.4，当前为 0.6.3。请重新运行 scripts/install-babeldoc.ps1。"
+        "需要 BabelDOC 0.6.4，当前为 0.6.3。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”。"
     )
     assert "TEST-API-KEY" not in output.getvalue()
 
@@ -81,7 +81,7 @@ def test_missing_babeldoc_package_uses_the_same_error_kind() -> None:
     event = json.loads(event_lines[0][len("ZTF_ERROR "):])
     assert event["kind"] == "babeldoc_version"
     assert event["message"] == (
-        "需要 BabelDOC 0.6.4，当前为 未安装。请重新运行 scripts/install-babeldoc.ps1。"
+        "需要 BabelDOC 0.6.4，当前为 未安装。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”。"
     )
 
 

@@ -1,4 +1,4 @@
-/* global Zotero, ChromeUtils */
+/* global Zotero, ZoteroTranslateFilesInstaller */
 
 var ZoteroTranslateFilesPreferences = (function () {
   var PANE_ID = "babeldoc-for-zotero-preferences";
@@ -23,16 +23,6 @@ var ZoteroTranslateFilesPreferences = (function () {
     element.removeAttribute("data-l10n-id");
     element.removeAttribute("data-l10n-args");
     element.textContent = String(text || "设置校验失败，请检查输入值。");
-  }
-
-  function pathIsFile(path) {
-    if (!path) return false;
-    try {
-      var file = Zotero.File.pathToFile(path);
-      return file.exists() && file.isFile();
-    } catch (error) {
-      return false;
-    }
   }
 
   function getHTTPStatus(responseOrError) {
@@ -150,36 +140,6 @@ var ZoteroTranslateFilesPreferences = (function () {
     return value.slice(0, 240) || "（无响应正文）";
   }
 
-  function setPathStatus(document, settings) {
-    var path = settings.babeldocPath;
-    if (!path) {
-      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-empty");
-      return;
-    }
-
-    if (!pathIsFile(path)) {
-      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-babeldoc-missing");
-      return;
-    }
-
-    var pythonPath = ZoteroTranslateFilesConfig.resolvePythonFromBabelDOCPath(path);
-    if (!pythonPath) {
-      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-unrecognized");
-      return;
-    }
-
-    if (!pathIsFile(pythonPath)) {
-      setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-python-missing", {
-        path: pythonPath,
-      });
-      return;
-    }
-
-    setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-success", {
-      path: pythonPath,
-    });
-  }
-
   async function testAPI(document, window, settings) {
     var statusID = PANE_ID + "-api-status";
     if (!settings.baseURL || !settings.apiKey || !settings.model) {
@@ -285,27 +245,36 @@ var ZoteroTranslateFilesPreferences = (function () {
     return "BabelDOC for Zotero";
   }
 
-  async function pickBabelDOCPath(document, window) {
-    var title = "Select BabelDOC executable";
-    var filterTitle = "Executable files (*.exe)";
-    if (document.l10n && typeof document.l10n.formatValue === "function") {
-      title = await document.l10n.formatValue("babeldoc-for-zotero-pref-picker-title");
-      filterTitle = await document.l10n.formatValue("babeldoc-for-zotero-pref-picker-filter");
+  function showInstallProgress() {
+    try {
+      var progress = new Zotero.ProgressWindow({ closeOnClick: false });
+      progress.changeHeadline("BabelDOC for Zotero");
+      var item = new progress.ItemProgress("attachment", "BabelDOC 翻译环境");
+      item.setProgress(0);
+      item.setText("准备翻译环境");
+      progress.show();
+      return { window: progress, item: item };
+    } catch (error) {
+      return null;
     }
+  }
 
-    var picker = new (ChromeUtils.importESModule(
-      "chrome://zotero/content/modules/filePicker.mjs"
-    ).FilePicker)();
-    picker.init(window, title, picker.modeOpen);
-    picker.appendFilter(filterTitle, "*.exe");
-
-    var result = await picker.show();
-    if (result !== picker.returnOK || !picker.file) return;
-
-    var input = document.getElementById(PANE_ID + "-babeldoc-path");
-    input.value = picker.file;
-    // Zotero's preference binding listens to change/input events for XHTML controls.
-    input.dispatchEvent(new window.Event("change", { bubbles: true }));
+  function updateInstallStatus(document) {
+    var statusID = PANE_ID + "-environment-status";
+    if (ZoteroTranslateFilesInstaller.isInstalling()) {
+      setMessage(document, statusID, "babeldoc-for-zotero-pref-environment-installing");
+      return;
+    }
+    ZoteroTranslateFilesInstaller.isReady().then(function (ready) {
+      if (ZoteroTranslateFilesInstaller.isInstalling()) {
+        setMessage(document, statusID, "babeldoc-for-zotero-pref-environment-installing");
+      } else if (ready) setMessage(document, statusID, "babeldoc-for-zotero-pref-environment-ready");
+      else setMessage(document, statusID, "babeldoc-for-zotero-pref-environment-missing");
+    }).catch(function () {
+      setMessage(document, statusID, ZoteroTranslateFilesInstaller.isInstalling()
+        ? "babeldoc-for-zotero-pref-environment-installing"
+        : "babeldoc-for-zotero-pref-environment-missing");
+    });
   }
 
   function initializePane(document, window) {
@@ -313,19 +282,12 @@ var ZoteroTranslateFilesPreferences = (function () {
     if (!pane || pane.dataset.initialized === "true") return;
     pane.dataset.initialized = "true";
 
-    document.getElementById(PANE_ID + "-browse").addEventListener("click", function () {
-      pickBabelDOCPath(document, window).catch(function () {
-        setMessage(document, PANE_ID + "-path-status", "babeldoc-for-zotero-pref-path-picker-error");
-      });
-    });
-
     document.getElementById(PANE_ID + "-test").addEventListener("click", async function (event) {
       var button = event.currentTarget;
       button.disabled = true;
       setMessage(document, PANE_ID + "-api-status", "babeldoc-for-zotero-pref-api-checking");
       try {
         var settings = ZoteroTranslateFilesConfig.getSettings();
-        setPathStatus(document, settings);
         await testAPI(document, window, settings);
       } catch (error) {
         var detail = error && error.message ? String(error.message) : "设置校验失败，请检查输入值。";
@@ -334,6 +296,76 @@ var ZoteroTranslateFilesPreferences = (function () {
         button.disabled = false;
       }
     });
+
+    var baseDir = "";
+    try { baseDir = ZoteroTranslateFilesInstaller.baseDir(); } catch (error) { /* The status explains the missing environment. */ }
+    var basePath = document.getElementById(PANE_ID + "-environment-path");
+    if (basePath && document.l10n && typeof document.l10n.setAttributes === "function") {
+      document.l10n.setAttributes(basePath, "babeldoc-for-zotero-pref-environment-path", { path: baseDir });
+    } else if (basePath) {
+      basePath.textContent = "环境目录：" + baseDir;
+    }
+    if (typeof ZoteroTranslateFilesInstaller.addStateListener === "function") {
+      var removeStateListener = ZoteroTranslateFilesInstaller.addStateListener(function (running) {
+        if (running) setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-installing");
+        else updateInstallStatus(document);
+      });
+      if (window && typeof window.addEventListener === "function") {
+        window.addEventListener("unload", removeStateListener, { once: true });
+      }
+    }
+
+    document.getElementById(PANE_ID + "-install").addEventListener("click", async function (event) {
+      var button = event.currentTarget;
+      button.disabled = true;
+      var progress = null;
+      try {
+        var installOptions = {
+          source: ZoteroTranslateFilesConfig.getDownloadSource(),
+          onStart: function () {
+            setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-installing");
+            progress = showInstallProgress();
+          },
+          onProgress: function (value) {
+            if (!progress || !progress.item) return;
+            progress.item.setProgress(value.overall);
+            progress.item.setText(value.stage);
+          },
+        };
+        var pythonPath = await ZoteroTranslateFilesInstaller.repairEnvironment(installOptions);
+        if (!pythonPath) {
+          updateInstallStatus(document);
+          return;
+        }
+        if (progress && progress.item) {
+          progress.item.setProgress(100);
+          progress.item.setText("BabelDOC 环境已就绪。");
+          progress.window.startCloseTimer(4000);
+        }
+        setMessage(document, PANE_ID + "-environment-status", "babeldoc-for-zotero-pref-environment-ready");
+      } catch (error) {
+        var detail = ZoteroTranslateFilesConfig.redact(error && error.message ? error.message : error);
+        var repairMessageIDs = {
+          TRANSLATION_RUNNING: "babeldoc-for-zotero-pref-environment-repair-busy",
+          ENVIRONMENT_MAINTENANCE_BUSY: "babeldoc-for-zotero-pref-environment-maintenance-busy",
+          ENVIRONMENT_DELETE_FAILED: "babeldoc-for-zotero-pref-environment-repair-delete-failed",
+          ENVIRONMENT_DELETE_PROTECTED: "babeldoc-for-zotero-pref-environment-repair-logs-protected",
+          REPAIR_QUEUE_UNAVAILABLE: "babeldoc-for-zotero-pref-environment-repair-queue-unavailable",
+        };
+        var repairMessageID = error && repairMessageIDs[error.code];
+        if (repairMessageID) setMessage(document, PANE_ID + "-environment-status", repairMessageID);
+        else setPlainText(document, PANE_ID + "-environment-status", "环境安装失败：" + detail);
+        if (progress && progress.item) {
+          if (typeof progress.item.setError === "function") progress.item.setError();
+          progress.item.setText("环境安装失败。");
+          progress.window.startCloseTimer(5000);
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    updateInstallStatus(document);
   }
 
   return {
@@ -348,6 +380,7 @@ var ZoteroTranslateFilesPreferences = (function () {
             image: data.rootURI + "content/icons/icon.svg",
             scripts: [
               data.rootURI + "content/modules/config.js",
+              data.rootURI + "content/modules/installer.js",
               data.rootURI + "content/preferences.js",
             ],
           });

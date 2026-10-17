@@ -10,7 +10,7 @@ var ZoteroTranslateFilesConfig = (function () {
     baseURL: PREFERENCE_PREFIX + "baseURL",
     apiKey: PREFERENCE_PREFIX + "apiKey",
     model: PREFERENCE_PREFIX + "model",
-    babeldocPath: PREFERENCE_PREFIX + "babeldocPath",
+    downloadSource: PREFERENCE_PREFIX + "downloadSource",
     maxOutputTokens: PREFERENCE_PREFIX + "maxOutputTokens",
     maxRequests: PREFERENCE_PREFIX + "maxRequests",
     repairFailed: PREFERENCE_PREFIX + "repairFailed",
@@ -93,7 +93,7 @@ var ZoteroTranslateFilesConfig = (function () {
       baseURL: read("baseURL"),
       apiKey: read("apiKey"),
       model: read("model"),
-      babeldocPath: read("babeldocPath"),
+      downloadSource: getDownloadSource(),
       maxOutputTokens: readInteger(
         "maxOutputTokens",
         8192,
@@ -107,6 +107,11 @@ var ZoteroTranslateFilesConfig = (function () {
         ? read("tokenParam")
         : "max_tokens",
     };
+  }
+
+  function getDownloadSource() {
+    var value = Zotero.Prefs.get(preferences.downloadSource, true);
+    return String(value == null ? "" : value).trim() === "official" ? "official" : "china";
   }
 
   function setTokenParam(value) {
@@ -257,39 +262,15 @@ var ZoteroTranslateFilesConfig = (function () {
     return path.replace(/\/chat\/completions$/i, "") + query;
   }
 
-  // BabelDOC's Windows launcher lives in env\Scripts; Python is one directory above.
-  function resolvePythonFromBabelDOCPath(path) {
-    var value = String(path || "").trim().replace(/[\\/]+$/, "");
-    if (!value) return "";
-
-    var separatorIndex = Math.max(value.lastIndexOf("\\"), value.lastIndexOf("/"));
-    var filename = value.slice(separatorIndex + 1);
-    if (/^python\.exe$/i.test(filename)) return value;
-    if (!/^babeldoc\.exe$/i.test(filename)) return "";
-
-    var separator = value.indexOf("\\") >= 0 ? "\\" : "/";
-    var parent = separatorIndex >= 0 ? value.slice(0, separatorIndex) : "";
-    var parentName = parent.slice(Math.max(parent.lastIndexOf("\\"), parent.lastIndexOf("/")) + 1);
-
-    if (/^Scripts$/i.test(parentName)) {
-      var environment = parent.slice(0, Math.max(parent.lastIndexOf("\\"), parent.lastIndexOf("/")));
-      if (environment) return environment + separator + "python.exe";
-      if (/^[\\/]+$/.test(parent)) return separator + "python.exe";
-      return "python.exe";
-    }
-
-    return (parent ? parent + separator : "") + "python.exe";
-  }
-
   return {
     migrateLegacyPreferences: migrateLegacyPreferences,
     getSettings: getSettings,
+    getDownloadSource: getDownloadSource,
     setTokenParam: setTokenParam,
     tokenLimitAdaptation: tokenLimitAdaptation,
     redact: redact,
     formatHTMLDiagnostic: formatHTMLDiagnostic,
     chatCompletionsURL: chatCompletionsURL,
     openAIBaseURLForBabelDOC: openAIBaseURLForBabelDOC,
-    resolvePythonFromBabelDOCPath: resolvePythonFromBabelDOCPath,
   };
 })();

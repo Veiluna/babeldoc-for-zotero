@@ -1,7 +1,7 @@
 pref("extensions.babeldoc-for-zotero.baseURL", "");
 pref("extensions.babeldoc-for-zotero.apiKey", "");
 pref("extensions.babeldoc-for-zotero.model", "");
-pref("extensions.babeldoc-for-zotero.babeldocPath", "");
+pref("extensions.babeldoc-for-zotero.downloadSource", "china");
 pref("extensions.babeldoc-for-zotero.maxOutputTokens", 8192);
 pref("extensions.babeldoc-for-zotero.maxRequests", 20);
 pref("extensions.babeldoc-for-zotero.repairFailed", true);
