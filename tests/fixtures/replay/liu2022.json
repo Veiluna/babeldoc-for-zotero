@@ -333,7 +333,7 @@
   "page": 3,
   "index": 9,
   "preview": "Year",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -375,13 +375,13 @@
   "page": 3,
   "index": 16,
   "preview": "GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
   "index": 17,
   "preview": "GB",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 3,
@@ -1029,7 +1029,7 @@
   "page": 4,
   "index": 1,
   "preview": "Year",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1077,7 +1077,7 @@
   "page": 4,
   "index": 9,
   "preview": "Bot",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1377,7 +1377,7 @@
   "page": 4,
   "index": 59,
   "preview": "Bot",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -1844,66 +1844,72 @@
  {
   "page": 4,
   "index": 137,
-  "preview": "* Values accurate at tim",
-  "decision": "translated"
+  "preview": "*",
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 138,
-  "preview": "publicat",
+  "preview": "Values accurate at time ",
   "decision": "translated"
  },
  {
   "page": 4,
   "index": 139,
-  "preview": "ion. For the full table ",
+  "preview": "publicat",
   "decision": "translated"
  },
  {
   "page": 4,
   "index": 140,
+  "preview": "ion. For the full table ",
+  "decision": "translated"
+ },
+ {
+  "page": 4,
+  "index": 141,
   "preview": ".",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 141,
+  "index": 142,
   "preview": "distrinet-research.be/CN",
   "decision": "translated"
  },
  {
   "page": 4,
-  "index": 142,
+  "index": 143,
   "preview": "/. There may be minor re",
   "decision": "translated"
  },
  {
   "page": 4,
-  "index": 143,
+  "index": 144,
   "preview": "2022 IEEE Conference on ",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 144,
+  "index": 145,
   "preview": "257",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 145,
+  "index": 146,
   "preview": "Authorized licensed use ",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 146,
+  "index": 147,
   "preview": "zhou University. Downloa",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 147,
+  "index": 148,
   "preview": "UTC from IEEE Xplore. Re",
   "decision": "kept"
  },
@@ -1953,7 +1959,7 @@
   "page": 5,
   "index": 7,
   "preview": "Year",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -1983,7 +1989,7 @@
   "page": 5,
   "index": 12,
   "preview": "DDoS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,

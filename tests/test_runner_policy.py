@@ -628,9 +628,469 @@ def test_paragraph_classification_preview_is_redacted_and_short() -> None:
     assert len(records[0]["preview"]) <= 60
 
 
+def test_table_fallback_line_splits_at_column_gaps_without_changing_characters() -> None:
+    from types import SimpleNamespace as NS
+
+    def box(x: float, y: float, x2: float, y2: float) -> NS:
+        return NS(x=x, y=y, x2=x2, y2=y2)
+
+    table = NS(id=1, class_name="table", box=box(0, 0, 100, 20))
+    line = NS(id=2, conf=1, class_name="fallback_line", box=box(0, 0, 55, 10))
+    characters = [
+        NS(visual_bbox=NS(box=box(x, 0, x2, 10)), char_unicode=letter, vertical=False)
+        for x, x2, letter in [
+            (0, 5, "A"),
+            (6, 11, "B"),
+            (14, 19, "C"),  # ordinary word spacing is below one line height
+            (40, 45, "D"),  # the column gutter is larger than one line height
+            (50, 55, "E"),
+        ]
+    ]
+    original_characters = [(char.visual_bbox.box.x, char.char_unicode) for char in characters]
+    page = NS(page_layout=[table, line], pdf_character=characters)
+
+    runner._repair_fallback_line_layouts(page)
+
+    fallback_lines = [layout for layout in page.page_layout if layout.class_name == "fallback_line"]
+    assert [(item.box.x, item.box.x2) for item in fallback_lines] == [(0, 19), (40, 55)]
+    assert [char.char_unicode for char in characters] == ["A", "B", "C", "D", "E"]
+    assert [(char.visual_bbox.box.x, char.char_unicode) for char in characters] == original_characters
+
+
+def test_table_split_keeps_characters_outside_the_table_on_the_original_line() -> None:
+    from types import SimpleNamespace as NS
+
+    def box(x: float, y: float, x2: float, y2: float) -> NS:
+        return NS(x=x, y=y, x2=x2, y2=y2)
+
+    table = NS(id=1, class_name="table", box=box(20, 0, 100, 10))
+    line = NS(id=2, conf=1, class_name="fallback_line", box=box(0, 0, 115, 10))
+    characters = [
+        NS(visual_bbox=NS(box=box(x, 0, x2, 10)), char_unicode=letter, vertical=False)
+        for x, x2, letter in [
+            (0, 5, "L"),
+            (16, 19, "l"),
+            (25, 30, "A"),
+            (32, 37, "B"),
+            (70, 75, "C"),
+            (77, 82, "D"),
+            (110, 115, "R"),
+        ]
+    ]
+    page = NS(page_layout=[table, line], pdf_character=characters)
+
+    runner._repair_fallback_line_layouts(page)
+
+    fallback_lines = [layout for layout in page.page_layout if layout.class_name == "fallback_line"]
+    assert line in fallback_lines
+    assert (line.box.x, line.box.x2) == (0, 19)
+    outside_segments = [
+        layout for layout in fallback_lines if layout.box.x < table.box.x or layout.box.x2 > table.box.x2
+    ]
+    table_segments = [layout for layout in fallback_lines if layout not in outside_segments]
+    assert [(item.box.x, item.box.x2) for item in outside_segments] == [(0, 19), (110, 115)]
+    assert [(item.box.x, item.box.x2) for item in table_segments] == [(25, 37), (70, 82)]
+    for outside in (characters[0], characters[-1]):
+        center_x = (outside.visual_bbox.box.x + outside.visual_bbox.box.x2) / 2
+        assert any(item.box.x <= center_x <= item.box.x2 for item in outside_segments)
+    for inside in characters[2:6]:
+        center_x = (inside.visual_bbox.box.x + inside.visual_bbox.box.x2) / 2
+        assert not any(item.box.x <= center_x <= item.box.x2 for item in outside_segments)
+
+
+def test_fallback_line_with_no_table_characters_is_unchanged() -> None:
+    from types import SimpleNamespace as NS
+
+    def box(x: float, y: float, x2: float, y2: float) -> NS:
+        return NS(x=x, y=y, x2=x2, y2=y2)
+
+    table = NS(id=1, class_name="table", box=box(20, 0, 100, 10))
+    line = NS(id=2, conf=1, class_name="fallback_line", box=box(0, 0, 115, 10))
+    characters = [
+        NS(visual_bbox=NS(box=box(x, 0, x2, 10)), char_unicode=letter, vertical=False)
+        for x, x2, letter in [(0, 5, "L"), (110, 115, "R")]
+    ]
+    page = NS(page_layout=[table, line], pdf_character=characters)
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [table, line]
+    assert (line.box.x, line.box.x2) == (0, 115)
+
+
+def test_fallback_line_outside_table_is_unchanged() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=0, x2=100, y2=20))
+    line = NS(
+        id=2,
+        class_name="fallback_line",
+        box=NS(x=120, y=0, x2=175, y2=10),
+    )
+    page = NS(page_layout=[table, line], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [table, line]
+    assert (line.box.x, line.box.y, line.box.x2, line.box.y2) == (120, 0, 175, 10)
+
+
+def test_near_fallback_fragment_expands_caption_box_and_is_removed() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=20, x2=100, y2=80))
+    caption = NS(id=2, class_name="table_caption", box=NS(x=0, y=0, x2=90, y2=10))
+    fragment = NS(id=3, class_name="fallback_line", box=NS(x=94, y=2, x2=114, y2=8))
+    page = NS(page_layout=[table, caption, fragment], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [table, caption]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (0, 0, 114, 10)
+
+
+def test_distant_fallback_fragment_stays_separate_from_caption() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="figure_caption", box=NS(x=0, y=0, x2=90, y2=10))
+    fragment = NS(id=2, class_name="fallback_line", box=NS(x=130, y=2, x2=150, y2=8))
+    page = NS(page_layout=[caption, fragment], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption, fragment]
+    assert (caption.box.x, caption.box.x2) == (0, 90)
+
+
+def test_overlapping_fallback_frame_is_not_merged_into_caption() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="table_caption", box=NS(x=0, y=0, x2=90, y2=10))
+    fragment = NS(id=2, class_name="fallback_line", box=NS(x=0, y=0, x2=200, y2=10))
+    page = NS(page_layout=[caption, fragment], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption, fragment]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (0, 0, 90, 10)
+
+
+def test_fallback_frame_crossing_a_body_layout_stays_out_of_caption() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="figure_caption", box=NS(x=0, y=0, x2=90, y2=10))
+    body = NS(id=2, class_name="text", box=NS(x=100, y=0, x2=200, y2=10))
+    fragment = NS(id=3, class_name="fallback_line", box=NS(x=0, y=0, x2=200, y2=10))
+    page = NS(page_layout=[caption, body, fragment], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption, body, fragment]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (0, 0, 90, 10)
+
+
+def test_caption_merges_a_small_fragment_overlapping_one_edge() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="table_caption", box=NS(x=100, y=0, x2=200, y2=10))
+    fragment = NS(id=2, class_name="fallback_line", box=NS(x=85, y=2, x2=105, y2=8))
+    page = NS(page_layout=[caption, fragment], pdf_character=[])
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (85, 0, 200, 10)
+
+
+def test_caption_extracts_only_unclaimed_edge_chars_from_a_wide_fallback_frame() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="table_caption", box=NS(x=100, y=0, x2=200, y2=10))
+    body = NS(id=2, class_name="text", box=NS(x=200, y=0, x2=220, y2=10))
+    frame = NS(id=3, class_name="fallback_line", box=NS(x=80, y=0, x2=220, y2=10))
+
+    def char(x: float, x2: float) -> object:
+        box = NS(x=x, y=2, x2=x2, y2=8)
+        return NS(box=box, visual_bbox=NS(box=box))
+
+    page = NS(
+        page_layout=[caption, body, frame],
+        pdf_character=[
+            char(85, 90),
+            char(90, 95),
+            char(105, 110),
+            char(115, 120),
+            char(205, 210),
+            char(210, 215),
+        ],
+    )
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption, body]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (85, 0, 200, 10)
+
+
+def test_caption_merges_both_unclaimed_edges_of_a_wide_fallback_frame() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="figure_caption", box=NS(x=100, y=0, x2=200, y2=10))
+    frame = NS(id=2, class_name="fallback_line", box=NS(x=80, y=0, x2=220, y2=10))
+
+    def char(x: float, x2: float) -> object:
+        box = NS(x=x, y=2, x2=x2, y2=8)
+        return NS(box=box, visual_bbox=NS(box=box))
+
+    page = NS(
+        page_layout=[caption, frame],
+        pdf_character=[
+            char(85, 90),
+            char(90, 95),
+            char(105, 110),
+            char(115, 120),
+            char(180, 185),
+            char(205, 210),
+        ],
+    )
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (85, 0, 210, 10)
+
+
+def test_caption_extension_does_not_cover_an_intervening_body_layout() -> None:
+    from types import SimpleNamespace as NS
+
+    caption = NS(id=1, class_name="table_caption", box=NS(x=100, y=0, x2=200, y2=10))
+    body = NS(id=2, class_name="text", box=NS(x=95, y=0, x2=98, y2=10))
+    frame = NS(id=3, class_name="fallback_line", box=NS(x=90, y=0, x2=200, y2=10))
+
+    def char(x: float, x2: float) -> object:
+        box = NS(x=x, y=2, x2=x2, y2=8)
+        return NS(box=box, visual_bbox=NS(box=box))
+
+    page = NS(
+        page_layout=[caption, body, frame],
+        pdf_character=[char(90, 94), char(95, 98), char(105, 110)],
+    )
+
+    runner._repair_fallback_line_layouts(page)
+
+    assert page.page_layout == [caption, body, frame]
+    assert (caption.box.x, caption.box.y, caption.box.x2, caption.box.y2) == (100, 0, 200, 10)
+
+
+def test_translated_paragraphs_in_one_table_share_the_minimum_scale() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=0, x2=100, y2=100))
+    page = NS(page_layout=[table])
+    left = NS(layout_label="fallback_line", box=NS(x=5, y=10, x2=40, y2=20), optimal_scale=1.0)
+    right = NS(layout_label="fallback_line", box=NS(x=55, y=10, x2=90, y2=20), optimal_scale=1.0)
+    body = NS(layout_label="text", box=NS(x=120, y=10, x2=180, y2=20), optimal_scale=1.0)
+    figure_caption = NS(
+        layout_label="figure_caption",
+        box=NS(x=120, y=30, x2=180, y2=40),
+        optimal_scale=1.0,
+    )
+    formula = NS(
+        layout_label="fallback_line",
+        box=NS(x=5, y=30, x2=40, y2=40),
+        pdf_paragraph_composition=[NS(pdf_formula=object())],
+        optimal_scale=1.0,
+    )
+    scales = {id(left): 0.91, id(right): 0.84, id(body): 0.88, id(figure_caption): 0.87, id(formula): 0.82}
+    instance = NS(
+        create_typesetting_units=lambda paragraph, fonts: [NS(can_passthrough=False)],
+        _get_optimal_scale=lambda paragraph, owner, units: scales[id(paragraph)],
+    )
+    deferred = [
+        (paragraph, page, None)
+        for paragraph in (left, right, body, figure_caption, formula)
+    ]
+
+    runner._apply_common_table_scales(instance, deferred, {id(item[0]) for item in deferred})
+
+    assert left.optimal_scale == right.optimal_scale == 0.84
+    assert body.optimal_scale == figure_caption.optimal_scale == formula.optimal_scale == 1.0
+
+
+def test_common_table_scale_can_fall_below_point_eight() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=0, x2=100, y2=100))
+    page = NS(page_layout=[table])
+    left = NS(box=NS(x=5, y=10, x2=40, y2=20), optimal_scale=1.0)
+    right = NS(box=NS(x=55, y=10, x2=90, y2=20), optimal_scale=1.0)
+    scales = {id(left): 0.76, id(right): 0.62}
+    instance = NS(
+        create_typesetting_units=lambda paragraph, fonts: [NS(can_passthrough=False)],
+        _get_optimal_scale=lambda paragraph, owner, units: scales[id(paragraph)],
+    )
+    deferred = [(left, page, None), (right, page, None)]
+
+    runner._apply_common_table_scales(instance, deferred, {id(left), id(right)})
+
+    assert left.optimal_scale == right.optimal_scale == 0.62
+
+
+def test_final_table_retypesetting_uses_cell_box_and_blocks_expansion() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=0, x2=100, y2=30))
+    divider = NS(box=NS(x=50, y=0, x2=50, y2=30))
+    paragraph = NS(box=NS(x=55, y=10, x2=70, y2=20), optimal_scale=0.62)
+    page = NS(page_layout=[table], pdf_curve=[divider])
+    original_box = paragraph.box
+    instance = NS(
+        get_max_right_space=lambda box, owner: 200,
+        get_max_bottom_space=lambda box, owner: 0,
+    )
+    seen = []
+
+    def retypeset():
+        seen.append(
+            (
+                paragraph.box.x,
+                paragraph.box.y,
+                paragraph.box.x2,
+                paragraph.box.y2,
+                instance.get_max_right_space(paragraph.box, page),
+                instance.get_max_bottom_space(paragraph.box, page),
+            )
+        )
+        return "rendered"
+
+    result = runner._with_table_cell_bounds(instance, paragraph, page, retypeset)
+
+    assert result == "rendered"
+    assert seen == [(55, 10, 99.5, 20, 99.5, 10)]
+    assert paragraph.box is original_box
+
+    left_cell_paragraph = NS(box=NS(x=30, y=10, x2=40, y2=20))
+    left_cell_box = runner._table_cell_layout_box(left_cell_paragraph.box, page, table)
+    assert (left_cell_box.x, left_cell_box.x2) == (30, 49.5)
+
+
+def test_table_short_paragraphs_enter_translation_and_restore_minimum_length() -> None:
+    from threading import RLock
+    from types import SimpleNamespace as NS
+
+    def box(x: float, y: float, x2: float, y2: float) -> NS:
+        return NS(x=x, y=y, x2=x2, y2=y2)
+
+    table = NS(id=1, class_name="table", box=box(0, 0, 100, 40))
+    table_short = NS(debug_id="table-yes", unicode="YES", box=box(10, 10, 20, 20))
+    outside_short = NS(debug_id="body-no", unicode="NO", box=box(120, 10, 130, 20))
+    long_outside = NS(debug_id="body-long", unicode="body text", box=box(120, 30, 160, 40))
+    page = NS(
+        page_layout=[table],
+        pdf_paragraph=[table_short, outside_short, long_outside],
+    )
+
+    paragraphs, table_ids, skipped = runner._page_paragraphs_with_table_short_text(
+        page,
+        min_text_length=5,
+        translated_ids=set(),
+        is_cid_paragraph=lambda paragraph: False,
+    )
+    assert paragraphs == [table_short, long_outside]
+    assert table_ids == {id(table_short)}
+    assert skipped == 1
+
+    config = NS(min_text_length=5)
+    translator = NS(translation_config=config)
+    observed_minimums = []
+    submitted = []
+
+    def prepare(instance, paragraph, tracker, page_fonts, xobj_fonts):
+        observed_minimums.append(instance.translation_config.min_text_length)
+        if len(paragraph.unicode) < instance.translation_config.min_text_length:
+            return None, None
+        submitted.append(paragraph.unicode)
+        return paragraph.unicode, None
+
+    table_result = runner._pre_translate_with_table_min_text_length(
+        prepare,
+        translator,
+        table_short,
+        None,
+        {},
+        {},
+        is_table_paragraph=True,
+        min_text_length=5,
+        config_lock=RLock(),
+    )
+    outside_result = runner._pre_translate_with_table_min_text_length(
+        prepare,
+        translator,
+        outside_short,
+        None,
+        {},
+        {},
+        is_table_paragraph=False,
+        min_text_length=5,
+        config_lock=RLock(),
+    )
+
+    assert table_result == ("YES", None)
+    assert outside_result == (None, None)
+    assert submitted == ["YES"]
+    assert observed_minimums == [0]
+    assert config.min_text_length == 5
+
+
+def test_table_fragments_much_shorter_than_a_cell_line_are_kept() -> None:
+    from types import SimpleNamespace as NS
+
+    table = NS(id=1, class_name="table", box=NS(x=0, y=0, x2=200, y2=100))
+    other_table = NS(id=2, class_name="table", box=NS(x=0, y=200, x2=200, y2=300))
+    lines = [
+        NS(box=NS(x=5, y=10 + 10 * row, x2=60, y2=17 + 10 * row)) for row in range(4)
+    ]
+    # A stray comma split from its cell: 2.4 pt tall in a table of 7 pt lines.
+    comma = NS(box=NS(x=62, y=10, x2=63.5, y2=12.4))
+    two_line_cell = NS(box=NS(x=100, y=10, x2=180, y2=24))
+    outside = NS(box=NS(x=5, y=150, x2=8, y2=152))
+    lone_small = NS(box=NS(x=5, y=210, x2=8, y2=212))
+    page = NS(
+        page_layout=[table, other_table],
+        pdf_paragraph=[*lines, comma, two_line_cell, outside, lone_small],
+    )
+
+    fragments = runner.collect_table_fragment_ids(NS(page=[page]))
+
+    assert fragments == {id(comma)}
+
+    # Even count: the median is the mean of the middle two (11), so ordinary
+    # 7 pt single-line cells next to two-line cells are not fragments.
+    short = [NS(box=NS(x=5, y=10 * row, x2=60, y2=10 * row + 7)) for row in range(2)]
+    tall = [NS(box=NS(x=100, y=20 * row, x2=180, y2=20 * row + 15)) for row in range(2)]
+    even_page = NS(page_layout=[table], pdf_paragraph=[*short, *tall])
+    assert runner.collect_table_fragment_ids(NS(page=[even_page])) == set()
+
+
 if __name__ == "__main__":
+    test_table_fragments_much_shorter_than_a_cell_line_are_kept()
     test_paragraph_classification_reports_written_back_paragraphs_as_translated()
     test_paragraph_classification_preview_is_redacted_and_short()
+    test_table_fallback_line_splits_at_column_gaps_without_changing_characters()
+    test_table_split_keeps_characters_outside_the_table_on_the_original_line()
+    test_fallback_line_with_no_table_characters_is_unchanged()
+    test_fallback_line_outside_table_is_unchanged()
+    test_near_fallback_fragment_expands_caption_box_and_is_removed()
+    test_distant_fallback_fragment_stays_separate_from_caption()
+    test_overlapping_fallback_frame_is_not_merged_into_caption()
+    test_fallback_frame_crossing_a_body_layout_stays_out_of_caption()
+    test_caption_merges_a_small_fragment_overlapping_one_edge()
+    test_caption_extracts_only_unclaimed_edge_chars_from_a_wide_fallback_frame()
+    test_caption_merges_both_unclaimed_edges_of_a_wide_fallback_frame()
+    test_caption_extension_does_not_cover_an_intervening_body_layout()
+    test_translated_paragraphs_in_one_table_share_the_minimum_scale()
+    test_common_table_scale_can_fall_below_point_eight()
+    test_final_table_retypesetting_uses_cell_box_and_blocks_expansion()
+    test_table_short_paragraphs_enter_translation_and_restore_minimum_length()
     test_installed_babeldoc_version_allows_startup()
     test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
     test_missing_babeldoc_package_uses_the_same_error_kind()

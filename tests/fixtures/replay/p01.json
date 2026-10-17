@@ -267,13 +267,13 @@
   "page": 4,
   "index": 2,
   "preview": "OS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 3,
   "preview": "IPs",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -291,7 +291,7 @@
   "page": 4,
   "index": 6,
   "preview": "Win",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -309,7 +309,7 @@
   "page": 4,
   "index": 9,
   "preview": "DNS)",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -369,7 +369,7 @@
   "page": 4,
   "index": 19,
   "preview": "PCs",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -471,7 +471,7 @@
   "page": 4,
   "index": 36,
   "preview": "Win",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -483,7 +483,7 @@
   "page": 4,
   "index": 38,
   "preview": "(Pro",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -507,7 +507,7 @@
   "page": 4,
   "index": 42,
   "preview": "Mac",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -537,13 +537,13 @@
   "page": 4,
   "index": 47,
   "preview": "PCs",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
   "index": 48,
   "preview": "Kali",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 4,
@@ -693,7 +693,7 @@
   "page": 5,
   "index": 2,
   "preview": "Days",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 5,
@@ -1485,7 +1485,7 @@
   "page": 6,
   "index": 100,
   "preview": "Bot",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 6,
@@ -1581,7 +1581,7 @@
   "page": 6,
   "index": 116,
   "preview": "DDoS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 6,
@@ -1659,19 +1659,19 @@
   "page": 7,
   "index": 2,
   "preview": "Pr",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
   "index": 3,
   "preview": "Rc",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
   "index": 4,
   "preview": "F1",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -1689,7 +1689,7 @@
   "page": 7,
   "index": 7,
   "preview": "KNN",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -1719,7 +1719,7 @@
   "page": 7,
   "index": 12,
   "preview": "RF",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -1749,7 +1749,7 @@
   "page": 7,
   "index": 17,
   "preview": "ID3",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -1809,7 +1809,7 @@
   "page": 7,
   "index": 27,
   "preview": "MLP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -1869,7 +1869,7 @@
   "page": 7,
   "index": 37,
   "preview": "QDA",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 7,
@@ -2024,518 +2024,518 @@
  {
   "page": 8,
   "index": 0,
-  "preview": "Tabl",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 1,
-  "preview": "e 5: Comparison between ",
+  "preview": "Table 5: Comparison betw",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 2,
-  "preview": ".",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 3,
+  "index": 1,
   "preview": "Network",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 4,
+  "index": 2,
   "preview": "Traffic",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 5,
+  "index": 3,
   "preview": "Label.",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 6,
+  "index": 4,
   "preview": "Interact.",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 7,
+  "index": 5,
   "preview": "Captu.",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 8,
+  "index": 6,
   "preview": "Protocols",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 9,
+  "index": 7,
   "preview": "Attack Diversity",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 10,
+  "index": 8,
   "preview": "Ano.",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 11,
+  "index": 9,
   "preview": "Heter.",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 12,
+  "index": 10,
   "preview": "Features",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 13,
+  "index": 11,
   "preview": "Meta.",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 14,
+  "index": 12,
   "preview": "http",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 15,
+  "index": 13,
   "preview": "https",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 16,
+  "index": 14,
   "preview": "SSH",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 17,
+  "index": 15,
   "preview": "FTP",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 18,
+  "index": 16,
   "preview": "Email",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 19,
+  "index": 17,
   "preview": "Browser",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 20,
+  "index": 18,
   "preview": "Bforce",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 21,
+  "index": 19,
   "preview": "DoS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 22,
+  "index": 20,
   "preview": "Scan",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 23,
+  "index": 21,
   "preview": "Bdoor",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 24,
+  "index": 22,
   "preview": "DNS",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
-  "index": 25,
+  "index": 23,
   "preview": "Other",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 26,
+  "index": 24,
   "preview": "DARPA",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 25,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 26,
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 27,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 28,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 29,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 30,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 31,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 32,
-  "preview": "YES YES YES",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 33,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 34,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 35,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 36,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 37,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 38,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 39,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 40,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 41,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 42,
-  "preview": "KDD’99",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 43,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 44,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 45,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 46,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "KDD’99",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 47,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 48,
-  "preview": "YES YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 49,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 50,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 51,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 52,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 53,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 54,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 55,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 56,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 57,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 58,
-  "preview": "DEFCON",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 59,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 60,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 61,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 62,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 63,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 64,
-  "preview": "YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 65,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 66,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 67,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 68,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "DEFCON",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 69,
-  "preview": "YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 70,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 71,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 72,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 73,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 74,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 75,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 76,
-  "preview": "CAIDAs",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 77,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 78,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 79,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 80,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 81,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 82,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 83,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 84,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 85,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
@@ -2547,216 +2547,216 @@
   "page": 8,
   "index": 87,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 88,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 89,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 90,
-  "preview": "YES YES",
+  "preview": "CAIDAs",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 91,
-  "preview": "YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 92,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 93,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 94,
-  "preview": "LBNL",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 95,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 96,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 97,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 98,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 99,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 100,
-  "preview": "YES NO",
-  "decision": "translated"
+  "preview": "-",
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 101,
-  "preview": "YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 102,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 103,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 104,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 105,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 106,
-  "preview": "YES -",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 107,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 108,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 109,
-  "preview": "YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 110,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 111,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 112,
-  "preview": "CDX",
-  "decision": "kept"
+  "preview": "LBNL",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 113,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 114,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 115,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 116,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 117,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 118,
-  "preview": "YES YES YES",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 119,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 120,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 121,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 122,
-  "preview": "YES -",
+  "preview": "NO",
   "decision": "translated"
  },
  {
@@ -2768,678 +2768,1044 @@
  {
   "page": 8,
   "index": 124,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 125,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 126,
-  "preview": "NO",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 127,
-  "preview": "KYOTO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
+  "index": 127,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
   "index": 128,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 129,
-  "preview": "NO",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 130,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 131,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 132,
-  "preview": "YES YES YES YES YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 133,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 134,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "CDX",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 135,
-  "preview": "YES YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 136,
-  "preview": "YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 137,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 138,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 139,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 140,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 141,
-  "preview": "TWENTE",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 142,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 143,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 144,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 145,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 146,
-  "preview": "YES YES NO",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 147,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 148,
-  "preview": "NO",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 149,
   "preview": "YES",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 150,
-  "preview": "NO",
-  "decision": "kept"
- },
- {
-  "page": 8,
-  "index": 151,
-  "preview": "YES NO",
   "decision": "translated"
  },
  {
   "page": 8,
-  "index": 152,
+  "index": 149,
   "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 150,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 151,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 152,
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 153,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 154,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 155,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 156,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "KYOTO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 157,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 158,
-  "preview": "UMASS",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 159,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 160,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 161,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 162,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 163,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 164,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 165,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 166,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 167,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 168,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 169,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 170,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 171,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 172,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 173,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 174,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 175,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 176,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 177,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 178,
-  "preview": "ISCX2012",
+  "preview": "TWENTE",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 179,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 180,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 181,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 182,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 183,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 184,
-  "preview": "YES YES YES",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 185,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 186,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 187,
-  "preview": "YES YES YES",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 188,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 189,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 190,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 191,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 192,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 193,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 194,
-  "preview": "ADFA2013",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 195,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 196,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 197,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 198,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 199,
-  "preview": "YES YES NO",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 200,
-  "preview": "YES YES YES",
+  "preview": "UMASS",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 201,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 202,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 203,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 204,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 205,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 206,
-  "preview": "NO",
-  "decision": "kept"
+  "preview": "YES",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 207,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 208,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 209,
-  "preview": "-",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 210,
   "preview": "NO",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 211,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 212,
-  "preview": "CICIDS2017",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 213,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 214,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 215,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 216,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 217,
-  "preview": "YES YES YES YES YES YES",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 218,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 219,
-  "preview": "YES",
+  "preview": "-",
   "decision": "kept"
  },
  {
   "page": 8,
   "index": 220,
-  "preview": "YES YES YES",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 221,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 222,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "ISCX2012",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 223,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 224,
-  "preview": "YES",
-  "decision": "kept"
+  "preview": "NO",
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 225,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 226,
   "preview": "YES",
-  "decision": "kept"
+  "decision": "translated"
  },
  {
   "page": 8,
   "index": 227,
-  "preview": "dataset in Section 4 and",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 228,
-  "preview": "Finally, Table 5 showsth",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 229,
-  "preview": "6 CONCLUSIONS",
+  "preview": "NO",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 230,
-  "preview": "Having a reliable, publi",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 231,
-  "preview": "ACKNOWLEDGEMENTS",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 232,
-  "preview": "The authors generously a",
+  "preview": "YES",
   "decision": "translated"
  },
  {
   "page": 8,
   "index": 233,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 234,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 235,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 236,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 237,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 238,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 239,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 240,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 241,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 242,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 243,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 244,
+  "preview": "ADFA2013",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 245,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 246,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 247,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 248,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 249,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 250,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 251,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 252,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 253,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 254,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 255,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 256,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 257,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 258,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 259,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 260,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 261,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 262,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 263,
+  "preview": "-",
+  "decision": "kept"
+ },
+ {
+  "page": 8,
+  "index": 264,
+  "preview": "NO",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 265,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 266,
+  "preview": "CICIDS2017",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 267,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 268,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 269,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 270,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 271,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 272,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 273,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 274,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 275,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 276,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 277,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 278,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 279,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 280,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 281,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 282,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 283,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 284,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 285,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 286,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 287,
+  "preview": "YES",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 288,
+  "preview": "dataset in Section 4 and",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 289,
+  "preview": "Finally, Table 5 showsth",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 290,
+  "preview": "6 CONCLUSIONS",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 291,
+  "preview": "Having a reliable, publi",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 292,
+  "preview": "ACKNOWLEDGEMENTS",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 293,
+  "preview": "The authors generously a",
+  "decision": "translated"
+ },
+ {
+  "page": 8,
+  "index": 294,
   "preview": "REFERENCES",
   "decision": "kept"
  },
  {
   "page": 8,
-  "index": 234,
+  "index": 295,
   "preview": "Ali Shiravi, Hadi Shirav",
   "decision": "kept"
  },
  {
   "page": 8,
-  "index": 235,
+  "index": 296,
   "preview": "Toward Generating a New ",
   "decision": "kept"
  },
  {
   "page": 8,
-  "index": 236,
+  "index": 297,
   "preview": "115",
   "decision": "kept"
  },

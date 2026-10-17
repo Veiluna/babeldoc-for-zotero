@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import datetime
 import functools
 import html
@@ -14,6 +15,7 @@ import math
 import multiprocessing
 import os
 import re
+import statistics
 import sys
 import threading
 import traceback
@@ -85,6 +87,20 @@ _REFERENCE_END_HEADING_DETAIL_RE = re.compile(
     re.I,
 )
 _BODY_TEXT_LAYOUT_LABELS = {"text", "plain text", "paragraph_hybrid"}
+_CAPTION_FRAGMENT_OWNER_LABELS = _BODY_TEXT_LAYOUT_LABELS | {
+    "table_caption",
+    "figure_caption",
+}
+# Ordinary word gaps are roughly 0.25-0.35 character heights; a table gutter
+# must exceed one line height before a fallback line is split.
+_TABLE_COLUMN_GAP_HEIGHT_MULTIPLIER = 1.0
+# Leave a small inset so rendered glyph bounds do not touch table grid strokes.
+_TABLE_CELL_BORDER_INSET = 0.5
+_TABLE_CURVE_AXIS_TOLERANCE = 0.5
+# A table paragraph under half the median height of its table's paragraphs is
+# a fragment of a line (e.g. a stray comma split from its cell); retypeset at
+# the table's font size its glyphs would overflow onto the neighbouring text.
+_TABLE_FRAGMENT_HEIGHT_RATIO = 0.5
 _PRESERVED_LAYOUT_RE = re.compile(
     r"header|footer|page.?number|running.?head|license|copyright|watermark|stamp|marginalia",
     re.I,
@@ -1161,6 +1177,585 @@ def validate_translation_output(
 
 def _paragraph_layout_label(paragraph: Any) -> str:
     return str(getattr(paragraph, "layout_label", "") or "").strip()
+
+
+def _caption_fragment_edge_boxes(layout: Any, page: Any, layouts: list[Any]) -> list[Any] | None:
+    """Return unowned edge runs from a broad fallback frame."""
+    line_box = getattr(layout, "box", None)
+    if line_box is None:
+        return None
+    characters = list(getattr(page, "pdf_character", ()) or ())
+    if not characters:
+        return [line_box]
+
+    line_characters = []
+    for char in characters:
+        char_box = getattr(getattr(char, "visual_bbox", None), "box", None)
+        if char_box is None:
+            continue
+        center_x = (char_box.x + char_box.x2) / 2
+        center_y = (char_box.y + char_box.y2) / 2
+        if line_box.x <= center_x <= line_box.x2 and line_box.y <= center_y <= line_box.y2:
+            is_owned = any(
+                getattr(owner, "class_name", "") in _CAPTION_FRAGMENT_OWNER_LABELS
+                and owner is not layout
+                and getattr(owner, "box", None) is not None
+                and min(char_box.x2, owner.box.x2) > max(char_box.x, owner.box.x)
+                and min(char_box.y2, owner.box.y2) > max(char_box.y, owner.box.y)
+                for owner in layouts
+            )
+            line_characters.append((char_box, is_owned))
+    if not line_characters:
+        return None
+
+    line_characters.sort(key=lambda item: item[0].x)
+    unowned_groups: list[tuple[int, int, list[Any]]] = []
+    for index, (char_box, is_owned) in enumerate(line_characters):
+        if is_owned:
+            continue
+        if not unowned_groups or unowned_groups[-1][1] != index - 1:
+            unowned_groups.append((index, index, [char_box]))
+        else:
+            start, _, group = unowned_groups[-1]
+            group.append(char_box)
+            unowned_groups[-1] = (start, index, group)
+
+    if not unowned_groups:
+        return None
+
+    fragment_boxes = []
+    for first_unowned, last_unowned, edge_group in unowned_groups:
+        if first_unowned != 0 and last_unowned != len(line_characters) - 1:
+            return None
+        fragment_box = copy.copy(line_box)
+        fragment_box.x = min(char_box.x for char_box in edge_group)
+        fragment_box.y = min(char_box.y for char_box in edge_group)
+        fragment_box.x2 = max(char_box.x2 for char_box in edge_group)
+        fragment_box.y2 = max(char_box.y2 for char_box in edge_group)
+        fragment_boxes.append(fragment_box)
+    return fragment_boxes
+
+
+def _caption_expansion_covers_body(caption_box: Any, fragment_boxes: list[Any], layouts: list[Any]) -> bool:
+    expanded = copy.copy(caption_box)
+    for fragment_box in fragment_boxes:
+        expanded.x = min(expanded.x, fragment_box.x)
+        expanded.y = min(expanded.y, fragment_box.y)
+        expanded.x2 = max(expanded.x2, fragment_box.x2)
+        expanded.y2 = max(expanded.y2, fragment_box.y2)
+
+    def intersection_area(left: Any, right: Any) -> float:
+        width = max(0, min(left.x2, right.x2) - max(left.x, right.x))
+        height = max(0, min(left.y2, right.y2) - max(left.y, right.y))
+        return width * height
+
+    return any(
+        str(getattr(owner, "class_name", "") or "").lower() in _BODY_TEXT_LAYOUT_LABELS
+        and getattr(owner, "box", None) is not None
+        and intersection_area(expanded, owner.box) > intersection_area(caption_box, owner.box)
+        for owner in layouts
+    )
+
+
+def _repair_fallback_line_layouts(page: Any) -> None:
+    """Split table fallback-line boxes at column gutters without changing chars."""
+    layouts = list(getattr(page, "page_layout", ()) or ())
+    table_layouts = [
+        layout for layout in layouts if getattr(layout, "class_name", "") == "table"
+    ]
+    next_id = max(
+        (int(getattr(layout, "id", 0) or 0) for layout in layouts),
+        default=0,
+    ) + 1
+    repaired_layouts = []
+
+    for layout in layouts:
+        if getattr(layout, "class_name", "") != "fallback_line":
+            repaired_layouts.append(layout)
+            continue
+        line_box = getattr(layout, "box", None)
+        containing_tables = [
+            table
+            for table in table_layouts
+            if (
+                line_box is not None
+                and table.box.x <= (line_box.x + line_box.x2) / 2 <= table.box.x2
+            and table.box.y <= (line_box.y + line_box.y2) / 2 <= table.box.y2
+            )
+        ]
+        if not containing_tables:
+            repaired_layouts.append(layout)
+            continue
+        table = min(
+            containing_tables,
+            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+        )
+
+        line_characters = []
+        for char in getattr(page, "pdf_character", ()) or ():
+            char_box = getattr(getattr(char, "visual_bbox", None), "box", None)
+            if char_box is None:
+                continue
+            center_x = (char_box.x + char_box.x2) / 2
+            center_y = (char_box.y + char_box.y2) / 2
+            if (
+                line_box.x <= center_x <= line_box.x2
+                and line_box.y <= center_y <= line_box.y2
+            ):
+                inside_table = (
+                    table.box.x <= center_x <= table.box.x2
+                    and table.box.y <= center_y <= table.box.y2
+                )
+                line_characters.append((char_box, char, inside_table))
+        line_characters.sort(key=lambda item: item[0].x)
+        line_height = line_box.y2 - line_box.y
+        if (
+            len(line_characters) < 2
+            or not any(inside_table for _, _, inside_table in line_characters)
+            or line_height <= 0
+            or any(getattr(char, "vertical", False) for _, char, _ in line_characters)
+        ):
+            repaired_layouts.append(layout)
+            continue
+
+        gap_threshold = line_height * _TABLE_COLUMN_GAP_HEIGHT_MULTIPLIER
+        segments: list[tuple[bool, list[Any]]] = []
+        for char_box, _, inside_table in line_characters:
+            gap = (
+                char_box.x - segments[-1][1][-1].x2
+                if segments
+                else 0
+            )
+            if (
+                not segments
+                or segments[-1][0] != inside_table
+                or (inside_table and gap > gap_threshold)
+            ):
+                segments.append((inside_table, []))
+            segments[-1][1].append(char_box)
+        outside_segment_indexes = [
+            index for index, (inside_table, _) in enumerate(segments) if not inside_table
+        ]
+        table_segment_count = sum(inside_table for inside_table, _ in segments)
+        if not outside_segment_indexes and table_segment_count <= 1:
+            repaired_layouts.append(layout)
+            continue
+
+        original_segment_index = outside_segment_indexes[0] if outside_segment_indexes else 0
+        for index, (_, segment) in enumerate(segments):
+            x = min(char_box.x for char_box in segment)
+            y = min(char_box.y for char_box in segment)
+            x2 = max(char_box.x2 for char_box in segment)
+            y2 = max(char_box.y2 for char_box in segment)
+            target = layout if index == original_segment_index else copy.copy(layout)
+            target.box = copy.copy(layout.box)
+            target.box.x, target.box.y, target.box.x2, target.box.y2 = x, y, x2, y2
+            if target is not layout:
+                target.id = next_id
+                next_id += 1
+            repaired_layouts.append(target)
+
+    removed_fallback_ids: set[int] = set()
+    for layout in repaired_layouts:
+        if getattr(layout, "class_name", "") != "fallback_line":
+            continue
+        line_box = layout.box
+        fragment_boxes = _caption_fragment_edge_boxes(layout, page, repaired_layouts)
+        if not fragment_boxes:
+            continue
+        line_height = line_box.y2 - line_box.y
+        if line_height <= 0:
+            continue
+
+        matched_caption = None
+        valid_fragments = True
+        for fragment_box in fragment_boxes:
+            center_x = (fragment_box.x + fragment_box.x2) / 2
+            center_y = (fragment_box.y + fragment_box.y2) / 2
+            if any(
+                table.box.x <= center_x <= table.box.x2
+                and table.box.y <= center_y <= table.box.y2
+                for table in table_layouts
+            ):
+                valid_fragments = False
+                break
+
+            matches = []
+            for caption in repaired_layouts:
+                if getattr(caption, "class_name", "") not in {
+                    "table_caption",
+                    "figure_caption",
+                }:
+                    continue
+                caption_box = caption.box
+                vertical_overlap = max(
+                    0,
+                    min(fragment_box.y2, caption_box.y2)
+                    - max(fragment_box.y, caption_box.y),
+                )
+                if vertical_overlap <= line_height * 0.5:
+                    continue
+                if any(
+                    str(getattr(owner, "class_name", "") or "").lower()
+                    in _BODY_TEXT_LAYOUT_LABELS
+                    and min(fragment_box.x2, owner.box.x2)
+                    > max(fragment_box.x, owner.box.x)
+                    and min(fragment_box.y2, owner.box.y2)
+                    > max(fragment_box.y, owner.box.y)
+                    for owner in repaired_layouts
+                    if owner is not caption and getattr(owner, "box", None) is not None
+                ):
+                    continue
+                overlap_width = max(
+                    0,
+                    min(fragment_box.x2, caption_box.x2)
+                    - max(fragment_box.x, caption_box.x),
+                )
+                fragment_width = fragment_box.x2 - fragment_box.x
+                caption_width = caption_box.x2 - caption_box.x
+                if (
+                    min(fragment_width, caption_width) <= 0
+                    or overlap_width > min(fragment_width, caption_width) * 0.5
+                ):
+                    # A small edge overlap is common when a model box misses the
+                    # first few glyphs. A wrapped/covering frame has a large overlap.
+                    continue
+                horizontal_gap = max(
+                    0,
+                    caption_box.x - fragment_box.x2,
+                    fragment_box.x - caption_box.x2,
+                )
+                if horizontal_gap < line_height:
+                    matches.append((horizontal_gap, -vertical_overlap, caption))
+            if not matches:
+                valid_fragments = False
+                break
+            caption = min(matches, key=lambda item: (item[0], item[1]))[2]
+            if matched_caption is not None and caption is not matched_caption:
+                valid_fragments = False
+                break
+            matched_caption = caption
+
+        if not valid_fragments or matched_caption is None:
+            continue
+        if _caption_expansion_covers_body(
+            matched_caption.box,
+            fragment_boxes,
+            repaired_layouts,
+        ):
+            continue
+
+        for fragment_box in fragment_boxes:
+            matched_caption.box.x = min(matched_caption.box.x, fragment_box.x)
+            matched_caption.box.y = min(matched_caption.box.y, fragment_box.y)
+            matched_caption.box.x2 = max(matched_caption.box.x2, fragment_box.x2)
+            matched_caption.box.y2 = max(matched_caption.box.y2, fragment_box.y2)
+        removed_fallback_ids.add(id(layout))
+
+    page.page_layout = [
+        layout for layout in repaired_layouts if id(layout) not in removed_fallback_ids
+    ]
+
+
+def _paragraph_center_inside_table(paragraph: Any, page: Any) -> bool:
+    paragraph_box = getattr(paragraph, "box", None)
+    if paragraph_box is None:
+        return False
+    try:
+        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
+        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return any(
+        getattr(layout, "class_name", "") == "table"
+        and layout.box.x <= center_x <= layout.box.x2
+        and layout.box.y <= center_y <= layout.box.y2
+        for layout in getattr(page, "page_layout", ()) or ()
+    )
+
+
+def _table_cell_layout_box(paragraph_box: Any, page: Any, table: Any) -> Any | None:
+    """Return the paragraph box widened only to its geometrically bounded cell."""
+    table_box = getattr(table, "box", None)
+    if paragraph_box is None or table_box is None:
+        return None
+    try:
+        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
+        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
+        table_left = float(table_box.x)
+        table_right = float(table_box.x2)
+        table_top = float(table_box.y)
+        table_bottom = float(table_box.y2)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not (table_left <= center_x <= table_right and table_top <= center_y <= table_bottom):
+        return None
+
+    x_boundaries = [table_left, table_right]
+    minimum_line_length = max(3.0, (table_bottom - table_top) * 0.01)
+    for curve in getattr(page, "pdf_curve", ()) or ():
+        curve_box = getattr(curve, "box", None)
+        if curve_box is None:
+            continue
+        try:
+            x, y, x2, y2 = (
+                float(curve_box.x),
+                float(curve_box.y),
+                float(curve_box.x2),
+                float(curve_box.y2),
+            )
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if (
+            abs(x2 - x) > _TABLE_CURVE_AXIS_TOLERANCE
+            or y2 - y < minimum_line_length
+            or not table_left - _TABLE_CURVE_AXIS_TOLERANCE
+            <= (x + x2) / 2
+            <= table_right + _TABLE_CURVE_AXIS_TOLERANCE
+            or center_y < y - _TABLE_CURVE_AXIS_TOLERANCE
+            or center_y > y2 + _TABLE_CURVE_AXIS_TOLERANCE
+        ):
+            continue
+        x_boundaries.append(min(table_right, max(table_left, (x + x2) / 2)))
+
+    cell_left = max((x for x in x_boundaries if x <= center_x), default=table_left)
+    cell_right = min((x for x in x_boundaries if x > center_x), default=table_right)
+    try:
+        bounded_box = copy.copy(paragraph_box)
+        bounded_box.x = max(float(paragraph_box.x), cell_left + _TABLE_CELL_BORDER_INSET)
+        bounded_box.x2 = cell_right - _TABLE_CELL_BORDER_INSET
+        bounded_box.y = max(float(paragraph_box.y), table_top)
+        bounded_box.y2 = min(float(paragraph_box.y2), table_bottom)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if bounded_box.x2 <= bounded_box.x or bounded_box.y2 <= bounded_box.y:
+        return None
+    return bounded_box
+
+
+def _with_table_cell_bounds(
+    instance: Any,
+    paragraph: Any,
+    page: Any,
+    operation: Any,
+) -> Any:
+    """Run scale measurement or rendering with table expansion clamped to a cell."""
+    paragraph_box = getattr(paragraph, "box", None)
+    if paragraph_box is None:
+        return operation()
+    try:
+        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
+        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
+        containing_tables = [
+            layout
+            for layout in getattr(page, "page_layout", ()) or ()
+            if getattr(layout, "class_name", "") == "table"
+            and layout.box.x <= center_x <= layout.box.x2
+            and layout.box.y <= center_y <= layout.box.y2
+        ]
+    except (TypeError, ValueError, AttributeError):
+        return operation()
+    if not containing_tables:
+        return operation()
+    table = min(
+        containing_tables,
+        key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+    )
+    bounded_box = _table_cell_layout_box(paragraph_box, page, table)
+    if bounded_box is None:
+        return operation()
+
+    original_box = paragraph_box
+    instance_dict = getattr(instance, "__dict__", {})
+    methods = {}
+    for name in ("get_max_right_space", "get_max_bottom_space"):
+        method = getattr(instance, name, None)
+        if callable(method):
+            methods[name] = (name in instance_dict, instance_dict.get(name), method)
+
+    paragraph.box = bounded_box
+    try:
+        if "get_max_right_space" in methods:
+            original_method = methods["get_max_right_space"][2]
+
+            def bounded_right_space(
+                current_box: Any,
+                owner: Any,
+                _original_method: Any = original_method,
+            ) -> float:
+                available = _original_method(current_box, owner)
+                if owner is page:
+                    return min(float(available), float(current_box.x2))
+                return available
+
+            instance.get_max_right_space = bounded_right_space
+        if "get_max_bottom_space" in methods:
+            original_method = methods["get_max_bottom_space"][2]
+
+            def bounded_bottom_space(
+                current_box: Any,
+                owner: Any,
+                _original_method: Any = original_method,
+            ) -> float:
+                available = _original_method(current_box, owner)
+                if owner is page:
+                    return max(float(available), float(current_box.y))
+                return available
+
+            instance.get_max_bottom_space = bounded_bottom_space
+        return operation()
+    finally:
+        paragraph.box = original_box
+        for name, (had_override, old_override, _) in methods.items():
+            if had_override:
+                setattr(instance, name, old_override)
+            else:
+                delattr(instance, name)
+
+
+def _page_paragraphs_with_table_short_text(
+    page: Any,
+    min_text_length: int,
+    translated_ids: set[int] | None,
+    is_cid_paragraph: Any,
+) -> tuple[list[Any], set[int], int]:
+    """Keep short paragraphs only when their centers fall inside a table box."""
+    translated_ids = translated_ids or set()
+    paragraphs = []
+    table_paragraph_ids = set()
+    skipped_short = 0
+    for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+        in_table = _paragraph_center_inside_table(paragraph, page)
+        if in_table:
+            table_paragraph_ids.add(id(paragraph))
+        unicode = getattr(paragraph, "unicode", None)
+        if (
+            id(paragraph) in translated_ids
+            or getattr(paragraph, "debug_id", None) is None
+            or unicode is None
+            or is_cid_paragraph(paragraph)
+            or len(unicode) >= min_text_length
+            or in_table
+        ):
+            paragraphs.append(paragraph)
+        else:
+            skipped_short += 1
+    return paragraphs, table_paragraph_ids, skipped_short
+
+
+def _pre_translate_with_table_min_text_length(
+    original_pre_translate: Any,
+    instance: Any,
+    paragraph: Any,
+    tracker: Any,
+    page_font_map: Any,
+    xobj_font_map: Any,
+    *,
+    is_table_paragraph: bool,
+    min_text_length: int,
+    config_lock: Any,
+) -> Any:
+    """Temporarily relax BabelDOC's length guard for a geometric table item."""
+    with config_lock:
+        unicode = getattr(paragraph, "unicode", None) or ""
+        if len(unicode) < min_text_length and not is_table_paragraph:
+            return None, None
+        config = instance.translation_config
+        current_minimum = config.min_text_length
+        if len(unicode) < min_text_length and is_table_paragraph:
+            config.min_text_length = 0
+            try:
+                return original_pre_translate(
+                    instance, paragraph, tracker, page_font_map, xobj_font_map
+                )
+            finally:
+                config.min_text_length = current_minimum
+        return original_pre_translate(
+            instance, paragraph, tracker, page_font_map, xobj_font_map
+        )
+
+
+def _apply_common_table_scales(
+    instance: Any,
+    deferred: list[tuple[Any, Any, Any]],
+    translated_paragraph_ids: set[int],
+) -> None:
+    """Give translated paragraphs in each table one common final-box scale."""
+    groups: dict[tuple[int, int], list[tuple[Any, float]]] = {}
+    for paragraph, page, fonts in deferred:
+        if id(paragraph) not in translated_paragraph_ids:
+            continue
+        if _is_independent_formula_paragraph(paragraph):
+            continue
+        box = getattr(paragraph, "box", None)
+        if box is None:
+            continue
+        center_x = (box.x + box.x2) / 2
+        center_y = (box.y + box.y2) / 2
+        containing_tables = [
+            layout
+            for layout in getattr(page, "page_layout", ()) or ()
+            if getattr(layout, "class_name", "") == "table"
+            and layout.box.x <= center_x <= layout.box.x2
+            and layout.box.y <= center_y <= layout.box.y2
+        ]
+        if not containing_tables:
+            continue
+        table = min(
+            containing_tables,
+            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+        )
+        try:
+            units = instance.create_typesetting_units(paragraph, fonts)
+            if all(unit.can_passthrough for unit in units):
+                continue
+            raw_scale = float(instance._get_optimal_scale(paragraph, page, units))
+        except Exception:
+            continue
+        table_id = int(getattr(table, "id", id(table)))
+        groups.setdefault((id(page), table_id), []).append((paragraph, raw_scale))
+
+    for members in groups.values():
+        common_scale = min(scale for _, scale in members)
+        for paragraph, _ in members:
+            paragraph.optimal_scale = common_scale
+
+
+def collect_table_fragment_ids(document: Any) -> set[int]:
+    """Table paragraphs far shorter than their table's lines, kept as they are."""
+    fragment_ids: set[int] = set()
+    for page in getattr(document, "page", ()) or ():
+        tables = [
+            layout
+            for layout in getattr(page, "page_layout", ()) or ()
+            if getattr(layout, "class_name", "") == "table"
+        ]
+        groups: dict[int, list[tuple[Any, float]]] = {}
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            box = getattr(paragraph, "box", None)
+            if box is None:
+                continue
+            center_x = (box.x + box.x2) / 2
+            center_y = (box.y + box.y2) / 2
+            containing = [
+                table
+                for table in tables
+                if table.box.x <= center_x <= table.box.x2
+                and table.box.y <= center_y <= table.box.y2
+            ]
+            if not containing:
+                continue
+            table = min(
+                containing,
+                key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+            )
+            groups.setdefault(id(table), []).append((paragraph, box.y2 - box.y))
+        for members in groups.values():
+            median = statistics.median(height for _, height in members)
+            for paragraph, height in members:
+                if height < median * _TABLE_FRAGMENT_HEIGHT_RATIO:
+                    fragment_ids.add(id(paragraph))
+    return fragment_ids
 
 
 def _is_body_text_paragraph(paragraph: Any) -> bool:
@@ -2271,6 +2866,7 @@ def _install_min_request_patches(
     import babeldoc.format.pdf.document_il.midend.il_translator_llm_only as llm_module
     import babeldoc.translator.translator as translator_module
     from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
+    from babeldoc.format.pdf.document_il.midend.layout_parser import LayoutParser
     from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
     from babeldoc.translator.translator import OpenAITranslator
 
@@ -2327,6 +2923,71 @@ def _install_min_request_patches(
         return result
 
     ILTranslator.post_translate_paragraph = post_translate_paragraph_with_log
+
+    original_generate_fallback_line_layouts = (
+        LayoutParser.generate_fallback_line_layout_for_page
+    )
+    original_process_page = llm_module.ILTranslatorLLMOnly.process_page
+    table_min_text_lock = threading.RLock()
+
+    @functools.wraps(original_generate_fallback_line_layouts)
+    def generate_fallback_line_layouts_with_table_repair(
+        instance: Any, page: Any, progress: Any
+    ) -> Any:
+        result = original_generate_fallback_line_layouts(instance, page, progress)
+        _repair_fallback_line_layouts(page)
+        return result
+
+    LayoutParser.generate_fallback_line_layout_for_page = (
+        generate_fallback_line_layouts_with_table_repair
+    )
+
+    @functools.wraps(original_process_page)
+    def process_page_with_table_short_paragraphs(
+        instance: Any,
+        page: Any,
+        executor: Any,
+        pbar: Any = None,
+        tracker: Any = None,
+        executor2: Any = None,
+        translated_ids: set[int] | None = None,
+    ) -> Any:
+        config = instance.translation_config
+        with table_min_text_lock:
+            minimum = config.min_text_length
+            paragraphs, table_ids, skipped_short = (
+                _page_paragraphs_with_table_short_text(
+                    page,
+                    minimum,
+                    translated_ids,
+                    llm_module.is_cid_paragraph,
+                )
+            )
+            request_state.setdefault("table_paragraph_ids", set()).update(table_ids)
+            original_paragraphs = page.pdf_paragraph
+            page.pdf_paragraph = paragraphs
+            current_minimum = config.min_text_length
+            try:
+                # The geometry filter above has removed every short paragraph
+                # outside table boxes before BabelDOC applies its page gate.
+                config.min_text_length = 0
+                result = original_process_page(
+                    instance,
+                    page,
+                    executor,
+                    pbar,
+                    tracker,
+                    executor2,
+                    translated_ids,
+                )
+            finally:
+                config.min_text_length = current_minimum
+                page.pdf_paragraph = original_paragraphs
+        if skipped_short and pbar is not None and hasattr(pbar, "advance"):
+            pbar.advance(skipped_short)
+        return result
+
+    llm_module.ILTranslatorLLMOnly.process_page = process_page_with_table_short_paragraphs
 
     def apply_accepted_after_babeldoc_rejection(owner: Any, args: tuple[Any, ...]) -> bool:
         """BabelDOC re-checks length after our validation and hands rejected
@@ -2477,6 +3138,35 @@ def _install_min_request_patches(
 
     Typesetting._layout_typesetting_units = layout_with_body_line_spacing
 
+    original_find_optimal_scale_and_layout = Typesetting._find_optimal_scale_and_layout
+
+    @functools.wraps(original_find_optimal_scale_and_layout)
+    def find_table_scale_with_cell_bounds(
+        instance: Any,
+        paragraph: Any,
+        page: Any,
+        typesetting_units: Any,
+        initial_scale: float = 1.0,
+        use_english_line_break: bool = True,
+        apply_layout: bool = False,
+    ) -> Any:
+        return _with_table_cell_bounds(
+            instance,
+            paragraph,
+            page,
+            lambda: original_find_optimal_scale_and_layout(
+                instance,
+                paragraph,
+                page,
+                typesetting_units,
+                initial_scale,
+                use_english_line_break,
+                apply_layout,
+            ),
+        )
+
+    Typesetting._find_optimal_scale_and_layout = find_table_scale_with_cell_bounds
+
     original_get_optimal_scale = Typesetting._get_optimal_scale
 
     @functools.wraps(original_get_optimal_scale)
@@ -2559,6 +3249,11 @@ def _install_min_request_patches(
                 }
             )
         request_state["body_font_class_summary"] = class_summary
+        _apply_common_table_scales(
+            instance,
+            deferred,
+            request_state.get("translated_paragraph_ids", set()),
+        )
 
     def typesetting_document_two_phase(instance: Any, document: Any) -> None:
         """BabelDOC's render_page shrinks paragraph boxes to resolve overlaps and
@@ -3983,6 +4678,7 @@ def _install_min_request_patches(
             docs = translator.il_translator.docs
             original_paragraph_state = snapshot_paragraph_state(docs)
             repeated_marginal_ids = collect_repeated_marginal_ids(docs)
+            table_fragment_ids = collect_table_fragment_ids(docs)
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
@@ -4087,6 +4783,7 @@ def _install_min_request_patches(
                 if (
                     id(paragraph) in request_state["reference_paragraph_ids"]
                     or id(paragraph) in repeated_marginal_ids
+                    or id(paragraph) in table_fragment_ids
                     or _paragraph_is_marginal_or_stamp(paragraph, item["page"])
                     or _is_first_page_author_block(paragraph, item["position"][0])
                 ):
@@ -4094,12 +4791,19 @@ def _install_min_request_patches(
                     if pbar is not None:
                         pbar.advance(1)
                     return None, None
-                result = original_pre_translate(
+                result = _pre_translate_with_table_min_text_length(
+                    original_pre_translate,
                     translator.il_translator,
                     paragraph,
                     item["tracker"],
                     item["page_font_map"],
                     item["xobj_font_map"],
+                    is_table_paragraph=(
+                        id(paragraph)
+                        in request_state.get("table_paragraph_ids", set())
+                    ),
+                    min_text_length=translator.il_translator.translation_config.min_text_length,
+                    config_lock=table_min_text_lock,
                 )
                 if (
                     isinstance(result, (tuple, list))
