@@ -261,7 +261,7 @@
   "page": 4,
   "index": 1,
   "preview": "Machine",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -285,7 +285,7 @@
   "page": 4,
   "index": 5,
   "preview": "Servers",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -297,13 +297,13 @@
   "page": 4,
   "index": 7,
   "preview": "Server",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 8,
   "preview": "2016 (DC and",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -321,7 +321,7 @@
   "page": 4,
   "index": 11,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -333,7 +333,7 @@
   "page": 4,
   "index": 13,
   "preview": "(Web Server)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -351,7 +351,7 @@
   "page": 4,
   "index": 16,
   "preview": "Ubuntu 12",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -375,7 +375,7 @@
   "page": 4,
   "index": 20,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -405,7 +405,7 @@
   "page": 4,
   "index": 25,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -435,7 +435,7 @@
   "page": 4,
   "index": 30,
   "preview": "Win 7Pro",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -447,7 +447,7 @@
   "page": 4,
   "index": 32,
   "preview": "Win 8.1-64",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -459,7 +459,7 @@
   "page": 4,
   "index": 34,
   "preview": "Win Vista",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -519,13 +519,13 @@
   "page": 4,
   "index": 44,
   "preview": "Firewall",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 45,
   "preview": "Fortinet",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -549,19 +549,19 @@
   "page": 4,
   "index": 49,
   "preview": "win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 50,
   "preview": "Win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 51,
   "preview": "Win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -699,97 +699,97 @@
   "page": 5,
   "index": 3,
   "preview": "Labels",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 4,
   "preview": "Monday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 5,
   "preview": "Benign",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 6,
   "preview": "Tuesday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 7,
   "preview": "BForce,SFTP and SSH",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 8,
   "preview": "Wednes.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 9,
   "preview": "DoS and Hearbleed Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 10,
   "preview": "slowloris, Slowhttptest,",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 11,
   "preview": "Hulk and GoldenEye",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 12,
   "preview": "Thurs.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 13,
   "preview": "Web and Infiltration Att",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 14,
   "preview": "Web BForce, XSS and Sql ",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 15,
   "preview": "Infiltration Dropbox Dow",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 16,
   "preview": "and Cool disk",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 17,
   "preview": "Friday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 18,
   "preview": "DDoS LOIT",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -801,7 +801,7 @@
   "page": 5,
   "index": 20,
   "preview": "Botnet ARES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -813,13 +813,13 @@
   "page": 5,
   "index": 22,
   "preview": "PortScans (sS,sT,sF,sX,s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 23,
   "preview": "sO,sA,sW,sR,sL and B)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -927,31 +927,31 @@
   "page": 6,
   "index": 7,
   "preview": "Label",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 8,
   "preview": "Feature",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 9,
   "preview": "Weight",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 10,
   "preview": "Benign",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 11,
   "preview": "B.Packet Len Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -963,7 +963,7 @@
   "page": 6,
   "index": 13,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -975,7 +975,7 @@
   "page": 6,
   "index": 15,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -987,7 +987,7 @@
   "page": 6,
   "index": 17,
   "preview": "F.Packet Len Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -999,13 +999,13 @@
   "page": 6,
   "index": 19,
   "preview": "DoS GoldenEye",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 20,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1017,7 +1017,7 @@
   "page": 6,
   "index": 22,
   "preview": "Flow IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1029,7 +1029,7 @@
   "page": 6,
   "index": 24,
   "preview": "Fwd IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1041,7 +1041,7 @@
   "page": 6,
   "index": 26,
   "preview": "Flow IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1053,13 +1053,13 @@
   "page": 6,
   "index": 28,
   "preview": "Heartbleed",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 29,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1071,7 +1071,7 @@
   "page": 6,
   "index": 31,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1083,7 +1083,7 @@
   "page": 6,
   "index": 33,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1095,7 +1095,7 @@
   "page": 6,
   "index": 35,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1107,13 +1107,13 @@
   "page": 6,
   "index": 37,
   "preview": "DoS Hulk",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 38,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1125,7 +1125,7 @@
   "page": 6,
   "index": 40,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1137,7 +1137,7 @@
   "page": 6,
   "index": 42,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1149,7 +1149,7 @@
   "page": 6,
   "index": 44,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1161,13 +1161,13 @@
   "page": 6,
   "index": 46,
   "preview": "DoS Slowhttp",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 47,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1179,7 +1179,7 @@
   "page": 6,
   "index": 49,
   "preview": "Active Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1191,7 +1191,7 @@
   "page": 6,
   "index": 51,
   "preview": "Active Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1203,7 +1203,7 @@
   "page": 6,
   "index": 53,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1215,13 +1215,13 @@
   "page": 6,
   "index": 55,
   "preview": "DoS slowloris",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 56,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1233,7 +1233,7 @@
   "page": 6,
   "index": 58,
   "preview": "F.IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1245,7 +1245,7 @@
   "page": 6,
   "index": 60,
   "preview": "B.IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1257,7 +1257,7 @@
   "page": 6,
   "index": 62,
   "preview": "F.IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1269,13 +1269,13 @@
   "page": 6,
   "index": 64,
   "preview": "SSH-Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 65,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1287,7 +1287,7 @@
   "page": 6,
   "index": 67,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1299,7 +1299,7 @@
   "page": 6,
   "index": 69,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1311,7 +1311,7 @@
   "page": 6,
   "index": 71,
   "preview": "ACK Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1323,13 +1323,13 @@
   "page": 6,
   "index": 73,
   "preview": "FTP-Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 74,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1341,7 +1341,7 @@
   "page": 6,
   "index": 76,
   "preview": "F.PSH Flags",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1353,7 +1353,7 @@
   "page": 6,
   "index": 78,
   "preview": "SYN Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1365,7 +1365,7 @@
   "page": 6,
   "index": 80,
   "preview": "F.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1377,13 +1377,13 @@
   "page": 6,
   "index": 82,
   "preview": "Web Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 83,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1395,7 +1395,7 @@
   "page": 6,
   "index": 85,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1407,7 +1407,7 @@
   "page": 6,
   "index": 87,
   "preview": "Init Win B.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1419,7 +1419,7 @@
   "page": 6,
   "index": 89,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1431,13 +1431,13 @@
   "page": 6,
   "index": 91,
   "preview": "Infiltration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 92,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1449,7 +1449,7 @@
   "page": 6,
   "index": 94,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1461,7 +1461,7 @@
   "page": 6,
   "index": 96,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1473,7 +1473,7 @@
   "page": 6,
   "index": 98,
   "preview": "Active Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1491,7 +1491,7 @@
   "page": 6,
   "index": 101,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1503,7 +1503,7 @@
   "page": 6,
   "index": 103,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1515,7 +1515,7 @@
   "page": 6,
   "index": 105,
   "preview": "F.Packet Len Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1527,7 +1527,7 @@
   "page": 6,
   "index": 107,
   "preview": "B.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1539,13 +1539,13 @@
   "page": 6,
   "index": 109,
   "preview": "PortScan",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 110,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1557,7 +1557,7 @@
   "page": 6,
   "index": 112,
   "preview": "B.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1569,7 +1569,7 @@
   "page": 6,
   "index": 114,
   "preview": "PSH Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1587,7 +1587,7 @@
   "page": 6,
   "index": 117,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1599,7 +1599,7 @@
   "page": 6,
   "index": 119,
   "preview": "Avg Packet Size",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1611,7 +1611,7 @@
   "page": 6,
   "index": 121,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1623,7 +1623,7 @@
   "page": 6,
   "index": 123,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1653,7 +1653,7 @@
   "page": 7,
   "index": 1,
   "preview": "Algorithm",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1677,13 +1677,13 @@
   "page": 7,
   "index": 5,
   "preview": "Execution",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 6,
   "preview": "(Sec.)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1779,7 +1779,7 @@
   "page": 7,
   "index": 22,
   "preview": "Adaboost",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1839,7 +1839,7 @@
   "page": 7,
   "index": 32,
   "preview": "Naive-Bayes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -2043,43 +2043,43 @@
   "page": 8,
   "index": 3,
   "preview": "Network",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 4,
   "preview": "Traffic",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 5,
   "preview": "Label.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 6,
   "preview": "Interact.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 7,
   "preview": "Captu.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 8,
   "preview": "Protocols",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 9,
   "preview": "Attack Diversity",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2091,19 +2091,19 @@
   "page": 8,
   "index": 11,
   "preview": "Heter.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 12,
   "preview": "Features",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 13,
   "preview": "Meta.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2115,7 +2115,7 @@
   "page": 8,
   "index": 15,
   "preview": "https",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2133,19 +2133,19 @@
   "page": 8,
   "index": 18,
   "preview": "Email",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 19,
   "preview": "Browser",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 20,
   "preview": "Bforce",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2163,7 +2163,7 @@
   "page": 8,
   "index": 23,
   "preview": "Bdoor",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2175,13 +2175,13 @@
   "page": 8,
   "index": 25,
   "preview": "Other",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 26,
   "preview": "DARPA",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2211,13 +2211,13 @@
   "page": 8,
   "index": 31,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 32,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2235,7 +2235,7 @@
   "page": 8,
   "index": 35,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2277,7 +2277,7 @@
   "page": 8,
   "index": 42,
   "preview": "KDD’99",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2307,13 +2307,13 @@
   "page": 8,
   "index": 47,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 48,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2331,7 +2331,7 @@
   "page": 8,
   "index": 51,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2373,7 +2373,7 @@
   "page": 8,
   "index": 58,
   "preview": "DEFCON",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2403,13 +2403,13 @@
   "page": 8,
   "index": 63,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 64,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2439,7 +2439,7 @@
   "page": 8,
   "index": 69,
   "preview": "YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2481,7 +2481,7 @@
   "page": 8,
   "index": 76,
   "preview": "CAIDAs",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2559,19 +2559,19 @@
   "page": 8,
   "index": 89,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 90,
   "preview": "YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 91,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2625,13 +2625,13 @@
   "page": 8,
   "index": 100,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 101,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2661,7 +2661,7 @@
   "page": 8,
   "index": 106,
   "preview": "YES -",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2679,7 +2679,7 @@
   "page": 8,
   "index": 109,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2727,13 +2727,13 @@
   "page": 8,
   "index": 117,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 118,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2751,13 +2751,13 @@
   "page": 8,
   "index": 121,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 122,
   "preview": "YES -",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2787,7 +2787,7 @@
   "page": 8,
   "index": 127,
   "preview": "KYOTO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2817,7 +2817,7 @@
   "page": 8,
   "index": 132,
   "preview": "YES YES YES YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2835,13 +2835,13 @@
   "page": 8,
   "index": 135,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 136,
   "preview": "YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2871,7 +2871,7 @@
   "page": 8,
   "index": 141,
   "preview": "TWENTE",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2901,13 +2901,13 @@
   "page": 8,
   "index": 146,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 147,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2931,7 +2931,7 @@
   "page": 8,
   "index": 151,
   "preview": "YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2973,7 +2973,7 @@
   "page": 8,
   "index": 158,
   "preview": "UMASS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3003,7 +3003,7 @@
   "page": 8,
   "index": 163,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3093,7 +3093,7 @@
   "page": 8,
   "index": 178,
   "preview": "ISCX2012",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3123,13 +3123,13 @@
   "page": 8,
   "index": 183,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 184,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3147,7 +3147,7 @@
   "page": 8,
   "index": 187,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3189,7 +3189,7 @@
   "page": 8,
   "index": 194,
   "preview": "ADFA2013",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3219,13 +3219,13 @@
   "page": 8,
   "index": 199,
   "preview": "YES YES NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 200,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3297,7 +3297,7 @@
   "page": 8,
   "index": 212,
   "preview": "CICIDS2017",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3327,7 +3327,7 @@
   "page": 8,
   "index": 217,
   "preview": "YES YES YES YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3345,7 +3345,7 @@
   "page": 8,
   "index": 220,
   "preview": "YES YES YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,

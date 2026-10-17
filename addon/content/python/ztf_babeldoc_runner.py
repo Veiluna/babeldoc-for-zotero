@@ -1163,6 +1163,40 @@ def _paragraph_layout_label(paragraph: Any) -> str:
     return str(getattr(paragraph, "layout_label", "") or "").strip()
 
 
+def _is_inside_table_region(paragraph: Any, page: Any) -> bool:
+    if _paragraph_layout_label(paragraph).lower() in {
+        "table_caption",
+        "table_title",
+        "table_footnote",
+    }:
+        return False
+
+    paragraph_box = getattr(paragraph, "box", None)
+    if paragraph_box is None:
+        return False
+    try:
+        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
+        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    for layout in getattr(page, "page_layout", ()) or ():
+        if getattr(layout, "class_name", None) != "table":
+            continue
+        table_box = getattr(layout, "box", None)
+        if table_box is None:
+            continue
+        try:
+            if (
+                float(table_box.x) <= center_x <= float(table_box.x2)
+                and float(table_box.y) <= center_y <= float(table_box.y2)
+            ):
+                return True
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return False
+
+
 def _is_body_text_paragraph(paragraph: Any) -> bool:
     return _paragraph_layout_label(paragraph).lower() in _BODY_TEXT_LAYOUT_LABELS
 
@@ -4089,6 +4123,7 @@ def _install_min_request_patches(
                     or id(paragraph) in repeated_marginal_ids
                     or _paragraph_is_marginal_or_stamp(paragraph, item["page"])
                     or _is_first_page_author_block(paragraph, item["position"][0])
+                    or _is_inside_table_region(paragraph, item["page"])
                 ):
                     request_state["preserved_paragraph_ids"].add(id(paragraph))
                     if pbar is not None:
