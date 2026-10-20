@@ -159,8 +159,9 @@ class InlineFormulaIntegrationTest(unittest.TestCase):
         deployed = ARTIFACTS / "deployed"
         deployed.mkdir(exist_ok=True)
         shutil.copyfile(RUNNER, deployed / RUNNER.name)
-        helper = ROOT / "addon/content/python/ztf_inline_formulas.py"
-        shutil.copyfile(helper, deployed / helper.name)
+        for helper_name in ("ztf_inline_formulas.py", "ztf_style_guards.py"):
+            helper = ROOT / "addon/content/python" / helper_name
+            shutil.copyfile(helper, deployed / helper_name)
         cls.completed, cls.result, cls.inputs = run_translation(
             cls.source, ARTIFACTS, runner=deployed / RUNNER.name)
 

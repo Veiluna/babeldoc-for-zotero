@@ -185,13 +185,22 @@ var ZoteroTranslateFilesRunner = (function () {
       var runnerPath = PathUtils.join(dataDir, RUNNER_FILENAME);
       // Refresh the copied runner every job so the script from the installed XPI is used.
       await Zotero.File.putContentsAsync(runnerPath, runnerContents, "utf-8");
-      var formulaHelperName = "ztf_inline_formulas.py";
-      var formulaHelperURI = ZoteroTranslateFiles.rootURI + "content/python/" + formulaHelperName;
-      var formulaHelperContents = await Zotero.File.getContentsFromURL(formulaHelperURI);
-      if (!formulaHelperContents) throw new Error("无法从插件包中读取公式辅助模块。");
-      await Zotero.File.putContentsAsync(
-        PathUtils.join(dataDir, formulaHelperName), formulaHelperContents, "utf-8"
-      );
+      // Every Python helper must be copied next to the runner: the runner loads
+      // them by path and never executes from inside the addon directory.
+      var pythonHelpers = [
+        ["ztf_inline_formulas.py", "公式辅助模块"],
+        ["ztf_style_guards.py", "样式保护辅助模块"],
+      ];
+      for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
+        var helperName = pythonHelpers[helperIndex][0];
+        var helperLabel = pythonHelpers[helperIndex][1];
+        var helperURI = ZoteroTranslateFiles.rootURI + "content/python/" + helperName;
+        var helperContents = await Zotero.File.getContentsFromURL(helperURI);
+        if (!helperContents) throw new Error("无法从插件包中读取" + helperLabel + "。");
+        await Zotero.File.putContentsAsync(
+          PathUtils.join(dataDir, helperName), helperContents, "utf-8"
+        );
+      }
 
       var baseTempDir = PathUtils.tempDir;
       workDir = PathUtils.join(baseTempDir, "zotero-translate-files-" + createUniqueSuffix());

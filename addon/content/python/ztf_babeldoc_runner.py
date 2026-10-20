@@ -118,6 +118,24 @@ _LICENSE_STAMP_RE = re.compile(
     re.I,
 )
 
+_STYLE_GUARDS_MODULE: Any = None
+
+
+def _style_guards() -> Any:
+    """Load the sibling helper module that guards citation style spans."""
+    global _STYLE_GUARDS_MODULE
+    if _STYLE_GUARDS_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_style_guards",
+            os.path.join(os.path.dirname(__file__), "ztf_style_guards.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_style_guards.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _STYLE_GUARDS_MODULE = module
+    return _STYLE_GUARDS_MODULE
+
 
 class RequestCapExceeded(RuntimeError):
     """Raised before issuing a completion request beyond the configured cap."""
@@ -1308,6 +1326,14 @@ def validate_translation_output(
         checks["placeholder_issues"].append(
             {"reason": "unexpected_style_tag", "extra": extra_style_tags}
         )
+    # A model can keep every tag count and still move a citation span around
+    # ordinary translated prose. Protected citation spans must keep their own
+    # source text; that is what bounds the blue colour to the citation.
+    protected_spans = item.get("protected_spans") if isinstance(item, dict) else None
+    if protected_spans and not checks["placeholder_issues"]:
+        checks["placeholder_issues"].extend(
+            _style_guards().citation_span_issues(output, protected_spans)
+        )
     if not checks["placeholder_issues"]:
         source_nesting = _formula_placeholder_nesting(source)
         output_nesting = _formula_placeholder_nesting(output)
@@ -1323,9 +1349,18 @@ def validate_translation_output(
             if not checks["placeholder_issues"]:
                 checks["placeholder_issues"].append({"reason": "formula_nesting_changed"})
     if checks["placeholder_issues"]:
+        citation_broken = any(
+            str(issue.get("reason", "")).startswith("citation_span")
+            for issue in checks["placeholder_issues"]
+            if isinstance(issue, dict)
+        )
         return {
             "usable": False,
-            "reason": "译文中的占位符缺失、重复、被改写或移动了位置，已进入合并补译。",
+            "reason": (
+                "译文中的引用样式覆盖了普通正文，已进入合并补译。"
+                if citation_broken
+                else "译文中的占位符缺失、重复、被改写或移动了位置，已进入合并补译。"
+            ),
             "checks": checks,
         }
 
@@ -1365,6 +1400,65 @@ def validate_translation_output(
 
 def _paragraph_layout_label(paragraph: Any) -> str:
     return str(getattr(paragraph, "layout_label", "") or "").strip()
+
+
+def _is_structural_quality_failure(checks: Any) -> bool:
+    """Whether a failure means the translation could not be restored safely.
+
+    Missing/changed placeholders and citation-style boundaries are structural:
+    the paragraph still holds source text, so it may not be reported as a
+    translatable paragraph that simply kept its original wording.
+    """
+    if not isinstance(checks, dict):
+        return False
+    if checks.get("apply_error") or checks.get("restore_failed"):
+        return True
+    return bool(checks.get("placeholder_issues"))
+
+
+def _paragraph_location(request_state: dict[str, Any], paragraph: Any) -> str:
+    positions = request_state.get("paragraph_positions") or {}
+    position = positions.get(id(paragraph)) if paragraph is not None else None
+    if position:
+        page_index, paragraph_index = position
+        location = f"第 {page_index + 1} 页第 {paragraph_index + 1} 段"
+    else:
+        location = "页码未知的段落"
+    label = _paragraph_layout_label(paragraph) if paragraph is not None else ""
+    return f"{location}（{label or 'text'}）"
+
+
+def _record_quality_failure(
+    request_state: dict[str, Any],
+    paragraph: Any,
+    reason: str,
+    checks: Any,
+    api_key: str,
+    phase: str = "repair",
+) -> None:
+    """Remember a structural failure; main() turns any of them into no result."""
+    location = _paragraph_location(request_state, paragraph)
+    key: Any = id(paragraph) if paragraph is not None else f"unbound:{location}:{reason}"
+    entry = {
+        "location": location,
+        "layout_label": _paragraph_layout_label(paragraph) if paragraph is not None else "",
+        "reason": reason,
+        "checks": checks if isinstance(checks, dict) else {},
+        "phase": phase,
+    }
+    request_state.setdefault("quality_failures", {})[key] = entry
+    _write_job_log(
+        request_state,
+        {
+            "event": "quality_failure",
+            "phase": phase,
+            "location": location,
+            "layout_label": entry["layout_label"],
+            "reason": reason,
+            "checks": entry["checks"],
+        },
+        api_key,
+    )
 
 
 def _caption_fragment_edge_boxes(layout: Any, page: Any, layouts: list[Any]) -> list[Any] | None:
@@ -3371,6 +3465,15 @@ def _install_min_request_patches(
             api_key,
         )
         if not repair_failed or request_state.get("fatal_error"):
+            if not repair_failed:
+                _record_quality_failure(
+                    request_state,
+                    paragraph,
+                    reason,
+                    {"apply_error": True},
+                    api_key,
+                    phase="main",
+                )
             policy.record_failure(paragraph, reason)
             return
         request_state.setdefault("failed_batch_paragraph_ids", set()).add(id(paragraph))
@@ -4008,6 +4111,9 @@ def _install_min_request_patches(
                         "continued_from": None,
                         "previous_context": previous_context,
                         "next_context": next_context,
+                        "protected_spans": _style_guards().protected_span_specs(
+                            getattr(translate_input, "placeholders", ()) or ()
+                        ),
                     }
                     packed_item["validation_metadata"] = metadata
                     return translate_input, metadata
@@ -4028,6 +4134,8 @@ def _install_min_request_patches(
                         input_item["required_placeholders"] = metadata[
                             "required_placeholders"
                         ]
+                    if metadata.get("protected_spans"):
+                        input_item["protected_spans"] = metadata["protected_spans"]
                     request_entries.append((input_item, paragraph, metadata))
 
                 _link_fragment_items(
@@ -4301,6 +4409,15 @@ def _install_min_request_patches(
                             id(paragraph) not in final_fragment_failure_ids
                             and (not fragment_group_failure or not repair_failed)
                         ):
+                            if _is_structural_quality_failure(checks):
+                                _record_quality_failure(
+                                    request_state,
+                                    paragraph,
+                                    item_reason,
+                                    checks,
+                                    api_key,
+                                    phase="main",
+                                )
                             policy.record_failure(paragraph, item_reason)
                     elif usable and paragraph is not None:
                         if checks.get("kept_verbatim"):
@@ -4500,6 +4617,15 @@ def _install_min_request_patches(
                 record["repair_status"] = "unavailable"
                 record["repair_reason"] = record.get("reason", "补译不可用。")
                 record["repair_checks"] = {"repair_available": False}
+                if _is_structural_quality_failure(record.get("checks")):
+                    _record_quality_failure(
+                        request_state,
+                        record.get("paragraph"),
+                        record["repair_reason"],
+                        record.get("checks", {}),
+                        api_key,
+                        phase="repair",
+                    )
                 policy.record_failure(record.get("paragraph"), record["repair_reason"])
                 metadata = record.get("metadata", {})
                 _write_job_log(
@@ -4533,16 +4659,90 @@ def _install_min_request_patches(
         records_by_repair_id: dict[int, dict[str, Any]] = {}
         for repair_id, record in enumerate(repair_records):
             metadata = record.get("metadata", {})
+            paragraph = record.get("paragraph")
+            original_input = record.get("source", "")
+            repair_input = original_input
+            repair_translate_input = record.get("translate_input")
+            simplified_style = False
+            # A model that keeps dropping style tags gets one simpler input in
+            # this same repair pass: ordinary local styles are unwrapped to the
+            # paragraph body style, while citation styles and formulas stay.
+            if repair_translate_input is not None and _style_guards().style_related_issue(
+                record.get("checks", {})
+            ):
+                try:
+                    simplified, kept_placeholders, style_report = (
+                        _style_guards().simplify_rich_text_source(
+                            original_input,
+                            getattr(repair_translate_input, "placeholders", ()) or (),
+                        )
+                    )
+                    if style_report["removed_style_tags"] and simplified != original_input:
+                        base_style = getattr(paragraph, "pdf_style", None) or getattr(
+                            repair_translate_input, "base_style", None
+                        )
+                        simplified_input = type(repair_translate_input)(
+                            simplified, kept_placeholders, base_style
+                        )
+                        set_tokens = getattr(
+                            simplified_input, "set_original_placeholder_tokens", None
+                        )
+                        if callable(set_tokens):
+                            set_tokens({})
+                        repair_translate_input = simplified_input
+                        repair_input = simplified
+                        simplified_style = True
+                        record["repair_translate_input"] = simplified_input
+                        record["simplified_style"] = True
+                        _write_job_log(
+                            request_state,
+                            {
+                                "event": "style_simplified",
+                                "phase": "repair",
+                                "id": repair_id,
+                                "layout_label": record.get("layout_label", "text"),
+                                "removed_style_tags": style_report[
+                                    "removed_style_tags"
+                                ],
+                                "kept_style_tags": style_report["kept_style_tags"],
+                                "preserved_placeholders": style_report[
+                                    "kept_placeholders"
+                                ],
+                            },
+                            api_key,
+                        )
+                except Exception as error:
+                    _write_job_log(
+                        request_state,
+                        {
+                            "event": "style_simplify_error",
+                            "phase": "repair",
+                            "id": repair_id,
+                            "error": log_safe_error(error, api_key),
+                        },
+                        api_key,
+                    )
+            required_placeholders = metadata.get("required_placeholders", [])
+            if simplified_style and repair_translate_input is not None:
+                required_placeholders = [
+                    {"token": token, "count": count}
+                    for token, count in sorted(
+                        _expected_placeholder_counts(repair_translate_input).items()
+                    )
+                ]
             repair_item: dict[str, Any] = {
                 "id": repair_id,
-                "input": record.get("source", ""),
+                "input": repair_input,
                 "layout_label": record.get("layout_label", "text"),
                 "repair_reason": record.get("reason", ""),
-                "required_placeholders": metadata.get("required_placeholders", []),
+                "required_placeholders": required_placeholders,
+                "protected_spans": metadata.get("protected_spans", []),
                 "previous_context": metadata.get("previous_context", ""),
                 "next_context": metadata.get("next_context", ""),
             }
-            placeholders_hint = getattr(record.get("translate_input"), "get_placeholders_hint", None)
+            placeholders_hint = getattr(
+                repair_translate_input, "get_placeholders_hint", None
+            )
             if callable(placeholders_hint):
                 hint = placeholders_hint()
                 if hint:
@@ -4716,6 +4916,7 @@ def _install_min_request_patches(
 
         repair_quality_by_id: dict[int, dict[str, Any]] = {}
         repair_translation_by_id: dict[int, Any] = {}
+        repair_structural_by_id: dict[int, bool] = {}
         for repair_id, record in records_by_repair_id.items():
             repair_item = repair_items[repair_id]
             output_item = outputs_by_id.get(repair_id, {})
@@ -4732,6 +4933,9 @@ def _install_min_request_patches(
                 else {"usable": False, "reason": str(failure_message), "checks": {"non_empty": False}}
             )
             repair_translation_by_id[repair_id] = translated
+            repair_structural_by_id[repair_id] = _is_structural_quality_failure(
+                quality.get("checks", {})
+            )
             group_id = str(record.get("metadata", {}).get("fragment_id") or "")
             if (
                 group_id in failed_repair_groups
@@ -4762,7 +4966,8 @@ def _install_min_request_patches(
                         document_translator.il_translator.post_translate_paragraph(
                             record["paragraph"],
                             record["tracker"],
-                            record["translate_input"],
+                            record.get("repair_translate_input")
+                            or record["translate_input"],
                             str(translated),
                         )
                     )
@@ -4777,6 +4982,15 @@ def _install_min_request_patches(
                         {"event": "repair_apply_error", "error": log_safe_error(error, api_key)},
                         api_key,
                     )
+            if (
+                not applied
+                and quality.get("usable")
+                and not quality.get("checks", {}).get("kept_verbatim")
+            ):
+                # Accepted text that BabelDOC still refused to apply is a
+                # restoration failure, not a paragraph that may keep its source.
+                quality.setdefault("checks", {})["restore_failed"] = True
+                repair_structural_by_id[repair_id] = True
             applied_by_id[repair_id] = applied
             if applied:
                 request_state.setdefault("translated_paragraph_ids", set()).add(
@@ -4832,6 +5046,17 @@ def _install_min_request_patches(
                     record["repair_reason"] = quality.get("reason") or "补译未通过检查，已保留原文。"
                     record["repair_checks"] = quality.get("checks", {})
             if not applied and repair_id not in kept_verbatim_by_id:
+                if repair_structural_by_id.get(repair_id) or _is_structural_quality_failure(
+                    quality.get("checks")
+                ):
+                    _record_quality_failure(
+                        request_state,
+                        record.get("paragraph"),
+                        record["repair_reason"],
+                        quality.get("checks", {}),
+                        api_key,
+                        phase="repair",
+                    )
                 policy.record_failure(record.get("paragraph"), record["repair_reason"])
 
             _write_job_log(
@@ -4982,6 +5207,7 @@ def _install_min_request_patches(
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
                     page_positions[id(paragraph)] = (page_index, paragraph_index)
             policy.paragraph_locations = page_positions
+            request_state["paragraph_positions"] = page_positions
 
             flattened: list[dict[str, Any]] = []
             seen_paragraphs: set[int] = set()
@@ -5565,6 +5791,44 @@ def main() -> int:
                 "kind": request_state.get("fatal_kind") or "api_error",
                 "failed_paragraphs": len(fatal_failures),
                 "failures": fatal_failures,
+                "requests": request_budget.requests,
+                "planned": request_budget.planned,
+                "log_path": job_log_path or None,
+            },
+            api_key,
+        )
+        return 1
+
+    quality_failures = list((request_state.get("quality_failures") or {}).values())
+    if quality_failures:
+        details = "；".join(
+            f"{failure['location']}：{failure['reason']}"
+            for failure in quality_failures[:5]
+        )
+        message = (
+            f"整篇翻译失败：{len(quality_failures)} 段应译内容无法安全还原"
+            + (f"（{details}）" if details else "")
+            + "。"
+        )
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "kind": "translation_quality",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "quality_failures": quality_failures,
+            },
+            api_key,
+        )
+        _emit(
+            "ZTF_ERROR ",
+            {
+                "message": with_translation_counts(message),
+                "kind": "translation_quality",
+                "failed_paragraphs": len(quality_failures),
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,
