@@ -52,7 +52,8 @@
     <label><html:h2 data-l10n-id="babeldoc-for-zotero-pref-section-environment" /></label>
     <html:div style="display:grid;grid-template-columns:190px minmax(0,1fr);align-items:center;column-gap:12px;row-gap:8px">
       <html:label for="babeldoc-for-zotero-preferences-download-source" data-l10n-id="babeldoc-for-zotero-pref-download-source" />
-      <menulist id="babeldoc-for-zotero-preferences-download-source" preference="extensions.babeldoc-for-zotero.downloadSource">
+      <menulist id="babeldoc-for-zotero-preferences-download-source" preference="extensions.babeldoc-for-zotero.downloadSource"
+                style="max-width:280px">
         <menupopup>
           <menuitem value="china" data-l10n-id="babeldoc-for-zotero-pref-source-china" />
           <menuitem value="official" data-l10n-id="babeldoc-for-zotero-pref-source-official" />
@@ -63,10 +64,12 @@
                 data-l10n-id="babeldoc-for-zotero-pref-environment-missing" />
       <html:span />
       <html:button id="babeldoc-for-zotero-preferences-install" type="button"
-                   data-l10n-id="babeldoc-for-zotero-pref-install-environment" />
+                   data-l10n-id="babeldoc-for-zotero-pref-install-environment"
+                   style="justify-self:start;min-width:120px" />
       <html:span />
       <html:button id="babeldoc-for-zotero-preferences-check" type="button"
-                   data-l10n-id="babeldoc-for-zotero-pref-check-environment" />
+                   data-l10n-id="babeldoc-for-zotero-pref-check-environment"
+                   style="justify-self:start;min-width:120px" />
       <html:span />
       <html:div id="babeldoc-for-zotero-preferences-check-result" role="status" aria-live="polite"
                 style="white-space:pre-wrap" />
