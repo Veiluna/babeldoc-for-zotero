@@ -273,7 +273,10 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         deployed = ARTIFACTS / "deployed"
         deployed.mkdir(exist_ok=True)
         shutil.copyfile(RUNNER, deployed / RUNNER.name)
-        for helper in ("ztf_inline_formulas.py", "ztf_style_guards.py", "ztf_table_headers.py"):
+        for helper in (
+            "ztf_inline_formulas.py", "ztf_style_guards.py",
+            "ztf_links.py", "ztf_table_headers.py",
+        ):
             source = ROOT / "addon/content/python" / helper
             shutil.copyfile(source, deployed / helper)
         cls.completed, cls.result, cls.error, cls.inputs, cls.records, cls.request_count = cls.run_job()

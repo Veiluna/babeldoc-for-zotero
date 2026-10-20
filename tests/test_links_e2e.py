@@ -156,7 +156,10 @@ def run_translation(source: Path) -> tuple[subprocess.CompletedProcess, dict | N
     deployed = ARTIFACTS / "deployed"
     deployed.mkdir(exist_ok=True)
     shutil.copyfile(RUNNER, deployed / RUNNER.name)
-    for helper in ("ztf_inline_formulas.py", "ztf_style_guards.py", "ztf_links.py"):
+    for helper in (
+        "ztf_inline_formulas.py", "ztf_style_guards.py",
+        "ztf_links.py", "ztf_table_headers.py",
+    ):
         shutil.copyfile(ROOT / "addon/content/python" / helper, deployed / helper)
     command = [
         sys.executable, str(deployed / RUNNER.name),
