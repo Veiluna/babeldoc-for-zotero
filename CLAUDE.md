@@ -2,6 +2,8 @@
 
 本仓库的协作与代码编写规则见 [AGENTS.md](AGENTS.md)（AstraPilot 分工），两份文件的规则一致。以下是 Claude 需要特别注意的部分。
 
+执行 GitHub #13 时，先读取 AGENTS.md 的“当前已授权任务”及其规格入口；本轮由 Codex 临时接手下文 Claude 职责。
+
 ## Claude 的职责
 
 - **默认只做调度，不编写实现代码**：

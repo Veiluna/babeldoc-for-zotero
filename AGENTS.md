@@ -1,5 +1,9 @@
 # AGENTS.md — 协作与代码编写规则（AstraPilot 分工）
 
+## 当前已授权任务
+
+执行 [翻译质量与双语 PDF 规格](docs/specs/translation-quality-and-bilingual.md)（GitHub #13）时，采用规格末尾的本轮分工：Codex 临时调度、验证、提交和发布 PR；实现使用 `gpt-6.1-sol`、`xhigh`，独立新会话评审。这是用户对下文旧模型分工的明确覆盖。
+
 本仓库的所有代码工作按以下分工进行。Codex、Claude 及其他 agent 都必须遵守。
 
 ## 角色
