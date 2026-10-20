@@ -190,6 +190,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var pythonHelpers = [
         ["ztf_inline_formulas.py", "公式辅助模块"],
         ["ztf_style_guards.py", "样式保护辅助模块"],
+        ["ztf_links.py", "链接恢复辅助模块"],
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
         var helperName = pythonHelpers[helperIndex][0];
@@ -274,6 +275,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var eventError = "";
       var eventErrorKind = "";
       var warning = null;
+      var linkStats = null;
 
       function handleProtocolLine(rawLine) {
         var line = rawLine.replace(/\r$/, "");
@@ -322,6 +324,15 @@ var ZoteroTranslateFilesRunner = (function () {
           var fragmentItems = event.fragment_item_count == null ? NaN : Number(event.fragment_item_count);
           if (Number.isFinite(fragmentItems)) fragmentItemCount = Math.max(0, Math.floor(fragmentItems));
           if (event.log_path) logPath = String(event.log_path);
+          if (event.links && typeof event.links === "object") {
+            linkStats = {
+              source: Number(event.links.source) || 0,
+              restored: Number(event.links.restored) || 0,
+              unresolved: Number(event.links.unresolved) || 0,
+              unsupported: Number(event.links.unsupported) || 0,
+              mappingPath: event.links.mapping_path ? String(event.links.mapping_path) : null,
+            };
+          }
           // The runner adapts if the provider rejects the token-limit parameter;
           // remember what worked so the next job uses it from the first request.
           if (event.token_param && event.token_param !== settings.tokenParam &&
@@ -414,6 +425,8 @@ var ZoteroTranslateFilesRunner = (function () {
         repairRequestCount: repairRequestCount,
         fragmentItemCount: fragmentItemCount,
         logPath: logPath,
+        linkStats: linkStats,
+        linkMappingPath: linkStats && linkStats.mappingPath ? linkStats.mappingPath : null,
         cleanup: cleanup,
       };
     } catch (error) {
