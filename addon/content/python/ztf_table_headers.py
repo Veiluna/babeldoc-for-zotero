@@ -272,9 +272,17 @@ def _is_generic_label(text):
         for key in keys
     ):
         return True
-    return all(
+    if all(
         key in _GENERIC_KEYS or key in _CONNECTOR_KEYS for key in keys
-    ) and any(key in _GENERIC_KEYS for key in keys)
+    ) and any(key in _GENERIC_KEYS for key in keys):
+        return True
+    # 表头带中的普通英文短语（如 "Published Flows"）即使不在固定词表，
+    # 也是可翻译的列标题；专名、缩写与数据已由 _is_name_like 排除。
+    return (
+        len(plain) <= 40
+        and not _is_name_like(plain)
+        and any(re.fullmatch(r"[A-Za-z]{3,}", token) for token in tokens)
+    )
 
 
 def _is_name_like(text):

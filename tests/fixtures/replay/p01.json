@@ -261,19 +261,19 @@
   "page": 4,
   "index": 1,
   "preview": "Machine",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 2,
   "preview": "OS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 3,
   "preview": "IPs",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -285,31 +285,31 @@
   "page": 4,
   "index": 5,
   "preview": "Servers",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 6,
   "preview": "Win",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 7,
   "preview": "Server",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 8,
   "preview": "2016 (DC and",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 9,
   "preview": "DNS)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -321,7 +321,7 @@
   "page": 4,
   "index": 11,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -333,7 +333,7 @@
   "page": 4,
   "index": 13,
   "preview": "(Web Server)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -351,7 +351,7 @@
   "page": 4,
   "index": 16,
   "preview": "Ubuntu 12",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -369,13 +369,13 @@
   "page": 4,
   "index": 19,
   "preview": "PCs",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 20,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -405,7 +405,7 @@
   "page": 4,
   "index": 25,
   "preview": "Ubuntu",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -435,7 +435,7 @@
   "page": 4,
   "index": 30,
   "preview": "Win 7Pro",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -447,7 +447,7 @@
   "page": 4,
   "index": 32,
   "preview": "Win 8.1-64",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -459,7 +459,7 @@
   "page": 4,
   "index": 34,
   "preview": "Win Vista",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -471,7 +471,7 @@
   "page": 4,
   "index": 36,
   "preview": "Win",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -483,7 +483,7 @@
   "page": 4,
   "index": 38,
   "preview": "(Pro",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -507,7 +507,7 @@
   "page": 4,
   "index": 42,
   "preview": "Mac",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -519,13 +519,13 @@
   "page": 4,
   "index": 44,
   "preview": "Firewall",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 45,
   "preview": "Fortinet",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -537,31 +537,31 @@
   "page": 4,
   "index": 47,
   "preview": "PCs",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 48,
   "preview": "Kali",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 49,
   "preview": "win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 50,
   "preview": "Win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 51,
   "preview": "Win 8.1",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -693,103 +693,103 @@
   "page": 5,
   "index": 2,
   "preview": "Days",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 3,
   "preview": "Labels",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 4,
   "preview": "Monday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 5,
   "preview": "Benign",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 6,
   "preview": "Tuesday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 7,
   "preview": "BForce,SFTP and SSH",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 8,
   "preview": "Wednes.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 9,
   "preview": "DoS and Hearbleed Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 10,
   "preview": "slowloris, Slowhttptest,",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 11,
   "preview": "Hulk and GoldenEye",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 12,
   "preview": "Thurs.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 13,
   "preview": "Web and Infiltration Att",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 14,
   "preview": "Web BForce, XSS and Sql ",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 15,
   "preview": "Infiltration Dropbox Dow",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 16,
   "preview": "and Cool disk",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 17,
   "preview": "Friday",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 18,
   "preview": "DDoS LOIT",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -801,7 +801,7 @@
   "page": 5,
   "index": 20,
   "preview": "Botnet ARES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -813,13 +813,13 @@
   "page": 5,
   "index": 22,
   "preview": "PortScans (sS,sT,sF,sX,s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 23,
   "preview": "sO,sA,sW,sR,sL and B)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -945,13 +945,13 @@
   "page": 6,
   "index": 10,
   "preview": "Benign",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 11,
   "preview": "B.Packet Len Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -963,7 +963,7 @@
   "page": 6,
   "index": 13,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -975,7 +975,7 @@
   "page": 6,
   "index": 15,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -987,7 +987,7 @@
   "page": 6,
   "index": 17,
   "preview": "F.Packet Len Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -999,13 +999,13 @@
   "page": 6,
   "index": 19,
   "preview": "DoS GoldenEye",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 20,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1017,7 +1017,7 @@
   "page": 6,
   "index": 22,
   "preview": "Flow IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1029,7 +1029,7 @@
   "page": 6,
   "index": 24,
   "preview": "Fwd IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1041,7 +1041,7 @@
   "page": 6,
   "index": 26,
   "preview": "Flow IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1053,13 +1053,13 @@
   "page": 6,
   "index": 28,
   "preview": "Heartbleed",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 29,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1071,7 +1071,7 @@
   "page": 6,
   "index": 31,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1083,7 +1083,7 @@
   "page": 6,
   "index": 33,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1095,7 +1095,7 @@
   "page": 6,
   "index": 35,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1107,13 +1107,13 @@
   "page": 6,
   "index": 37,
   "preview": "DoS Hulk",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 38,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1125,7 +1125,7 @@
   "page": 6,
   "index": 40,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1137,7 +1137,7 @@
   "page": 6,
   "index": 42,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1149,7 +1149,7 @@
   "page": 6,
   "index": 44,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1161,13 +1161,13 @@
   "page": 6,
   "index": 46,
   "preview": "DoS Slowhttp",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 47,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1179,7 +1179,7 @@
   "page": 6,
   "index": 49,
   "preview": "Active Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1191,7 +1191,7 @@
   "page": 6,
   "index": 51,
   "preview": "Active Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1203,7 +1203,7 @@
   "page": 6,
   "index": 53,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1215,13 +1215,13 @@
   "page": 6,
   "index": 55,
   "preview": "DoS slowloris",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 56,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1233,7 +1233,7 @@
   "page": 6,
   "index": 58,
   "preview": "F.IAT Min",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1245,7 +1245,7 @@
   "page": 6,
   "index": 60,
   "preview": "B.IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1257,7 +1257,7 @@
   "page": 6,
   "index": 62,
   "preview": "F.IAT Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1269,13 +1269,13 @@
   "page": 6,
   "index": 64,
   "preview": "SSH-Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 65,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1287,7 +1287,7 @@
   "page": 6,
   "index": 67,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1299,7 +1299,7 @@
   "page": 6,
   "index": 69,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1311,7 +1311,7 @@
   "page": 6,
   "index": 71,
   "preview": "ACK Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1323,13 +1323,13 @@
   "page": 6,
   "index": 73,
   "preview": "FTP-Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 74,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1341,7 +1341,7 @@
   "page": 6,
   "index": 76,
   "preview": "F.PSH Flags",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1353,7 +1353,7 @@
   "page": 6,
   "index": 78,
   "preview": "SYN Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1365,7 +1365,7 @@
   "page": 6,
   "index": 80,
   "preview": "F.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1377,13 +1377,13 @@
   "page": 6,
   "index": 82,
   "preview": "Web Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 83,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1395,7 +1395,7 @@
   "page": 6,
   "index": 85,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1407,7 +1407,7 @@
   "page": 6,
   "index": 87,
   "preview": "Init Win B.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1419,7 +1419,7 @@
   "page": 6,
   "index": 89,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1431,13 +1431,13 @@
   "page": 6,
   "index": 91,
   "preview": "Infiltration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 92,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1449,7 +1449,7 @@
   "page": 6,
   "index": 94,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1461,7 +1461,7 @@
   "page": 6,
   "index": 96,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1473,7 +1473,7 @@
   "page": 6,
   "index": 98,
   "preview": "Active Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1485,13 +1485,13 @@
   "page": 6,
   "index": 100,
   "preview": "Bot",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 101,
   "preview": "Subflow F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1503,7 +1503,7 @@
   "page": 6,
   "index": 103,
   "preview": "Total Len F.Packets",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1515,7 +1515,7 @@
   "page": 6,
   "index": 105,
   "preview": "F.Packet Len Mean",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1527,7 +1527,7 @@
   "page": 6,
   "index": 107,
   "preview": "B.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1539,13 +1539,13 @@
   "page": 6,
   "index": 109,
   "preview": "PortScan",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 110,
   "preview": "Init Win F.Bytes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1557,7 +1557,7 @@
   "page": 6,
   "index": 112,
   "preview": "B.Packets/s",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1569,7 +1569,7 @@
   "page": 6,
   "index": 114,
   "preview": "PSH Flag Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1581,13 +1581,13 @@
   "page": 6,
   "index": 116,
   "preview": "DDoS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
   "index": 117,
   "preview": "B.Packet Len Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1599,7 +1599,7 @@
   "page": 6,
   "index": 119,
   "preview": "Avg Packet Size",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1611,7 +1611,7 @@
   "page": 6,
   "index": 121,
   "preview": "Flow Duration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1623,7 +1623,7 @@
   "page": 6,
   "index": 123,
   "preview": "Flow IAT Std",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 6,
@@ -1659,13 +1659,13 @@
   "page": 7,
   "index": 2,
   "preview": "Pr",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 3,
   "preview": "Rc",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1683,13 +1683,13 @@
   "page": 7,
   "index": 6,
   "preview": "(Sec.)",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
   "index": 7,
   "preview": "KNN",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1719,7 +1719,7 @@
   "page": 7,
   "index": 12,
   "preview": "RF",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1749,7 +1749,7 @@
   "page": 7,
   "index": 17,
   "preview": "ID3",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1809,7 +1809,7 @@
   "page": 7,
   "index": 27,
   "preview": "MLP",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1839,7 +1839,7 @@
   "page": 7,
   "index": 32,
   "preview": "Naive-Bayes",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -1869,7 +1869,7 @@
   "page": 7,
   "index": 37,
   "preview": "QDA",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 7,
@@ -2049,13 +2049,13 @@
   "page": 8,
   "index": 4,
   "preview": "Interact.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 5,
   "preview": "Captu.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2073,13 +2073,13 @@
   "page": 8,
   "index": 8,
   "preview": "Ano.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 9,
   "preview": "Heter.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2091,7 +2091,7 @@
   "page": 8,
   "index": 11,
   "preview": "Meta.",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2109,13 +2109,13 @@
   "page": 8,
   "index": 14,
   "preview": "SSH",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 15,
   "preview": "FTP",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2139,13 +2139,13 @@
   "page": 8,
   "index": 19,
   "preview": "DoS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 20,
   "preview": "Scan",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2157,7 +2157,7 @@
   "page": 8,
   "index": 22,
   "preview": "DNS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2169,373 +2169,373 @@
   "page": 8,
   "index": 24,
   "preview": "DARPA",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 25,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 26,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 27,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 28,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 29,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 30,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 31,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 32,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 33,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 34,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 35,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 36,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 37,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 38,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 39,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 40,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 41,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 42,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 43,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 44,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 45,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 46,
   "preview": "KDD’99",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 47,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 48,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 49,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 50,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 51,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 52,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 53,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 54,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 55,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 56,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 57,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 58,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 59,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 60,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 61,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 62,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 63,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 64,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 65,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 66,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 67,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 68,
   "preview": "DEFCON",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 69,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 70,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 71,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 72,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 73,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 74,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 75,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 76,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 77,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 78,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 79,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 80,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 81,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 82,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 83,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 84,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 85,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2547,55 +2547,55 @@
   "page": 8,
   "index": 87,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 88,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 89,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 90,
   "preview": "CAIDAs",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 91,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 92,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 93,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 94,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 95,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2631,133 +2631,133 @@
   "page": 8,
   "index": 101,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 102,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 103,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 104,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 105,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 106,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 107,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 108,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 109,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 110,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 111,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 112,
   "preview": "LBNL",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 113,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 114,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 115,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 116,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 117,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 118,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 119,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 120,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 121,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 122,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2781,7 +2781,7 @@
   "page": 8,
   "index": 126,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2805,127 +2805,127 @@
   "page": 8,
   "index": 130,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 131,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 132,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 133,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 134,
   "preview": "CDX",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 135,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 136,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 137,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 138,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 139,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 140,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 141,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 142,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 143,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 144,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 145,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 146,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 147,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 148,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 149,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 150,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -2943,259 +2943,259 @@
   "page": 8,
   "index": 153,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 154,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 155,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 156,
   "preview": "KYOTO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 157,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 158,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 159,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 160,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 161,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 162,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 163,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 164,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 165,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 166,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 167,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 168,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 169,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 170,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 171,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 172,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 173,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 174,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 175,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 176,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 177,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 178,
   "preview": "TWENTE",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 179,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 180,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 181,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 182,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 183,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 184,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 185,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 186,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 187,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 188,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 189,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 190,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 191,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 192,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 193,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 194,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 195,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3213,121 +3213,121 @@
   "page": 8,
   "index": 198,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 199,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 200,
   "preview": "UMASS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 201,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 202,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 203,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 204,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 205,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 206,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 207,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 208,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 209,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 210,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 211,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 212,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 213,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 214,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 215,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 216,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 217,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3345,259 +3345,259 @@
   "page": 8,
   "index": 220,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 221,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 222,
   "preview": "ISCX2012",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 223,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 224,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 225,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 226,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 227,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 228,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 229,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 230,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 231,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 232,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 233,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 234,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 235,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 236,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 237,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 238,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 239,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 240,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 241,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 242,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 243,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 244,
   "preview": "ADFA2013",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 245,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 246,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 247,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 248,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 249,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 250,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 251,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 252,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 253,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 254,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 255,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 256,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 257,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 258,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 259,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 260,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 261,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 262,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -3609,145 +3609,145 @@
   "page": 8,
   "index": 264,
   "preview": "NO",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 265,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 266,
   "preview": "CICIDS2017",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 267,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 268,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 269,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 270,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 271,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 272,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 273,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 274,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 275,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 276,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 277,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 278,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 279,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 280,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 281,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 282,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 283,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 284,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 285,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 286,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
   "index": 287,
   "preview": "YES",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
