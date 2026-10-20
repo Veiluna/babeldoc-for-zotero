@@ -210,7 +210,10 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
   const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
-  for (const helperName of ["ztf_inline_formulas.py", "ztf_style_guards.py", "ztf_links.py"]) {
+  for (const helperName of [
+    "ztf_inline_formulas.py", "ztf_style_guards.py",
+    "ztf_links.py", "ztf_table_headers.py",
+  ]) {
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
       entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner" &&
@@ -351,12 +354,17 @@ async function parsesAndRedactsPartialFailureWarning() {
     warning: {
       failed_paragraphs: 3,
       message: "Connection error with RUNNER_SECRET_KEY_789",
+      tables: [{ table: "表 4", page: 4, reason: "no data rows" }],
     },
   });
   const result = await harness.runner.translate(harness.item, {});
   assert.equal(result.warning.failed_paragraphs, 3);
   assert.ok(result.warning.message.includes("Connection error"));
   assert.ok(!result.warning.message.includes(harness.apiKey));
+  assert.equal(result.warning.tables.length, 1);
+  assert.equal(result.warning.tables[0].table, "表 4");
+  assert.equal(result.warning.tables[0].page, 4);
+  assert.equal(result.warning.tables[0].reason, "no data rows");
   await result.cleanup();
 }
 

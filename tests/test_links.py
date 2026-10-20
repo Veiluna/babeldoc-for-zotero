@@ -167,6 +167,35 @@ class LinkAnchorTest(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_source_link_rect_is_read_back_in_text_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rotated.pdf"
+            doc = pymupdf.open()
+            try:
+                page = doc.new_page(width=300, height=400)
+                page.insert_text((50, 80), "hello world", fontname="tiro", fontsize=10)
+                page.set_cropbox(pymupdf.Rect(20, 30, 280, 380))
+                page.set_rotation(90)
+                page = doc[0]
+                text_rect = page.search_for("hello")[0]
+                links._insert_link(
+                    doc, page, text_rect,
+                    {"type": "uri", "uri": "https://example.org/code"}, None, None,
+                )
+                doc.save(path)
+            finally:
+                doc.close()
+            with pymupdf.open(path) as reopened:
+                records = links._source_links(reopened, [])
+            self.assertEqual(len(records), 1)
+            actual = pymupdf.Rect(records[0]["source_from_unrotated"])
+            for got, expected in zip(
+                (actual.x0, actual.y0, actual.x1, actual.y1),
+                (text_rect.x0, text_rect.y0, text_rect.x1, text_rect.y1),
+            ):
+                self.assertAlmostEqual(got, expected, delta=1.0)
+            self.assertEqual(records[0]["anchor"]["text"], "hello")
+
 
 class LinkDestinationTest(unittest.TestCase):
     def _named_fixture(self, directory: Path, bad: bool = False) -> Path:

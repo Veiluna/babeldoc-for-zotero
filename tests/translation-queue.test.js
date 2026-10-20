@@ -845,6 +845,33 @@ async function partialFailureWarningShowsInCompletionProgress() {
   );
 }
 
+async function uncertainTableWarningShowsInCompletionProgress() {
+  const harness = makeHarness({
+    runner: {
+      async translate() {
+        return {
+          outputPath: "tables.pdf",
+          warning: {
+            failed_paragraphs: 0,
+            message: "表 5（物理第 2 页）无法可靠识别表头，已整表保留原文。",
+            tables: [{ table: "表 5", page: 2, reason: "" }],
+          },
+        };
+      },
+    },
+  });
+  harness.items.set(44, { id: 44 });
+  harness.queue.enqueue([44]);
+  await harness.queue.onIdle();
+
+  assert.ok(
+    harness.progressWindows[0].texts.some(text =>
+      text.includes("（表 5（第 2 页）未能可靠识别表头，已整表保留原文）")
+    ),
+    "uncertain tables should name the table and physical page when the job completes",
+  );
+}
+
 async function cleanupRunsWhenImportFails() {
   const events = [];
   const failures = [];
@@ -929,6 +956,7 @@ async function maintenanceLockRefusesActiveWorkAndPausesNewJobs() {
   await failureLogsOmitRunnerAndHandlerErrors();
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
+  await uncertainTableWarningShowsInCompletionProgress();
   await cleanupRunsWhenImportFails();
   await maintenanceLockRefusesActiveWorkAndPausesNewJobs();
   process.stdout.write("translation queue regression cases passed\n");
