@@ -56,6 +56,24 @@ def _fragment_part(item: dict) -> str | None:
     return None
 
 
+def _synthetic_chinese(text: str, seed: int = 0) -> str:
+    """Replace one plain run with token-matched Chinese; keep non-letters."""
+    if not re.search(r"[A-Za-z]", text):
+        return text
+    source_tokens = _encode_tokens(text)
+    # About 1.2 Chinese tokens per English token, like real en→zh output.
+    count = max(2, int((len(source_tokens) if source_tokens is not None else len(text) / 4) * 1.2))
+    # Each item gets its own character sequence (seeded by its text and seed),
+    # so tests can find a specific paragraph's translation in the output PDF.
+    pool = "".join(_MOCK_CHINESE_CYCLES)
+    state = zlib.crc32(f"{seed}:{text}".encode("utf-8"))
+    characters = []
+    for _ in range(count):
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+        characters.append(pool[state % len(pool)])
+    return "".join(characters)
+
+
 def _synthetic_translation(source: str, seed: int = 0) -> str:
     markers = _MOCK_PLACEHOLDER_TOKEN_RE.findall(source)
     plain = _MOCK_PLACEHOLDER_TOKEN_RE.sub("", source)
@@ -71,6 +89,30 @@ def _synthetic_translation(source: str, seed: int = 0) -> str:
         state = (state * 1103515245 + 12345) & 0x7FFFFFFF
         characters.append(pool[state % len(pool)])
     return "".join(characters) + "".join(markers)
+
+
+def _synthetic_translation_in_place(source: str, seed: int = 0) -> str:
+    """Translate each plain run but leave every placeholder where it was.
+
+    Replay uses this so the runner sees a realistic model that keeps style and
+    formula markers in their original positions instead of piling them up at
+    the end of the item.
+    """
+    markers = list(_MOCK_PLACEHOLDER_TOKEN_RE.finditer(source))
+    if not markers:
+        return _synthetic_chinese(source, seed)
+    parts: list[str] = []
+    position = 0
+    for match in markers:
+        segment = source[position:match.start()]
+        if segment:
+            parts.append(_synthetic_chinese(segment, seed + position))
+        parts.append(match.group(0))
+        position = match.end()
+    segment = source[position:]
+    if segment:
+        parts.append(_synthetic_chinese(segment, seed + position))
+    return "".join(parts)
 
 
 def _encode_tokens(text: str) -> list[int] | None:
@@ -292,7 +334,11 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             ):
                 # Deliberately omit the continuation; the runner should repair it in one packed pass.
                 translated = ""
-            elif self.server.bad_fragments or self.server.synthetic:
+            elif self.server.synthetic and not self.server.bad_fragments:
+                # Keep every placeholder at its original position; a real model
+                # returns style/formula spans in place, not at the item's end.
+                translated = _synthetic_translation_in_place(source_text, index)
+            elif self.server.bad_fragments:
                 translated = _synthetic_translation(source_text, index)
             else:
                 translated = "\u8bd1\uff1a" + source_text

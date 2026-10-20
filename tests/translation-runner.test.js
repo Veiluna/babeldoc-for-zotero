@@ -209,11 +209,13 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
   const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
-  assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
-    entry[1].endsWith("content/python/ztf_inline_formulas.py")), "读取公式辅助模块");
-  assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner" &&
-    entry[1] === path.win32.join(runnerDirectory, "ztf_inline_formulas.py") &&
-    entry[2] && entry[3] === "utf-8"), "辅助模块与实际执行的 runner 放在同一目录");
+  for (const helperName of ["ztf_inline_formulas.py", "ztf_style_guards.py"]) {
+    assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
+      entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
+    assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner" &&
+      entry[1] === path.win32.join(runnerDirectory, helperName) &&
+      entry[2] && entry[3] === "utf-8"), "辅助模块与实际执行的 runner 放在同一目录 " + helperName);
+  }
   assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero"));
   assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero\\logs"));
   assert.equal(harness.createdDirectories.length, 4, "data, logs, job, and BabelDOC working directories should be created");
