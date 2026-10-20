@@ -246,7 +246,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     "print('smoke=ok')",
   ].join("\n");
 
-  async function checkEnvironment(options) {
+  function checkEnvironment(options) {
     options = options || {};
     if (environmentCheck) return environmentCheck;
     var signal = options.signal;
