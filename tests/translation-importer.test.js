@@ -528,6 +528,21 @@ function makeLinkedReplacement(options, id, dateAdded) {
 
   const failedImportOriginal = makeOriginal({ parentItemID: 84, id: 841 });
   const unrelatedImportError = new Error("importFromFile failed");
+  const dualOriginal = makeOriginal({ parentItemID: 46 });
+  const dualAttachment = await importer.importResult(
+    dualOriginal,
+    "C:\\Temp\\dual.pdf",
+    "dual",
+  );
+  const dualOptions = context.Zotero.Attachments.calls[context.Zotero.Attachments.calls.length - 1];
+  assert.equal(dualOptions.title, "Original title（中英对照）");
+  assert.equal(dualOptions.fileBaseName, "Smith_ 2020_ - Title.zh.dual");
+  assert.equal(
+    context.ZoteroTranslateFilesAttachments.isTranslatedAttachment(dualAttachment),
+    true,
+    "bilingual attachments are recognized as generated and never re-enqueued",
+  );
+
   context.Zotero.Attachments.importFromFile = async function (options) {
     this.calls.push(options);
     throw unrelatedImportError;

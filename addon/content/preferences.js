@@ -277,6 +277,37 @@ var ZoteroTranslateFilesPreferences = (function () {
     });
   }
 
+  async function renderEnvironmentCheck(document, result) {
+    var target = document.getElementById(PANE_ID + "-check-result");
+    if (!target) return;
+    while (target.firstChild) target.removeChild(target.firstChild);
+    async function format(messageId, args) {
+      try {
+        if (document.l10n && typeof document.l10n.formatValue === "function") {
+          return await document.l10n.formatValue(messageId, args || {});
+        }
+      } catch (error) {
+        // Fall back to the message id so the pane still shows something.
+      }
+      return messageId;
+    }
+    var lines = [];
+    var entries = result && result.checks ? result.checks : [];
+    for (var index = 0; index < entries.length; index++) {
+      var item = entries[index];
+      var status = await format(item.status === "pass"
+        ? "babeldoc-for-zotero-check-status-pass"
+        : "babeldoc-for-zotero-check-status-fail");
+      var detail = await format(item.messageId, item.args);
+      lines.push(status + "：" + detail);
+    }
+    lines.push(await format(result && result.ok
+      ? "babeldoc-for-zotero-check-result-ok"
+      : "babeldoc-for-zotero-check-result-fail"));
+    if (result && result.log) lines.push(result.log);
+    target.textContent = lines.join("\n");
+  }
+
   function initializePane(document, window) {
     var pane = document.getElementById(PANE_ID);
     if (!pane || pane.dataset.initialized === "true") return;
@@ -364,6 +395,62 @@ var ZoteroTranslateFilesPreferences = (function () {
         button.disabled = false;
       }
     });
+
+    var homepage = document.getElementById(PANE_ID + "-homepage");
+    if (homepage) {
+      homepage.addEventListener("click", function (event) {
+        event.preventDefault();
+        try {
+          Zotero.launchURL("https://github.com/Veiluna/babeldoc-for-zotero");
+        } catch (error) {
+          // A failed navigation must not break the settings pane.
+        }
+      });
+    }
+
+    var environmentCheckController = null;
+    var checkButton = document.getElementById(PANE_ID + "-check");
+    if (checkButton) {
+      checkButton.addEventListener("click", async function () {
+        if (environmentCheckController) {
+          environmentCheckController.abort();
+          return;
+        }
+        environmentCheckController = typeof AbortController === "function"
+          ? new AbortController()
+          : null;
+        setMessage(document, PANE_ID + "-check-result", "babeldoc-for-zotero-pref-check-running");
+        try {
+          var result = await ZoteroTranslateFilesInstaller.checkEnvironment({
+            source: ZoteroTranslateFilesConfig.getDownloadSource(),
+            signal: environmentCheckController ? environmentCheckController.signal : null,
+          });
+          await renderEnvironmentCheck(document, result);
+        } catch (error) {
+          var cancelled = environmentCheckController &&
+            environmentCheckController.signal.aborted;
+          var detail = ZoteroTranslateFilesConfig.redact(
+            error && error.message ? error.message : error
+          );
+          if (cancelled) {
+            setMessage(document, PANE_ID + "-check-result",
+              "babeldoc-for-zotero-check-cancelled");
+          } else if (document.l10n && typeof document.l10n.formatValue === "function") {
+            try {
+              setPlainText(document, PANE_ID + "-check-result",
+                await document.l10n.formatValue("babeldoc-for-zotero-check-error",
+                  { detail: detail }));
+            } catch (formatError) {
+              setPlainText(document, PANE_ID + "-check-result", detail);
+            }
+          } else {
+            setPlainText(document, PANE_ID + "-check-result", detail);
+          }
+        } finally {
+          environmentCheckController = null;
+        }
+      });
+    }
 
     updateInstallStatus(document);
   }

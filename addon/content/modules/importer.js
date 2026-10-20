@@ -13,9 +13,10 @@ var ZoteroTranslateFilesImporter = (function () {
     return fileName;
   }
 
-  function getTranslatedFileBaseName(originalFileName) {
+  function getTranslatedFileBaseName(originalFileName, kind) {
     var originalStem = String(originalFileName).replace(/\.pdf$/i, "");
-    var translatedFileName = Zotero.File.getValidFileName(originalStem + ".zh.pdf");
+    var suffix = kind === "dual" ? ".zh.dual.pdf" : ".zh.pdf";
+    var translatedFileName = Zotero.File.getValidFileName(originalStem + suffix);
     if (!translatedFileName) throw new Error("无法生成译本文件名。");
 
     // Zotero appends the source extension to fileBaseName, so pass the sanitized stem.
@@ -362,15 +363,18 @@ var ZoteroTranslateFilesImporter = (function () {
     return liveAttachment;
   }
 
-  async function importResult(original, outputPath) {
+  async function importResult(original, outputPath, kind) {
     if (!original || !outputPath) throw new Error("缺少原附件或译本 PDF 文件。");
+    var outputKind = kind === "dual" ? "dual" : "mono";
 
     var originalPath = await original.getFilePathAsync();
     if (!originalPath) throw new Error("无法读取原 PDF 文件名。");
 
     var originalFileName = getOriginalFileName(originalPath);
     var originalTitle = String(original.getField("title") || "");
-    var translatedTitle = originalTitle + attachmentRules.TRANSLATED_TITLE_SUFFIX;
+    var translatedTitle = originalTitle + (outputKind === "dual"
+      ? attachmentRules.DUAL_TITLE_SUFFIX
+      : attachmentRules.TRANSLATED_TITLE_SUFFIX);
     var parentItemID = original.parentItemID;
     var importOptions = {
       file: outputPath,
@@ -378,7 +382,7 @@ var ZoteroTranslateFilesImporter = (function () {
       libraryID: original.libraryID,
       title: translatedTitle,
       contentType: "application/pdf",
-      fileBaseName: getTranslatedFileBaseName(originalFileName),
+      fileBaseName: getTranslatedFileBaseName(originalFileName, outputKind),
     };
 
     if (!parentItemID) {

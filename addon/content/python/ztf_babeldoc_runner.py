@@ -5944,7 +5944,7 @@ def babeldoc_version_error() -> str | None:
     if installed_version != EXPECTED_BABELDOC_VERSION:
         return (
             f"需要 BabelDOC {EXPECTED_BABELDOC_VERSION}，当前为 {installed_version}。"
-            "请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”。"
+            "请重新翻译或在 Zotero 设置中点击“修复环境”。"
         )
     return None
 
@@ -6025,6 +6025,58 @@ def _restore_links_after_layout(
             },
             api_key,
         )
+    return stats
+
+
+def _restore_dual_links_after_layout(
+    state: dict[str, Any],
+    request_state: dict[str, Any],
+    link_stats: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any] | None:
+    """Restore both halves of the side-by-side bilingual PDF."""
+    dual_pdf = str(state.get("dual_result") or "")
+    if not dual_pdf or not os.path.isfile(dual_pdf):
+        return None
+    mono_mapping = str((link_stats or {}).get("mapping_path") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    if not mono_mapping or not os.path.isfile(mono_mapping) or not source_pdf:
+        summary = {"source": 0, "restored": 0, "skipped": "missing_mapping"}
+        _write_job_log(
+            request_state,
+            {"event": "dual_links_restore", "skipped": "missing_mapping"},
+            api_key,
+        )
+        return summary
+    try:
+        helper = _links_helper()
+        stats = helper.restore_dual_links(
+            source_pdf, dual_pdf, mono_mapping, dual_pdf + ".links.json"
+        )
+    except Exception as error:
+        summary = {"source": 0, "restored": 0, "unresolved": 0,
+                   "unsupported": 0, "error": log_safe_error(error, api_key)}
+        _write_job_log(
+            request_state,
+            {"event": "dual_links_restore_error", "error": summary["error"]},
+            api_key,
+        )
+        return summary
+    stats.pop("records", None)
+    _write_job_log(
+        request_state,
+        {
+            "event": "dual_links_restore",
+            "source_links": stats.get("source", 0),
+            "restored": stats.get("restored", 0),
+            "left": stats.get("left", 0),
+            "right": stats.get("right", 0),
+            "unresolved": stats.get("unresolved", 0),
+            "unsupported": stats.get("unsupported", 0),
+            "mapping_path": stats.get("mapping_path", ""),
+        },
+        api_key,
+    )
     return stats
 
 
@@ -6189,16 +6241,30 @@ def main() -> int:
                 )
             elif event_type == "finish":
                 result = event.get("translate_result") or {}
-                mono_path = ""
-                if isinstance(result, dict):
-                    mono_path = result.get("no_watermark_mono_pdf_path") or result.get("mono_pdf_path") or ""
-                else:
-                    mono_path = getattr(result, "no_watermark_mono_pdf_path", "") or getattr(
-                        result, "mono_pdf_path", ""
-                    )
-                mono_path = str(mono_path) if mono_path else ""
+
+                def output_path(*names: str) -> str:
+                    if isinstance(result, dict):
+                        value = next(
+                            (result.get(name) for name in names if result.get(name)), ""
+                        )
+                    else:
+                        value = next(
+                            (getattr(result, name, "") for name in names
+                             if getattr(result, name, "")),
+                            "",
+                        )
+                    return str(value) if value else ""
+
+                mono_path = output_path(
+                    "no_watermark_mono_pdf_path", "mono_pdf_path"
+                )
                 if mono_path:
                     state["result"] = mono_path
+                dual_path = output_path(
+                    "no_watermark_dual_pdf_path", "dual_pdf_path"
+                )
+                if dual_path:
+                    state["dual_result"] = dual_path
 
         return contextlib.nullcontext(), handle_event
 
@@ -6428,6 +6494,9 @@ def main() -> int:
 
     link_stats = _restore_links_after_layout(state, request_state, api_key)
     request_state["link_stats"] = link_stats
+    dual_link_stats = _restore_dual_links_after_layout(
+        state, request_state, link_stats, api_key
+    )
     table_warnings = list(request_state.get("table_warnings") or [])
     table_warning_message = "；".join(
         f"{warning.get('table') or '未编号表'}（物理第 {warning.get('page')} 页）"
@@ -6495,6 +6564,7 @@ def main() -> int:
         "ZTF_RESULT ",
         {
             "mono": state["result"],
+            "dual": state.get("dual_result") or None,
             # Lets the plugin remember the provider's token-limit parameter.
             "token_param": request_state.get("token_param"),
             "requests": request_budget.requests,
@@ -6511,6 +6581,7 @@ def main() -> int:
                             "mapping_path", "error", "split_layout", "paragraphs")
             } if link_stats else None,
             "table_warnings": table_warnings,
+            "dual_links": dual_link_stats,
         },
         api_key,
     )

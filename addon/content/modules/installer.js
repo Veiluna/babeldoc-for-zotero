@@ -223,6 +223,119 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     }
   }
 
+  var environmentCheck = null;
+
+  var CHECK_PYTHON_SCRIPT = [
+    "import importlib.metadata, sys",
+    "from pathlib import Path",
+    "print('python=' + '.'.join(map(str, sys.version_info[:2])))",
+    "print('babeldoc=' + importlib.metadata.version('BabelDOC'))",
+    "print('bitstring=' + importlib.metadata.version('bitstring'))",
+    "fonts = Path.home() / '.cache' / 'babeldoc' / 'fonts'",
+    "print('fonts=' + str(len(list(fonts.glob('*.ttf'))) if fonts.is_dir() else 0))",
+    "models = Path.home() / '.cache' / 'babeldoc' / 'models'",
+    "print('models=' + str(len(list(models.glob('*.onnx'))) if models.is_dir() else 0))",
+  ].join("\n");
+
+  var CHECK_SMOKE_SCRIPT = [
+    "import pymupdf",
+    "doc = pymupdf.open()",
+    "page = doc.new_page(width=200, height=100)",
+    "page.insert_text((20, 50), 'environment check', fontsize=10)",
+    "assert 'environment check' in page.get_text()",
+    "print('smoke=ok')",
+  ].join("\n");
+
+  function checkEnvironment(options) {
+    options = options || {};
+    if (environmentCheck) return environmentCheck;
+    var signal = options.signal;
+    environmentCheck = (async function () {
+      var checks = [];
+      function record(id, status, messageId, args) {
+        checks.push({ id: id, status: status, messageId: messageId, args: args || {} });
+      }
+      function throwIfCancelled() {
+        if (signal && signal.aborted) throw new Error("环境检测已取消。");
+      }
+      var logState = { parts: [] };
+      var base = "";
+      try { base = baseDir(); } catch (error) { base = ""; }
+      var paths = base ? pathsFor(base) : null;
+      var installed = false;
+      throwIfCancelled();
+      if (paths && fileExists(paths.python)) {
+        try {
+          var recordJSON = JSON.parse(await IOUtils.readUTF8(paths.installJSON));
+          installed = recordJSON.uv === UV_VERSION &&
+            recordJSON.python === PYTHON_VERSION &&
+            recordJSON.babeldoc === BABELDOC_VERSION;
+          record("install", installed ? "pass" : "fail",
+                 installed ? "babeldoc-for-zotero-check-install-ok"
+                           : "babeldoc-for-zotero-check-install-stale");
+        } catch (error) {
+          record("install", "fail", "babeldoc-for-zotero-check-install-missing");
+        }
+      } else {
+        record("install", "fail", "babeldoc-for-zotero-check-install-missing");
+      }
+      if (installed && paths) {
+        var source = normalizeSource(options.source);
+        var probe = await probeChild(paths.python, ["-c", CHECK_PYTHON_SCRIPT], paths,
+                                     source, signal, logState);
+        throwIfCancelled();
+        var values = {};
+        String(probe.stdout || "").split(/\r?\n/).forEach(function (line) {
+          var index = line.indexOf("=");
+          if (index > 0) values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+        });
+        record("python", values.python === PYTHON_VERSION ? "pass" : "fail",
+               values.python ? "babeldoc-for-zotero-check-python-ok"
+                             : "babeldoc-for-zotero-check-python-fail",
+               { version: values.python || "" });
+        var babeldocOK = values.babeldoc === BABELDOC_VERSION;
+        record("babeldoc", babeldocOK ? "pass" : "fail",
+               values.babeldoc ? "babeldoc-for-zotero-check-babeldoc-ok"
+                               : "babeldoc-for-zotero-check-babeldoc-fail",
+               { version: values.babeldoc || "" });
+        var bitstringMajor = parseInt(String(values.bitstring || "").split(".")[0], 10);
+        var bitstringOK = Number.isFinite(bitstringMajor) && bitstringMajor < 5;
+        record("bitstring", bitstringOK ? "pass" : "fail",
+               values.bitstring ? "babeldoc-for-zotero-check-bitstring-ok"
+                                : "babeldoc-for-zotero-check-bitstring-fail",
+               { version: values.bitstring || "" });
+        var fontCount = parseInt(values.fonts, 10);
+        record("fonts", fontCount > 0 ? "pass" : "fail",
+               fontCount > 0 ? "babeldoc-for-zotero-check-fonts-ok"
+                             : "babeldoc-for-zotero-check-fonts-fail",
+               { count: Number.isFinite(fontCount) ? fontCount : 0 });
+        var modelCount = parseInt(values.models, 10);
+        record("models", modelCount > 0 ? "pass" : "fail",
+               modelCount > 0 ? "babeldoc-for-zotero-check-models-ok"
+                              : "babeldoc-for-zotero-check-models-fail",
+               { count: Number.isFinite(modelCount) ? modelCount : 0 });
+        if (babeldocOK) {
+          var smoke = await probeChild(paths.python, ["-c", CHECK_SMOKE_SCRIPT], paths,
+                                       source, signal, logState);
+          throwIfCancelled();
+          record("smoke", smoke.exitCode === 0 ? "pass" : "fail",
+                 smoke.exitCode === 0 ? "babeldoc-for-zotero-check-smoke-ok"
+                                      : "babeldoc-for-zotero-check-smoke-fail");
+        }
+      }
+      var ok = checks.every(function (item) { return item.status === "pass"; });
+      return {
+        ok: ok,
+        checkedAt: new Date().toISOString(),
+        checks: checks,
+        log: logState.parts.join("").slice(-4000),
+      };
+    })().finally(function () {
+      environmentCheck = null;
+    });
+    return environmentCheck;
+  }
+
   function ensureDirectory(path) {
     return Zotero.File.createDirectoryIfMissingAsync(path);
   }
@@ -494,7 +607,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
           throw setupCancelled;
         }
         if (!hasInteractiveWaiter()) {
-          var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+          var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
           setupFailed.logPath = logState.path;
           activeInstall = false;
           notifyInstallState();
@@ -505,7 +618,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
         try { setupChoice = promptRetry("准备安装目录", setupDetail, logState.path); }
         catch (promptError) { setupChoice = 1; }
         if (setupChoice === 0) continue;
-        var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+        var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
         setupFailed.logPath = logState.path;
         activeInstall = false;
         notifyInstallState();
@@ -579,7 +692,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
               throw cancelled;
             }
             if (!hasInteractiveWaiter()) {
-              var nonInteractiveFailure = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+              var nonInteractiveFailure = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
               nonInteractiveFailure.logPath = logState.path;
               throw nonInteractiveFailure;
             }
@@ -591,7 +704,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
               retry = true;
               break;
             }
-            var failed = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+            var failed = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
             failed.logPath = logState.path;
             throw failed;
           }
@@ -1058,6 +1171,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     cancelInFlight: cancelInFlight,
     baseDir: baseDir,
     isInstalling: function () { return activeInstall; },
+    checkEnvironment: checkEnvironment,
     addStateListener: function (callback) {
       if (typeof callback !== "function") return function () {};
       stateObservers.push(callback);
@@ -1074,6 +1188,8 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
       downloadURLs: downloadURLs,
       childEnvironment: childEnvironment,
       packageProbe: PACKAGE_PROBE,
+      checkPythonScript: CHECK_PYTHON_SCRIPT,
+      checkSmokeScript: CHECK_SMOKE_SCRIPT,
       buildStepPlan: buildStepPlan,
       indexURL: function (source) { return normalizeSource(source) === "china" ? TUNA_INDEX : ""; },
       shortError: shortError,

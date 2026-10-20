@@ -205,6 +205,17 @@ function makeHarness(options = {}) {
         files.set(base + "\\env\\Scripts\\python.exe", true);
         files.set(base + "\\env\\Scripts\\babeldoc.exe", true);
         stdout = "Creating virtual environment\n";
+      } else if (args[0] === "-c" && args[1].includes("babeldoc=")) {
+        stdout = [
+          "python=" + (options.checkPythonVersion || "3.12"),
+          "babeldoc=" + (options.checkBabeldocVersion || "0.6.4"),
+          "bitstring=" + (options.checkBitstringVersion || "4.3.1"),
+          "fonts=" + (options.checkFonts == null ? 3 : options.checkFonts),
+          "models=" + (options.checkModels == null ? 2 : options.checkModels),
+        ].join("\n") + "\n";
+      } else if (args[0] === "-c" && args[1].includes("environment check")) {
+        exitCode = options.failSmokeCheck ? 1 : 0;
+        stdout = exitCode ? "" : "smoke=ok\n";
       } else if (args[0] === "-c" && args[1].includes("sys.version_info")) {
         exitCode = environmentCreated ? 0 : 1;
       } else if (args[0] === "-c" && args[1] === "import babeldoc.main") {
@@ -981,6 +992,79 @@ async function aNewCallerRestartsAfterEveryWaiterCancels() {
   assert.equal(await harness.installer.isReady(), true);
 }
 
+async function environmentCheckReportsAndCancels() {
+  const harness = makeHarness({ existingEnvironment: true });
+  const paths = harness.installer._test.pathsFor(harness.base);
+  harness.files.set(paths.python, true);
+  harness.textFiles.set(paths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.4",
+  }));
+
+  const healthy = await harness.installer.checkEnvironment();
+  assert.equal(healthy.ok, true, JSON.stringify(healthy.checks));
+  assert.equal(healthy.checks.length, 7);
+  assert.ok(healthy.checks.every(item => item.status === "pass"), JSON.stringify(healthy.checks));
+
+  const callsBefore = harness.calls.length;
+  const installsBefore = harness.downloads.length;
+  harness.textFiles.set(paths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.3",
+  }));
+  const staleInstall = await harness.installer.checkEnvironment();
+  assert.equal(staleInstall.ok, false);
+  assert.equal(staleInstall.checks.find(item => item.id === "install").status, "fail");
+  assert.equal(harness.calls.length, callsBefore, "check must not run install steps");
+  assert.equal(harness.downloads.length, installsBefore, "check must not download anything");
+
+  const brokenHarness = makeHarness({
+    existingEnvironment: true, checkBabeldocVersion: "0.6.3",
+  });
+  const brokenPaths = brokenHarness.installer._test.pathsFor(brokenHarness.base);
+  brokenHarness.files.set(brokenPaths.python, true);
+  brokenHarness.textFiles.set(brokenPaths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.4",
+  }));
+  const broken = await brokenHarness.installer.checkEnvironment();
+  assert.equal(broken.ok, false);
+  assert.equal(broken.checks.find(item => item.id === "babeldoc").status, "fail");
+  assert.equal(brokenHarness.downloads.length, 0, "check must never download");
+
+  const controller = new AbortController();
+  controller.abort();
+  const cancelled = await harness.installer.checkEnvironment({ signal: controller.signal })
+    .then(() => null, value => value);
+  assert.match(cancelled.message, /环境检测已取消/);
+
+  harness.textFiles.set(paths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.4",
+  }));
+  const probeCallsBefore = harness.calls.length;
+  const first = harness.installer.checkEnvironment();
+  const second = harness.installer.checkEnvironment();
+  assert.equal(second, first, "concurrent checks share one run");
+  const [one, two] = await Promise.all([first, second]);
+  assert.equal(one.ok, true);
+  assert.equal(two, one);
+  assert.equal(harness.calls.length - probeCallsBefore, 2,
+    "one version probe and one smoke probe for a healthy environment");
+
+  const missingHarness = makeHarness({
+    existingEnvironment: true, checkFonts: 0, checkModels: 0, failSmokeCheck: true,
+  });
+  const missingPaths = missingHarness.installer._test.pathsFor(missingHarness.base);
+  missingHarness.files.set(missingPaths.python, true);
+  missingHarness.textFiles.set(missingPaths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.4",
+  }));
+  const missing = await missingHarness.installer.checkEnvironment();
+  assert.equal(missing.ok, false);
+  assert.equal(missing.checks.find(item => item.id === "fonts").status, "fail");
+  assert.equal(missing.checks.find(item => item.id === "models").status, "fail");
+  assert.equal(missing.checks.find(item => item.id === "smoke").status, "fail");
+  assert.ok(missing.log && missing.log.length > 0, "diagnostic log is returned");
+  assert.equal(missingHarness.downloads.length, 0, "missing resources never trigger downloads");
+}
+
 (async () => {
   await pureConfigurationAndReadiness();
   await missingLocalAppDataFailsClearly();
@@ -1009,6 +1093,8 @@ async function aNewCallerRestartsAfterEveryWaiterCancels() {
   await aNewCallerRestartsAfterEveryWaiterCancels();
   await cancellationKillsTheRunningChild();
   await cancelledDownloadReleasesInFlightAfterLateCancellerRegistration();
+
+  await environmentCheckReportsAndCancels();
   process.stdout.write("installer regression cases passed\n");
 })().catch(error => {
   process.stderr.write((error && error.stack) || String(error));

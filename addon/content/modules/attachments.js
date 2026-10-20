@@ -2,6 +2,7 @@
 
 var ZoteroTranslateFilesAttachments = (function () {
   var TRANSLATED_TITLE_SUFFIX = "（中文译本）";
+  var DUAL_TITLE_SUFFIX = "（中英对照）";
   // The importer adds this stable marker to every generated attachment.
   var TRANSLATED_ATTACHMENT_TAG = "babeldoc-for-zotero:translated";
   var LEGACY_TRANSLATED_ATTACHMENT_TAG = "zotero-translate-files:translated";
@@ -57,7 +58,7 @@ var ZoteroTranslateFilesAttachments = (function () {
       return false;
     }
 
-    if (!title.endsWith(TRANSLATED_TITLE_SUFFIX)) return false;
+    if (!title.endsWith(TRANSLATED_TITLE_SUFFIX) && !title.endsWith(DUAL_TITLE_SUFFIX)) return false;
     if (tags.some(function (tag) {
       var tagName = typeof tag === "string" ? tag : tag && tag.tag;
       return tagName === TRANSLATED_ATTACHMENT_TAG || tagName === LEGACY_TRANSLATED_ATTACHMENT_TAG;
@@ -124,6 +125,7 @@ var ZoteroTranslateFilesAttachments = (function () {
 
   return {
     TRANSLATED_TITLE_SUFFIX: TRANSLATED_TITLE_SUFFIX,
+    DUAL_TITLE_SUFFIX: DUAL_TITLE_SUFFIX,
     TRANSLATED_ATTACHMENT_TAG: TRANSLATED_ATTACHMENT_TAG,
     beginTranslatedImport: beginTranslatedImport,
     isTranslatedAttachment: isTranslatedAttachment,

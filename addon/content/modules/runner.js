@@ -75,6 +75,16 @@ var ZoteroTranslateFilesRunner = (function () {
     return candidate;
   }
 
+  async function findDualOutput(workDir) {
+    var candidate = null;
+    await Zotero.File.iterateDirectory(workDir, function (entry) {
+      if (!entry.isDir && entry.path && /\.zh\.dual\.pdf$/i.test(entry.name || "")) {
+        candidate = entry.path;
+      }
+    });
+    return candidate;
+  }
+
   function formatFailure(exitCode, errorText, stderrLines, streamError, apiKey, reason) {
     var detail = errorText || firstDiagnosticLine(stderrLines) || streamError || "没有收到 BabelDOC 结果文件。";
     if (ZoteroTranslateFilesConfig && typeof ZoteroTranslateFilesConfig.formatHTMLDiagnostic === "function") {
@@ -162,7 +172,7 @@ var ZoteroTranslateFilesRunner = (function () {
         },
       });
       if (!isExistingFile(pythonPath)) {
-        throw new Error("无法找到自动安装的 BabelDOC Python 环境，请在设置中点击“安装 / 修复环境”。");
+        throw new Error("无法找到自动安装的 BabelDOC Python 环境，请在设置中点击“修复环境”。");
       }
 
       var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
@@ -223,7 +233,6 @@ var ZoteroTranslateFilesRunner = (function () {
         "--openai-base-url", babeldocBaseURL,
         "--lang-in", "en",
         "--lang-out", "zh",
-        "--no-dual",
         "--no-auto-extract-glossary",
         "--disable-same-text-fallback",
         // The translation prompt (terminology consistency, fragment rules) is
@@ -231,6 +240,11 @@ var ZoteroTranslateFilesRunner = (function () {
         "--watermark-output-mode", "no_watermark",
         "--report-interval", "0.5",
       ];
+
+      // mono: no dual PDF; dual/both: BabelDOC writes the side-by-side dual.
+      // The mono file is still produced for dual-only mode because the link
+      // mapping is built from it; it is simply not imported.
+      if (settings.outputMode === "mono") args.push("--no-dual");
 
       // The API key is supplied only through the child environment, never the OS command line.
       if (args.some(function (argument) { return argument === apiKey; })) {
@@ -272,6 +286,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var stderrLines = [];
       var stderrStreamError = "";
       var resultPath = null;
+      var resultDualPath = null;
       var requestCount = null;
       var eventError = "";
       var eventErrorKind = "";
@@ -318,6 +333,7 @@ var ZoteroTranslateFilesRunner = (function () {
           }
         } else if (marker === "ZTF_RESULT ") {
           if (event.mono) resultPath = String(event.mono);
+          if (event.dual) resultDualPath = String(event.dual);
           var resultRequests = event.requests == null ? NaN : Number(event.requests);
           if (Number.isFinite(resultRequests)) requestCount = Math.max(0, Math.floor(resultRequests));
           var repairRequests = event.repair_request_count == null ? NaN : Number(event.repair_request_count);
@@ -421,7 +437,23 @@ var ZoteroTranslateFilesRunner = (function () {
       }
 
       if (!resultPath) resultPath = await findMonolingualOutput(workDir);
-      if (!isValidOutput(resultPath)) {
+      var outputMode = settings.outputMode === "dual" || settings.outputMode === "both"
+        ? settings.outputMode
+        : "mono";
+      if (outputMode !== "mono") {
+        if (!resultDualPath) resultDualPath = await findDualOutput(workDir);
+        if (!isValidOutput(resultDualPath)) {
+          throw new Error(formatFailure(
+            exitCode,
+            eventError,
+            stderrLines,
+            stderrStreamError,
+            apiKey,
+            "未生成有效的双语对照 PDF。",
+          ));
+        }
+      }
+      if ((outputMode === "mono" || outputMode === "both") && !isValidOutput(resultPath)) {
         throw new Error(formatFailure(
           exitCode,
           eventError,
@@ -432,8 +464,17 @@ var ZoteroTranslateFilesRunner = (function () {
         ));
       }
 
+      var artifacts = [];
+      if (outputMode !== "dual" && isValidOutput(resultPath)) {
+        artifacts.push({ kind: "mono", path: resultPath });
+      }
+      if (outputMode !== "mono" && isValidOutput(resultDualPath)) {
+        artifacts.push({ kind: "dual", path: resultDualPath });
+      }
+
       return {
-        outputPath: resultPath,
+        outputPath: artifacts.length ? artifacts[0].path : resultPath,
+        outputPaths: artifacts,
         warning: warning,
         requestCount: requestCount,
         repairRequestCount: repairRequestCount,

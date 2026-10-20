@@ -68,7 +68,7 @@ var ZoteroTranslateFilesQueue = (function () {
 
   function getFailureCause(text, kind) {
     if (kind === "babeldoc_version") {
-      return "自动安装的 BabelDOC 环境版本不正确，请在设置中点击“安装 / 修复环境”";
+      return "自动安装的 BabelDOC 环境版本不正确，请在设置中点击“修复环境”";
     }
     if (kind === "request_cap" || /request_cap|单篇请求上限/i.test(text)) {
       return "已达到单篇请求次数上限，任务已停止";
@@ -95,7 +95,7 @@ var ZoteroTranslateFilesQueue = (function () {
       return "PDF 文件不存在（可能尚未下载）";
     }
     if (/找不到 BabelDOC|(?:python|babeldoc)(?:\.exe)?[^\r\n]{0,80}(?:not found|missing|does not exist|cannot find|未找到|找不到|不存在)|(?:ENOENT|NS_ERROR_FILE_NOT_FOUND|WinError 2)|No module named ['\"]?babeldoc|ModuleNotFoundError[^\r\n]*babeldoc/i.test(text)) {
-      return "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”";
+      return "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”";
     }
     if (/ECONN(?:REFUSED|RESET|ABORTED)|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ERR_NETWORK|APIConnectionError|ConnectionError|ConnectError|connection.{0,30}(?:refused|reset|failed|error|timed out)|failed to connect|could not connect|network is unreachable|无法连接|连接失败/i.test(text)) {
       return "无法连接到接口地址";
@@ -563,22 +563,39 @@ var ZoteroTranslateFilesQueue = (function () {
       }
 
       if (controller.signal.aborted) return;
-      var outputPath = typeof translationResult === "string"
-        ? translationResult
-        : translationResult && translationResult.outputPath;
-      if (!outputPath) throw new Error("BabelDOC 没有返回可导入的译本文件。");
+      var artifacts = [];
+      if (translationResult && Array.isArray(translationResult.outputPaths)) {
+        artifacts = translationResult.outputPaths.filter(function (artifact) {
+          return artifact && artifact.path;
+        });
+      }
+      if (!artifacts.length) {
+        var outputPath = typeof translationResult === "string"
+          ? translationResult
+          : translationResult && translationResult.outputPath;
+        if (outputPath) artifacts = [{ kind: "mono", path: outputPath }];
+      }
+      if (!artifacts.length) throw new Error("BabelDOC 没有返回可导入的译本文件。");
 
       var resultImporter = importer;
       if (!resultImporter && ZoteroTranslateFiles && ZoteroTranslateFiles.modules) {
         resultImporter = ZoteroTranslateFiles.modules.importer;
       }
       if (resultImporter && typeof resultImporter.importResult === "function") {
-        var translatedAttachment = await resultImporter.importResult(attachmentItem, outputPath);
-        if (translatedAttachment && typeof translatedAttachment.getField === "function") {
-          try {
-            completedTitle = String(translatedAttachment.getField("title") || "");
-          } catch (error) {
-            completedTitle = null;
+        for (var artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex++) {
+          if (controller.signal.aborted) return;
+          var artifact = artifacts[artifactIndex];
+          var translatedAttachment = await resultImporter.importResult(
+            attachmentItem,
+            artifact.path,
+            artifact.kind
+          );
+          if (translatedAttachment && typeof translatedAttachment.getField === "function") {
+            try {
+              completedTitle = String(translatedAttachment.getField("title") || "") || completedTitle;
+            } catch (error) {
+              // Keep the last successful title.
+            }
           }
         }
         if (!completedTitle) {
