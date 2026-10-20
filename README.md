@@ -48,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 3. **模型名**：接口服务支持的模型名称。
 4. **输出格式**：默认“单语中文译本”；可选“左右双语对照”或“同时生成两种”。三种模式都只执行一次翻译，不会增加模型请求。
 5. **翻译参考文献**：默认关闭，按原有规则保留参考文献。
-6. **下载源**：默认使用国内镜像，也可切换到官方源。插件装好后，Zotero 启动时会自动在后台下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型；若未装完，翻译时会从中断处继续（通常需要数分钟并下载数百 MB）。设置页的“安装 / 修复环境”会完整删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 后从头安装；已有环境会先询问确认，正在翻译时不能开始修复。清理不会删除 `%USERPROFILE%\.cache\babeldoc` 或 Zotero 数据目录中的日志。
+6. **下载源**：默认使用国内镜像，也可切换到官方源。插件装好后，Zotero 启动时会自动在后台下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型；若未装完，翻译时会从中断处继续（通常需要数分钟并下载数百 MB）。设置页的“修复环境”会完整删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 后从头安装；已有环境会先询问确认，正在翻译时不能开始修复。清理不会删除 `%USERPROFILE%\.cache\babeldoc` 或 Zotero 数据目录中的日志。
 
 这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.translateReferences`、`extensions.babeldoc-for-zotero.outputMode` 和 `extensions.babeldoc-for-zotero.downloadSource`。最大输出固定 `50000`、单篇请求不限次数、合并补译始终开启；对应的三项控件已移除，历史偏好及旧版插件传入的环境变量不再影响这些规则。
 

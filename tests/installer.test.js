@@ -1047,6 +1047,22 @@ async function environmentCheckReportsAndCancels() {
   assert.equal(two, one);
   assert.equal(harness.calls.length - probeCallsBefore, 2,
     "one version probe and one smoke probe for a healthy environment");
+
+  const missingHarness = makeHarness({
+    existingEnvironment: true, checkFonts: 0, checkModels: 0, failSmokeCheck: true,
+  });
+  const missingPaths = missingHarness.installer._test.pathsFor(missingHarness.base);
+  missingHarness.files.set(missingPaths.python, true);
+  missingHarness.textFiles.set(missingPaths.installJSON, JSON.stringify({
+    uv: "0.13.1", python: "3.12", babeldoc: "0.6.4",
+  }));
+  const missing = await missingHarness.installer.checkEnvironment();
+  assert.equal(missing.ok, false);
+  assert.equal(missing.checks.find(item => item.id === "fonts").status, "fail");
+  assert.equal(missing.checks.find(item => item.id === "models").status, "fail");
+  assert.equal(missing.checks.find(item => item.id === "smoke").status, "fail");
+  assert.ok(missing.log && missing.log.length > 0, "diagnostic log is returned");
+  assert.equal(missingHarness.downloads.length, 0, "missing resources never trigger downloads");
 }
 
 (async () => {

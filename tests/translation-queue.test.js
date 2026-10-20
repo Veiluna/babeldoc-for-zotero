@@ -610,10 +610,10 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
     ["insufficient_quota", "请求过于频繁或额度不足（接口可能已达到请求次数上限）"],
     ["BabelDOC 不支持包含查询参数的 API 地址", "BabelDOC 不支持包含查询参数的接口地址"],
     ["ConnectError: ECONNREFUSED", "无法连接到接口地址"],
-    ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
-    ["python.exe not found", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
-    ["找不到 BabelDOC 环境中的 python.exe", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
-    ["No module named 'babeldoc'", "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”"],
+    ["spawn C:\\babeldoc\\python.exe ENOENT", "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”"],
+    ["python.exe not found", "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”"],
+    ["找不到 BabelDOC 环境中的 python.exe", "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”"],
+    ["No module named 'babeldoc'", "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”"],
     ["PDF 文件不可用：附件可能尚未下载", "PDF 文件不存在（可能尚未下载）"],
     ["BabelDOC 没有返回可导入的译本文件。", "BabelDOC 未生成可导入的中文 PDF"],
     ["Zotero 未能创建译本附件。", "无法导入中文译本"],
@@ -653,7 +653,7 @@ async function failureAlertsMapCommonCausesAndShutdownSuppressesPendingAlerts() 
   versionHarness.flushAlerts();
   assert.match(
     versionHarness.alerts[0].message,
-    /自动安装的 BabelDOC 环境版本不正确，请在设置中点击“安装 \/ 修复环境”/,
+    /自动安装的 BabelDOC 环境版本不正确，请在设置中点击“修复环境”/,
   );
 
   const requestCapHarness = makeHarness();

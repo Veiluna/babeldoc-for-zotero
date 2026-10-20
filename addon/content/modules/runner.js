@@ -172,7 +172,7 @@ var ZoteroTranslateFilesRunner = (function () {
         },
       });
       if (!isExistingFile(pythonPath)) {
-        throw new Error("无法找到自动安装的 BabelDOC Python 环境，请在设置中点击“安装 / 修复环境”。");
+        throw new Error("无法找到自动安装的 BabelDOC Python 环境，请在设置中点击“修复环境”。");
       }
 
       var { Subprocess } = ChromeUtils.importESModule("resource://gre/modules/Subprocess.sys.mjs");
@@ -453,7 +453,7 @@ var ZoteroTranslateFilesRunner = (function () {
           ));
         }
       }
-      if (outputMode === "mono" && !isValidOutput(resultPath)) {
+      if ((outputMode === "mono" || outputMode === "both") && !isValidOutput(resultPath)) {
         throw new Error(formatFailure(
           exitCode,
           eventError,

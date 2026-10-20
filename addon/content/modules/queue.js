@@ -68,7 +68,7 @@ var ZoteroTranslateFilesQueue = (function () {
 
   function getFailureCause(text, kind) {
     if (kind === "babeldoc_version") {
-      return "自动安装的 BabelDOC 环境版本不正确，请在设置中点击“安装 / 修复环境”";
+      return "自动安装的 BabelDOC 环境版本不正确，请在设置中点击“修复环境”";
     }
     if (kind === "request_cap" || /request_cap|单篇请求上限/i.test(text)) {
       return "已达到单篇请求次数上限，任务已停止";
@@ -95,7 +95,7 @@ var ZoteroTranslateFilesQueue = (function () {
       return "PDF 文件不存在（可能尚未下载）";
     }
     if (/找不到 BabelDOC|(?:python|babeldoc)(?:\.exe)?[^\r\n]{0,80}(?:not found|missing|does not exist|cannot find|未找到|找不到|不存在)|(?:ENOENT|NS_ERROR_FILE_NOT_FOUND|WinError 2)|No module named ['\"]?babeldoc|ModuleNotFoundError[^\r\n]*babeldoc/i.test(text)) {
-      return "找不到 BabelDOC，请重新翻译或在设置中点击“安装 / 修复环境”";
+      return "找不到 BabelDOC，请重新翻译或在设置中点击“修复环境”";
     }
     if (/ECONN(?:REFUSED|RESET|ABORTED)|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ERR_NETWORK|APIConnectionError|ConnectionError|ConnectError|connection.{0,30}(?:refused|reset|failed|error|timed out)|failed to connect|could not connect|network is unreachable|无法连接|连接失败/i.test(text)) {
       return "无法连接到接口地址";

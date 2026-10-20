@@ -252,12 +252,13 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     var signal = options.signal;
     environmentCheck = (async function () {
       var checks = [];
-      function record(id, label, status, detail) {
-        checks.push({ id: id, label: label, status: status, detail: String(detail || "") });
+      function record(id, status, messageId, args) {
+        checks.push({ id: id, status: status, messageId: messageId, args: args || {} });
       }
       function throwIfCancelled() {
         if (signal && signal.aborted) throw new Error("环境检测已取消。");
       }
+      var logState = { parts: [] };
       var base = "";
       try { base = baseDir(); } catch (error) { base = ""; }
       var paths = base ? pathsFor(base) : null;
@@ -269,17 +270,16 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
           installed = recordJSON.uv === UV_VERSION &&
             recordJSON.python === PYTHON_VERSION &&
             recordJSON.babeldoc === BABELDOC_VERSION;
-          record("install", "安装记录", installed ? "pass" : "fail",
-                 installed ? "uv、Python、BabelDOC 版本与当前插件一致"
-                           : "安装记录版本与当前插件不一致；请点击“修复环境”");
+          record("install", installed ? "pass" : "fail",
+                 installed ? "babeldoc-for-zotero-check-install-ok"
+                           : "babeldoc-for-zotero-check-install-stale");
         } catch (error) {
-          record("install", "安装记录", "fail", "缺少或无法读取安装记录；请点击“修复环境”");
+          record("install", "fail", "babeldoc-for-zotero-check-install-missing");
         }
       } else {
-        record("install", "翻译环境", "fail", "尚未安装；请点击“修复环境”");
+        record("install", "fail", "babeldoc-for-zotero-check-install-missing");
       }
       if (installed && paths) {
-        var logState = { parts: [] };
         var source = normalizeSource(options.source);
         var probe = await probeChild(paths.python, ["-c", CHECK_PYTHON_SCRIPT], paths,
                                      source, signal, logState);
@@ -289,34 +289,47 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
           var index = line.indexOf("=");
           if (index > 0) values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
         });
-        record("python", "Python", values.python === PYTHON_VERSION ? "pass" : "fail",
-               values.python ? "Python " + values.python : "无法运行翻译环境的 Python");
+        record("python", values.python === PYTHON_VERSION ? "pass" : "fail",
+               values.python ? "babeldoc-for-zotero-check-python-ok"
+                             : "babeldoc-for-zotero-check-python-fail",
+               { version: values.python || "" });
         var babeldocOK = values.babeldoc === BABELDOC_VERSION;
-        record("babeldoc", "BabelDOC", babeldocOK ? "pass" : "fail",
-               values.babeldoc ? "BabelDOC " + values.babeldoc : "未安装 BabelDOC");
+        record("babeldoc", babeldocOK ? "pass" : "fail",
+               values.babeldoc ? "babeldoc-for-zotero-check-babeldoc-ok"
+                               : "babeldoc-for-zotero-check-babeldoc-fail",
+               { version: values.babeldoc || "" });
         var bitstringMajor = parseInt(String(values.bitstring || "").split(".")[0], 10);
         var bitstringOK = Number.isFinite(bitstringMajor) && bitstringMajor < 5;
-        record("bitstring", "依赖版本", bitstringOK ? "pass" : "fail",
-               values.bitstring ? "bitstring " + values.bitstring : "无法读取 bitstring 版本");
+        record("bitstring", bitstringOK ? "pass" : "fail",
+               values.bitstring ? "babeldoc-for-zotero-check-bitstring-ok"
+                                : "babeldoc-for-zotero-check-bitstring-fail",
+               { version: values.bitstring || "" });
         var fontCount = parseInt(values.fonts, 10);
-        record("fonts", "字体资源", fontCount > 0 ? "pass" : "fail",
-               fontCount > 0 ? fontCount + " 个字体文件"
-                             : "未找到字体资源；请点击“修复环境”重新安装");
+        record("fonts", fontCount > 0 ? "pass" : "fail",
+               fontCount > 0 ? "babeldoc-for-zotero-check-fonts-ok"
+                             : "babeldoc-for-zotero-check-fonts-fail",
+               { count: Number.isFinite(fontCount) ? fontCount : 0 });
         var modelCount = parseInt(values.models, 10);
-        record("models", "模型资源", modelCount > 0 ? "pass" : "fail",
-               modelCount > 0 ? modelCount + " 个模型文件"
-                              : "未找到版面模型；请点击“修复环境”重新安装");
+        record("models", modelCount > 0 ? "pass" : "fail",
+               modelCount > 0 ? "babeldoc-for-zotero-check-models-ok"
+                              : "babeldoc-for-zotero-check-models-fail",
+               { count: Number.isFinite(modelCount) ? modelCount : 0 });
         if (babeldocOK) {
           var smoke = await probeChild(paths.python, ["-c", CHECK_SMOKE_SCRIPT], paths,
                                        source, signal, logState);
           throwIfCancelled();
-          record("smoke", "本机处理检查", smoke.exitCode === 0 ? "pass" : "fail",
-                 smoke.exitCode === 0 ? "PDF 生成与文字提取正常"
-                                      : "小型 PDF 处理检查失败");
+          record("smoke", smoke.exitCode === 0 ? "pass" : "fail",
+                 smoke.exitCode === 0 ? "babeldoc-for-zotero-check-smoke-ok"
+                                      : "babeldoc-for-zotero-check-smoke-fail");
         }
       }
       var ok = checks.every(function (item) { return item.status === "pass"; });
-      return { ok: ok, checkedAt: new Date().toISOString(), checks: checks };
+      return {
+        ok: ok,
+        checkedAt: new Date().toISOString(),
+        checks: checks,
+        log: logState.parts.join("").slice(-4000),
+      };
     })().finally(function () {
       environmentCheck = null;
     });
@@ -594,7 +607,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
           throw setupCancelled;
         }
         if (!hasInteractiveWaiter()) {
-          var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+          var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
           setupFailed.logPath = logState.path;
           activeInstall = false;
           notifyInstallState();
@@ -605,7 +618,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
         try { setupChoice = promptRetry("准备安装目录", setupDetail, logState.path); }
         catch (promptError) { setupChoice = 1; }
         if (setupChoice === 0) continue;
-        var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+        var setupFailed = new Error("BabelDOC 环境安装失败（准备安装目录）：" + setupDetail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
         setupFailed.logPath = logState.path;
         activeInstall = false;
         notifyInstallState();
@@ -679,7 +692,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
               throw cancelled;
             }
             if (!hasInteractiveWaiter()) {
-              var nonInteractiveFailure = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+              var nonInteractiveFailure = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
               nonInteractiveFailure.logPath = logState.path;
               throw nonInteractiveFailure;
             }
@@ -691,7 +704,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
               retry = true;
               break;
             }
-            var failed = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“安装 / 修复环境”以继续。日志：" + logState.path);
+            var failed = new Error("BabelDOC 环境安装失败（" + stepName + "）：" + detail + "。请重新翻译或在 Zotero 设置中点击“修复环境”以继续。日志：" + logState.path);
             failed.logPath = logState.path;
             throw failed;
           }

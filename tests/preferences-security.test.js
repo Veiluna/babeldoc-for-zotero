@@ -46,6 +46,10 @@ async function testConnection(
       id: "babeldoc-for-zotero-preferences-check",
       addEventListener() {},
     },
+    "babeldoc-for-zotero-preferences-homepage": {
+      id: "babeldoc-for-zotero-preferences-homepage",
+      addEventListener() {},
+    },
   };
   const document = {
     l10n: {

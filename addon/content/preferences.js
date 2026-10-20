@@ -277,17 +277,34 @@ var ZoteroTranslateFilesPreferences = (function () {
     });
   }
 
-  function renderEnvironmentCheck(document, result) {
+  async function renderEnvironmentCheck(document, result) {
     var target = document.getElementById(PANE_ID + "-check-result");
     if (!target) return;
     while (target.firstChild) target.removeChild(target.firstChild);
+    async function format(messageId, args) {
+      try {
+        if (document.l10n && typeof document.l10n.formatValue === "function") {
+          return await document.l10n.formatValue(messageId, args || {});
+        }
+      } catch (error) {
+        // Fall back to the message id so the pane still shows something.
+      }
+      return messageId;
+    }
     var lines = [];
-    (result && result.checks ? result.checks : []).forEach(function (item) {
-      lines.push((item.status === "pass" ? "通过" : "失败") + "：" + item.label + " — " + item.detail);
-    });
-    lines.push(result && result.ok
-      ? "环境检测通过。"
-      : "环境检测发现问题，请按提示修复。");
+    var entries = result && result.checks ? result.checks : [];
+    for (var index = 0; index < entries.length; index++) {
+      var item = entries[index];
+      var status = await format(item.status === "pass"
+        ? "babeldoc-for-zotero-check-status-pass"
+        : "babeldoc-for-zotero-check-status-fail");
+      var detail = await format(item.messageId, item.args);
+      lines.push(status + "：" + detail);
+    }
+    lines.push(await format(result && result.ok
+      ? "babeldoc-for-zotero-check-result-ok"
+      : "babeldoc-for-zotero-check-result-fail"));
+    if (result && result.log) lines.push(result.log);
     target.textContent = lines.join("\n");
   }
 
@@ -379,6 +396,18 @@ var ZoteroTranslateFilesPreferences = (function () {
       }
     });
 
+    var homepage = document.getElementById(PANE_ID + "-homepage");
+    if (homepage) {
+      homepage.addEventListener("click", function (event) {
+        event.preventDefault();
+        try {
+          Zotero.launchURL("https://github.com/Veiluna/babeldoc-for-zotero");
+        } catch (error) {
+          // A failed navigation must not break the settings pane.
+        }
+      });
+    }
+
     var environmentCheckController = null;
     var checkButton = document.getElementById(PANE_ID + "-check");
     if (checkButton) {
@@ -396,15 +425,27 @@ var ZoteroTranslateFilesPreferences = (function () {
             source: ZoteroTranslateFilesConfig.getDownloadSource(),
             signal: environmentCheckController ? environmentCheckController.signal : null,
           });
-          renderEnvironmentCheck(document, result);
+          await renderEnvironmentCheck(document, result);
         } catch (error) {
           var cancelled = environmentCheckController &&
             environmentCheckController.signal.aborted;
           var detail = ZoteroTranslateFilesConfig.redact(
             error && error.message ? error.message : error
           );
-          setPlainText(document, PANE_ID + "-check-result",
-            cancelled ? "环境检测已取消。" : "环境检测失败：" + detail);
+          if (cancelled) {
+            setMessage(document, PANE_ID + "-check-result",
+              "babeldoc-for-zotero-check-cancelled");
+          } else if (document.l10n && typeof document.l10n.formatValue === "function") {
+            try {
+              setPlainText(document, PANE_ID + "-check-result",
+                await document.l10n.formatValue("babeldoc-for-zotero-check-error",
+                  { detail: detail }));
+            } catch (formatError) {
+              setPlainText(document, PANE_ID + "-check-result", detail);
+            }
+          } else {
+            setPlainText(document, PANE_ID + "-check-result", detail);
+          }
         } finally {
           environmentCheckController = null;
         }

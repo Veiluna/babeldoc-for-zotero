@@ -1001,9 +1001,11 @@ def restore_dual_links(source_path: str, dual_path: str, mono_mapping_path: str,
         for index in range(len(dual_doc)):
             source_width = float(source_doc[index].rect.width)
             dual_width = float(dual_doc[index].rect.width)
-            if abs(dual_width - 2 * source_width) > 1.5:
+            # BabelDOC 的左半是原页，右半从原文页宽处开始；总宽可能
+            # 因混合页面尺寸大于两倍，不能用总宽的一半做偏移。
+            if dual_width < 2 * source_width - 1.5:
                 raise ValueError("双语文档不是左右并排布局")
-            halves.append(dual_width / 2)
+            halves.append(source_width)
 
         def insert(page_index: int, rect: Any, destination: dict[str, Any],
                    target_page: int | None, target_point: list[float] | None,
