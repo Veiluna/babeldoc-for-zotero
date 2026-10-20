@@ -185,6 +185,13 @@ var ZoteroTranslateFilesRunner = (function () {
       var runnerPath = PathUtils.join(dataDir, RUNNER_FILENAME);
       // Refresh the copied runner every job so the script from the installed XPI is used.
       await Zotero.File.putContentsAsync(runnerPath, runnerContents, "utf-8");
+      var formulaHelperName = "ztf_inline_formulas.py";
+      var formulaHelperURI = ZoteroTranslateFiles.rootURI + "content/python/" + formulaHelperName;
+      var formulaHelperContents = await Zotero.File.getContentsFromURL(formulaHelperURI);
+      if (!formulaHelperContents) throw new Error("无法从插件包中读取公式辅助模块。");
+      await Zotero.File.putContentsAsync(
+        PathUtils.join(dataDir, formulaHelperName), formulaHelperContents, "utf-8"
+      );
 
       var baseTempDir = PathUtils.tempDir;
       workDir = PathUtils.join(baseTempDir, "zotero-translate-files-" + createUniqueSuffix());
