@@ -136,10 +136,10 @@ def test_zero_completion_tokens_fails_with_first_underlying_error() -> None:
     assert "Connection error" in decision["message"]
 
 
-def test_partial_failures_warn_when_some_paragraphs_succeeded() -> None:
+def test_partial_failures_fail_even_when_some_paragraphs_succeeded() -> None:
     _, decision = run_policy([None, "HTTP 429", None], 42)
     assert decision is not None
-    assert decision["kind"] == "warning"
+    assert decision["kind"] == "translation_failed"
     assert decision["failed_paragraphs"] == 1
     assert decision["message"].startswith("HTTP 429")
 
@@ -261,7 +261,7 @@ def test_successful_batch_with_one_failed_fallback_is_partial_failure() -> None:
 
     decision = policy.decision()
     assert decision is not None
-    assert decision["kind"] == "warning"
+    assert decision["kind"] == "translation_failed"
     assert policy.paragraph_attempts == 2
     assert decision["failed_paragraphs"] == 1
 
@@ -301,7 +301,7 @@ def test_batch_error_log_counts_when_thread_local_paragraph_context_is_missing()
 
     decision = policy.decision()
     assert decision is not None
-    assert decision["kind"] == "warning"
+    assert decision["kind"] == "translation_failed"
     assert policy.paragraph_attempts == 2
     assert decision["failed_paragraphs"] == 1
 
@@ -313,19 +313,19 @@ def test_all_paragraphs_failed_even_if_term_extraction_used_tokens() -> None:
     assert decision["failed_paragraphs"] == 2
 
 
-def test_partial_content_filter_rejections_warn_and_redact_the_reason() -> None:
+def test_partial_content_filter_rejections_fail_and_redact_the_reason() -> None:
     secret = "CONTENT_FILTER_SECRET"
     _, decision = run_policy([f"ContentFilterError: rejected {secret}", None], 42)
 
     assert decision is not None
-    assert decision["kind"] == "warning"
+    assert decision["kind"] == "translation_failed"
     assert decision["failed_paragraphs"] == 1
     assert decision["message"].startswith(f"rejected {secret}")
 
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
-        runner._emit("ZTF_WARNING ", decision, secret)
-    event = json.loads(output.getvalue().strip()[len("ZTF_WARNING "):])
+        runner._emit("ZTF_ERROR ", decision, secret)
+    event = json.loads(output.getvalue().strip()[len("ZTF_ERROR "):])
     assert event["failed_paragraphs"] == 1
     assert "rejected" in event["message"]
     assert secret not in event["message"]
@@ -1071,6 +1071,82 @@ def test_table_fragments_much_shorter_than_a_cell_line_are_kept() -> None:
     assert runner.collect_table_fragment_ids(NS(page=[even_page])) == set()
 
 
+def test_short_prose_echo_is_not_kept_verbatim() -> None:
+    # 旧实现按“小写词少于四个”放行，导致短正文回显被当成名称保留。
+    for text in ("Our method is accurate.", "We use Adam for classification."):
+        assert not runner.verbatim_output_allowed(text, "text")
+        result = runner.validate_translation_output(
+            text, text, {"layout_label": "text"}, len
+        )
+        assert result["usable"] is False
+        assert result["checks"]["identical_english"] is True
+
+
+def test_identifiers_and_titles_keep_their_verbatim_exception() -> None:
+    # 正文中的多词名称/元数据可原样保留，正文句子不可。
+    for text in (
+        "IEEE Transactions",
+        "GPT-4 Turbo",
+        "Department of Computer Science",
+        "IEEE Transactions on Neural Networks",
+        "Manuscript received 12 March 2026; revised 1 May 2026",
+    ):
+        assert runner.verbatim_output_allowed(text, "text"), text
+    # 已识别标题只放行缩写/标识符/专名，普通单词标题仍需翻译。
+    for text in (
+        "CIC-IDS-2017",
+        "HTTP",
+        "ChangeMamba",
+        "LLMs",
+        "BERT-based",
+        "IEEE 754",
+        "CIC-IDS 2017",
+    ):
+        assert runner.verbatim_output_allowed(text, "title"), text
+    for text in (
+        "INTRODUCTION",
+        "Precision",
+        "A Novel Method for Detection",
+    ):
+        assert not runner.verbatim_output_allowed(text, "title"), text
+
+
+def test_plain_text_insufficient_balance_is_not_retried() -> None:
+    from types import SimpleNamespace as NS
+
+    # 部分网关用纯文本 body 返回余额不足；不能被当成 429 短暂故障。
+    for body in (
+        "Insufficient balance",
+        "Insufficient quota",
+        "Quota exceeded",
+        "You exceeded your current quota",
+    ):
+        assert runner.temporary_request_error(
+            NS(body=body, status_code=429)
+        ) is False, body
+    assert runner.temporary_request_error(
+        NS(body={"error": "Insufficient quota"}, status_code=429)
+    ) is False
+    assert runner.temporary_request_error(
+        NS(body="temporary upstream failure", status_code=503)
+    ) is True
+
+
+def test_fatal_repair_failure_decision_reports_paragraph_locations() -> None:
+    from types import SimpleNamespace as NS
+
+    policy = runner.TranslationPolicy()
+    paragraph = NS()
+    policy.paragraph_locations[id(paragraph)] = (4, 7)
+    policy.record_failure(paragraph, "authentication failed")
+    decision = policy.decision()
+    assert decision is not None
+    assert decision["failures"] == [
+        {"page": 5, "paragraph": 8, "reason": "authentication failed"}
+    ]
+    assert "第 5 页段落 8" in decision["message"]
+
+
 if __name__ == "__main__":
     test_table_fragments_much_shorter_than_a_cell_line_are_kept()
     test_paragraph_classification_reports_written_back_paragraphs_as_translated()
@@ -1095,7 +1171,7 @@ if __name__ == "__main__":
     test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
     test_missing_babeldoc_package_uses_the_same_error_kind()
     test_zero_completion_tokens_fails_with_first_underlying_error()
-    test_partial_failures_warn_when_some_paragraphs_succeeded()
+    test_partial_failures_fail_even_when_some_paragraphs_succeeded()
     test_first_error_message_excludes_traceback_text()
     test_empty_exception_message_counts_failure_and_uses_exception_type()
     test_exception_is_preferred_to_source_text_containing_error_marker()
@@ -1103,7 +1179,7 @@ if __name__ == "__main__":
     test_successful_batch_with_one_failed_fallback_is_partial_failure()
     test_batch_error_log_counts_when_thread_local_paragraph_context_is_missing()
     test_all_paragraphs_failed_even_if_term_extraction_used_tokens()
-    test_partial_content_filter_rejections_warn_and_redact_the_reason()
+    test_partial_content_filter_rejections_fail_and_redact_the_reason()
     test_all_content_filter_rejections_fail_even_when_tokens_were_used_elsewhere()
     test_policy_captures_logs_before_async_evict_queue_discards_them()
     test_suppressed_fallback_is_counted_once_and_can_fail_the_job()
@@ -1112,4 +1188,8 @@ if __name__ == "__main__":
     test_final_count_summary_reports_all_failures_over_babeldoc_successes()
     test_error_protocol_redacts_keys_with_json_escape_characters_before_encoding()
     test_warning_protocol_redacts_keys_with_json_escape_characters_before_encoding()
+    test_short_prose_echo_is_not_kept_verbatim()
+    test_identifiers_and_titles_keep_their_verbatim_exception()
+    test_plain_text_insufficient_balance_is_not_retried()
+    test_fatal_repair_failure_decision_reports_paragraph_locations()
     print("runner policy regression cases passed")

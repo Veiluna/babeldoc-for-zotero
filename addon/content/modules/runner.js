@@ -185,6 +185,24 @@ var ZoteroTranslateFilesRunner = (function () {
       var runnerPath = PathUtils.join(dataDir, RUNNER_FILENAME);
       // Refresh the copied runner every job so the script from the installed XPI is used.
       await Zotero.File.putContentsAsync(runnerPath, runnerContents, "utf-8");
+      // Every Python helper must be copied next to the runner: the runner loads
+      // them by path and never executes from inside the addon directory.
+      var pythonHelpers = [
+        ["ztf_inline_formulas.py", "公式辅助模块"],
+        ["ztf_style_guards.py", "样式保护辅助模块"],
+        ["ztf_links.py", "链接恢复辅助模块"],
+        ["ztf_table_headers.py", "表头识别辅助模块"],
+      ];
+      for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
+        var helperName = pythonHelpers[helperIndex][0];
+        var helperLabel = pythonHelpers[helperIndex][1];
+        var helperURI = ZoteroTranslateFiles.rootURI + "content/python/" + helperName;
+        var helperContents = await Zotero.File.getContentsFromURL(helperURI);
+        if (!helperContents) throw new Error("无法从插件包中读取" + helperLabel + "。");
+        await Zotero.File.putContentsAsync(
+          PathUtils.join(dataDir, helperName), helperContents, "utf-8"
+        );
+      }
 
       var baseTempDir = PathUtils.tempDir;
       workDir = PathUtils.join(baseTempDir, "zotero-translate-files-" + createUniqueSuffix());
@@ -224,9 +242,6 @@ var ZoteroTranslateFilesRunner = (function () {
         arguments: args,
         environment: {
           ZTF_OPENAI_API_KEY: apiKey,
-          ZTF_MAX_OUTPUT_TOKENS: String(settings.maxOutputTokens),
-          ZTF_MAX_REQUESTS: String(settings.maxRequests),
-          ZTF_REPAIR_FAILED: settings.repairFailed ? "1" : "0",
           ZTF_TRANSLATE_REFERENCES: settings.translateReferences ? "1" : "0",
           ZTF_TOKEN_PARAM: settings.tokenParam || "max_tokens",
           ZTF_JOB_LOG_PATH: logPath,
@@ -261,6 +276,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var eventError = "";
       var eventErrorKind = "";
       var warning = null;
+      var linkStats = null;
 
       function handleProtocolLine(rawLine) {
         var line = rawLine.replace(/\r$/, "");
@@ -309,6 +325,15 @@ var ZoteroTranslateFilesRunner = (function () {
           var fragmentItems = event.fragment_item_count == null ? NaN : Number(event.fragment_item_count);
           if (Number.isFinite(fragmentItems)) fragmentItemCount = Math.max(0, Math.floor(fragmentItems));
           if (event.log_path) logPath = String(event.log_path);
+          if (event.links && typeof event.links === "object") {
+            linkStats = {
+              source: Number(event.links.source) || 0,
+              restored: Number(event.links.restored) || 0,
+              unresolved: Number(event.links.unresolved) || 0,
+              unsupported: Number(event.links.unsupported) || 0,
+              mappingPath: event.links.mapping_path ? String(event.links.mapping_path) : null,
+            };
+          }
           // The runner adapts if the provider rejects the token-limit parameter;
           // remember what worked so the next job uses it from the first request.
           if (event.token_param && event.token_param !== settings.tokenParam &&
@@ -328,11 +353,24 @@ var ZoteroTranslateFilesRunner = (function () {
           eventErrorKind = String(event.kind || "");
         } else if (marker === "ZTF_WARNING ") {
           var failedParagraphs = Number(event.failed_paragraphs);
+          var warningTables = [];
+          if (Array.isArray(event.tables)) {
+            event.tables.forEach(function (table) {
+              if (!table || typeof table !== "object") return;
+              var page = Number(table.page);
+              warningTables.push({
+                table: String(table.table || "未编号表"),
+                page: Number.isFinite(page) ? Math.max(1, Math.floor(page)) : null,
+                reason: String(table.reason || ""),
+              });
+            });
+          }
           warning = {
             failed_paragraphs: Number.isFinite(failedParagraphs)
               ? Math.max(0, Math.floor(failedParagraphs))
               : 0,
             message: redact(event.message || "部分段落翻译失败。", apiKey),
+            tables: warningTables,
           };
         }
       }
@@ -401,6 +439,8 @@ var ZoteroTranslateFilesRunner = (function () {
         repairRequestCount: repairRequestCount,
         fragmentItemCount: fragmentItemCount,
         logPath: logPath,
+        linkStats: linkStats,
+        linkMappingPath: linkStats && linkStats.mappingPath ? linkStats.mappingPath : null,
         cleanup: cleanup,
       };
     } catch (error) {

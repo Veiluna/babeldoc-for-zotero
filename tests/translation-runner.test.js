@@ -109,6 +109,7 @@ function makeHarness(options = {}) {
             options.repairRequestCount == null ? {} : { repair_request_count: options.repairRequestCount },
             options.fragmentItemCount == null ? {} : { fragment_item_count: options.fragmentItemCount },
             options.logPath == null ? {} : { log_path: options.logPath },
+            options.links == null ? {} : { links: options.links },
           )) + "\r\n";
       const warningLine = options.warning
         ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
@@ -208,6 +209,17 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner"));
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
+  const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
+  for (const helperName of [
+    "ztf_inline_formulas.py", "ztf_style_guards.py",
+    "ztf_links.py", "ztf_table_headers.py",
+  ]) {
+    assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
+      entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
+    assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner" &&
+      entry[1] === path.win32.join(runnerDirectory, helperName) &&
+      entry[2] && entry[3] === "utf-8"), "辅助模块与实际执行的 runner 放在同一目录 " + helperName);
+  }
   assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero"));
   assert.ok(harness.createdDirectories.includes("C:\\Zotero\\babeldoc-for-zotero\\logs"));
   assert.equal(harness.createdDirectories.length, 4, "data, logs, job, and BabelDOC working directories should be created");
@@ -221,9 +233,9 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   // The prompt is owned by the Python runner (ensure_runner_options); passing
   // a copy from JS previously replaced the runner's fragment rules.
   assert.equal(args.indexOf("--custom-system-prompt"), -1);
-  assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, "8192");
-  assert.equal(call.environment.ZTF_MAX_REQUESTS, "20");
-  assert.equal(call.environment.ZTF_REPAIR_FAILED, "1");
+  assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, undefined);
+  assert.equal(call.environment.ZTF_MAX_REQUESTS, undefined);
+  assert.equal(call.environment.ZTF_REPAIR_FAILED, undefined);
   assert.equal(call.environment.ZTF_TRANSLATE_REFERENCES, "0");
   assert.equal(call.environment.ZTF_TOKEN_PARAM, "max_tokens");
   assert.match(call.environment.ZTF_JOB_LOG_PATH, /\\logs\\.*-ABCD1234\.jsonl$/);
@@ -276,6 +288,34 @@ async function reportsRequestCountsInProgressAndResult() {
   await result.cleanup();
 }
 
+async function exposesLinkRestorationStatsAndMappingPath() {
+  const harness = makeHarness({
+    links: {
+      source: 7,
+      restored: 6,
+      unresolved: 1,
+      unsupported: 0,
+      mapping_path: "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+    },
+  });
+  const result = await harness.runner.translate(harness.item, {});
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.linkStats)),
+    {
+      source: 7,
+      restored: 6,
+      unresolved: 1,
+      unsupported: 0,
+      mappingPath: "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+    },
+  );
+  assert.equal(
+    result.linkMappingPath,
+    "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+  );
+  await result.cleanup();
+}
+
 async function rejectsQueryURLsBeforeStartingBabelDOC() {
   const harness = makeHarness({
     baseURL: "https://api.example.test/v1/chat/completions?tenant=demo",
@@ -314,12 +354,17 @@ async function parsesAndRedactsPartialFailureWarning() {
     warning: {
       failed_paragraphs: 3,
       message: "Connection error with RUNNER_SECRET_KEY_789",
+      tables: [{ table: "表 4", page: 4, reason: "no data rows" }],
     },
   });
   const result = await harness.runner.translate(harness.item, {});
   assert.equal(result.warning.failed_paragraphs, 3);
   assert.ok(result.warning.message.includes("Connection error"));
   assert.ok(!result.warning.message.includes(harness.apiKey));
+  assert.equal(result.warning.tables.length, 1);
+  assert.equal(result.warning.tables[0].table, "表 4");
+  assert.equal(result.warning.tables[0].page, 4);
+  assert.equal(result.warning.tables[0].reason, "no data rows");
   await result.cleanup();
 }
 
@@ -397,6 +442,7 @@ async function abortKillsTheChildAndCleansUp() {
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
   await reportsRequestCountsInProgressAndResult();
+  await exposesLinkRestorationStatsAndMappingPath();
   await rejectsQueryURLsBeforeStartingBabelDOC();
   await errorsAreUsefulAndKeyFree();
   await parsesAndRedactsPartialFailureWarning();

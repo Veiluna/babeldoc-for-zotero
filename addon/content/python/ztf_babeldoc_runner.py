@@ -8,6 +8,7 @@ import datetime
 import functools
 import html
 import importlib.metadata
+import importlib.util
 import json
 import logging
 import logging.handlers
@@ -18,6 +19,7 @@ import re
 import statistics
 import sys
 import threading
+import time
 import traceback
 import unicodedata
 from collections import Counter
@@ -26,6 +28,7 @@ from typing import Any
 
 
 EXPECTED_BABELDOC_VERSION = "0.6.4"
+MAX_OUTPUT_TOKENS = 50000
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -41,7 +44,10 @@ CONSISTENCY_SYSTEM_PROMPT = (
     "a column or page break; continues_in / continued_from give the id of the other part "
     "when it is in the same request. Translate only that item's own fragment, so that "
     "each output covers exactly its own source text: do not move content between items, "
-    "and never return an empty output. Return exactly the JSON array format required by the "
+    "and never return an empty output. An item with table_role is a confirmed table header "
+    "(table_context lists its table and sibling labels): translate that label into concise "
+    "table terminology, but keep method names, dataset names, abbreviations, numbers and "
+    "symbols unchanged. Return exactly the JSON array format required by the "
     "surrounding prompt, with one output item for each input item and no extra text."
 )
 
@@ -114,6 +120,210 @@ _LICENSE_STAMP_RE = re.compile(
     r"permission\s+for\s+republication|licensed\s+for\s+use\s+by",
     re.I,
 )
+
+_STYLE_GUARDS_MODULE: Any = None
+_TABLE_HEADERS_MODULE: Any = None
+
+
+def _style_guards() -> Any:
+    """Load the sibling helper module that guards citation style spans."""
+    global _STYLE_GUARDS_MODULE
+    if _STYLE_GUARDS_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_style_guards",
+            os.path.join(os.path.dirname(__file__), "ztf_style_guards.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_style_guards.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _STYLE_GUARDS_MODULE = module
+    return _STYLE_GUARDS_MODULE
+
+
+_LINKS_MODULE: Any = None
+
+
+def _links_helper() -> Any:
+    """Load the sibling helper module that restores PDF links after layout."""
+    global _LINKS_MODULE
+    if _LINKS_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_links",
+            os.path.join(os.path.dirname(__file__), "ztf_links.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_links.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LINKS_MODULE = module
+    return _LINKS_MODULE
+
+
+def _argument_value(arguments: list[str], name: str) -> str:
+    """Read a single-valued BabelDOC CLI option."""
+    for index, argument in enumerate(arguments):
+        if argument == name and index + 1 < len(arguments):
+            return arguments[index + 1]
+        if argument.startswith(name + "="):
+            return argument[len(name) + 1:]
+    return ""
+
+
+def _box_tuple(box: Any) -> list[float] | None:
+    if box is None:
+        return None
+    try:
+        values = [float(box.x), float(box.y), float(box.x2), float(box.y2)]
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not all(math.isfinite(value) for value in values):
+        return None
+    if values[2] <= values[0] or values[3] <= values[1]:
+        return None
+    return [round(value, 3) for value in values]
+
+
+def _il_page_geometry(il_page: Any) -> tuple[float, float, float]:
+    """MediaBox height and CropBox origin for a BabelDOC IL page."""
+    try:
+        media = il_page.mediabox.box
+        crop = il_page.cropbox.box
+        return float(crop.x), float(crop.y), float(media.y2)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0, 0.0, 0.0
+
+
+def _il_box_to_text_box(box: Any, il_page: Any) -> list[float] | None:
+    """BabelDOC IL boxes use PDF user space (bottom-left origin).
+
+    Link rectangles, text extraction and paragraph output boxes used by this
+    helper are CropBox-relative top-left coordinates.  Conversion is required;
+    page rotation does not affect IL boxes because those are unrotated.
+    """
+    values = _box_tuple(box)
+    if values is None:
+        return None
+    crop_x, crop_y, media_y2 = _il_page_geometry(il_page)
+    if media_y2 <= 0:
+        return values
+    return [
+        round(values[0] - crop_x, 3),
+        round(media_y2 - values[3] - crop_y, 3),
+        round(values[2] - crop_x, 3),
+        round(media_y2 - values[1] - crop_y, 3),
+    ]
+
+
+def _paragraph_text_bbox(paragraph: Any, il_page: Any = None) -> list[float] | None:
+    """Union of a paragraph's laid-out line/character boxes after typesetting."""
+    boxes: list[Any] = []
+    for composition in getattr(paragraph, "pdf_paragraph_composition", ()) or ():
+        for attribute in ("pdf_line", "pdf_same_style_characters", "pdf_formula",
+                          "pdf_character"):
+            owner = getattr(composition, attribute, None)
+            if owner is None:
+                continue
+            box = getattr(owner, "box", None)
+            if box is not None:
+                boxes.append(box)
+            for character in getattr(owner, "pdf_character", ()) or ():
+                character_box = getattr(character, "box", None)
+                if character_box is not None:
+                    boxes.append(character_box)
+    if not boxes:
+        return _il_box_to_text_box(getattr(paragraph, "box", None), il_page)
+    union = None
+    for box in boxes:
+        values = _il_box_to_text_box(box, il_page)
+        if values is None:
+            continue
+        if union is None:
+            union = list(values)
+        else:
+            union = [
+                min(union[0], values[0]), min(union[1], values[1]),
+                max(union[2], values[2]), max(union[3], values[3]),
+            ]
+    return union
+
+
+def _paragraph_formula_boxes(paragraph: Any, il_page: Any) -> list[list[float]]:
+    """Formula boxes are the rendered citation glyphs when text extraction fails."""
+    boxes: list[list[float]] = []
+    for composition in getattr(paragraph, "pdf_paragraph_composition", ()) or ():
+        formula = getattr(composition, "pdf_formula", None)
+        if formula is None:
+            continue
+        box = _il_box_to_text_box(getattr(formula, "box", None), il_page)
+        if box is not None:
+            boxes.append(box)
+    return boxes
+
+
+def _paragraph_layout_snapshot(
+    document: Any, source_text_by_id: dict[int, str] | None = None
+) -> dict[int, dict[str, Any]]:
+    """Record source paragraph boxes before typesetting mutates them in place."""
+    snapshots: dict[int, dict[str, Any]] = {}
+    source_text_by_id = source_text_by_id or {}
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            if getattr(paragraph, "xobj_id", None) not in (None, 0):
+                continue
+            box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if box is None:
+                continue
+            snapshots[id(paragraph)] = {
+                "id": id(paragraph),
+                "source_page": page_index,
+                "source_box": box,
+                "source_text": _text_preview(
+                    source_text_by_id.get(id(paragraph))
+                    or getattr(paragraph, "unicode", "")
+                ),
+            }
+    return snapshots
+
+
+def _link_paragraph_map(
+    document: Any, snapshots: dict[int, dict[str, Any]], page_offset: int = 0
+) -> dict[str, Any]:
+    """Combine source boxes with final translated paragraph geometry."""
+    paragraphs = []
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            snapshot = snapshots.get(id(paragraph))
+            if snapshot is None:
+                continue
+            output_box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if output_box is None:
+                continue
+            paragraphs.append({
+                **snapshot,
+                "source_page": snapshot["source_page"] + page_offset,
+                "output_page": page_index + page_offset,
+                "output_box": output_box,
+                "output_text_bbox": _paragraph_text_bbox(paragraph, page),
+                "output_formula_boxes": _paragraph_formula_boxes(paragraph, page),
+            })
+    return {"version": 1, "paragraphs": paragraphs}
+
+
+def _table_headers() -> Any:
+    """Load the sibling helper that separates table headers from table body."""
+    global _TABLE_HEADERS_MODULE
+    if _TABLE_HEADERS_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_table_headers",
+            os.path.join(os.path.dirname(__file__), "ztf_table_headers.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_table_headers.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TABLE_HEADERS_MODULE = module
+    return _TABLE_HEADERS_MODULE
 
 
 class RequestCapExceeded(RuntimeError):
@@ -352,8 +562,8 @@ def call_translator_without_cache(
 class RequestBudget:
     """Count completion attempts and update the request progress display."""
 
-    def __init__(self, max_requests: int, on_update: Any = None) -> None:
-        self.max_requests = max_requests
+    def __init__(self, max_requests: int | None = None, on_update: Any = None) -> None:
+        self.max_requests = math.inf if max_requests is None else max_requests
         self.requests = 0
         self.planned = 0
         self.on_update = on_update
@@ -448,39 +658,117 @@ def create_completion_adapting(
     client: Any,
     request_state: dict[str, Any],
     token_limit: int,
+    *,
+    request_metadata: dict[str, Any] | None = None,
+    api_key: str = "",
     **kwargs: Any,
 ) -> Any:
     """``client.chat.completions.create`` with the provider's parameter dialect.
 
-    The token-limit parameter name lives in ``request_state["token_param"]``
-    (initialised from the plugin setting). If the provider rejects a parameter
-    as unsupported, the request is reshaped and sent again — at most twice, in
-    the same counted request slot, since the rejected attempt was not processed.
-    The learned dialect is kept for the rest of the job.
+    参数适配与短暂故障恢复均逐次计数、记录；已完成的批次不在此处重发。
+    首次尝试由调用方 request_once 计数，其余网络尝试在这里计数。
     """
     attempts = 0
+    retries = 0
+    network_attempt = 0
+    budget = request_state.get("request_budget")
     while True:
         call = dict(kwargs)
         if request_state.get("drop_sampling"):
             for name in _SAMPLING_PARAMETERS:
                 call.pop(name, None)
         call[request_state.get("token_param", "max_tokens")] = token_limit
+        # extra_body 由 SDK 最后合并，不能让它覆盖固定输出策略。
+        if isinstance(call.get("extra_body"), dict):
+            call["extra_body"] = {key: value for key, value in call["extra_body"].items() if key not in TOKEN_LIMIT_PARAMETERS}
+        if network_attempt and budget is not None:
+            budget.add_additional_requests(1)
+            budget.reserve_request()
+        network_attempt += 1
+        response = None
+        failure = None
+        delay = 0
         try:
-            return client.chat.completions.create(**call)
+            response = client.chat.completions.create(**call)
+            return response
         except Exception as error:
+            failure = error
             adaptation = parameter_adaptation(error)
-            if adaptation is None or attempts >= 2:
-                raise
-            attempts += 1
-            if adaptation == "drop_sampling":
-                if request_state.get("drop_sampling"):
-                    raise
-                request_state["drop_sampling"] = True
+            if adaptation is not None and attempts < 2:
+                attempts += 1
+                if adaptation == "drop_sampling":
+                    if request_state.get("drop_sampling"):
+                        raise
+                    request_state["drop_sampling"] = True
+                else:
+                    if request_state.get("token_param") == adaptation:
+                        raise
+                    request_state["token_param"] = adaptation
+                request_state.setdefault("parameter_adaptations", []).append(adaptation)
+            elif retries < 2 and temporary_request_error(error):
+                delay = (2, 4)[retries]
+                retries += 1
             else:
-                if request_state.get("token_param") == adaptation:
-                    raise
-                request_state["token_param"] = adaptation
-            request_state.setdefault("parameter_adaptations", []).append(adaptation)
+                raise
+        finally:
+            usage = getattr(response, "usage", None)
+            choices = getattr(response, "choices", None)
+            record = dict(request_metadata or {"phase": "main", "item_count": 0})
+            record.update({
+                "event": "request",
+                "request_index": budget.requests if budget is not None else network_attempt,
+                "token_param": next(name for name in TOKEN_LIMIT_PARAMETERS if name in call),
+                "max_output_tokens": token_limit,
+                "actual_output_tokens": getattr(usage, "completion_tokens", None),
+                "finish_reason": getattr(choices[0], "finish_reason", None) if choices else None,
+            })
+            if failure is not None:
+                record["error"] = log_safe_error(failure, api_key)
+                record["provider_message"] = provider_message_for_log(failure, api_key, "")
+                record["status_code"] = _provider_status(failure)
+            _write_job_log(request_state, record, api_key)
+        if delay:
+            _write_job_log(request_state, {"event": "request_retry", "delay_seconds": delay,
+                                          "request_index": budget.requests if budget else None}, api_key)
+            # Zotero 取消会终止本进程，等待期间同样立即生效。
+            time.sleep(delay)
+
+
+def temporary_request_error(error: Exception) -> bool:
+    """只恢复明确的短暂故障；余额、鉴权、配置错误立即失败。"""
+    import openai
+
+    body = getattr(error, "body", None)
+    details: dict[str, Any] = {}
+    if isinstance(body, dict):
+        inner = body.get("error", body)
+        if isinstance(inner, dict):
+            details = inner
+        elif isinstance(inner, str):
+            # 部分网关直接以纯文本返回 "Insufficient balance"。
+            details = {"message": inner}
+    elif isinstance(body, str):
+        details = {"message": body}
+    diagnostic = " ".join(
+        str(part or "")
+        for part in (
+            details.get("code"),
+            details.get("type"),
+            details.get("message"),
+            "" if isinstance(error, openai.APIConnectionError) else str(error),
+        )
+    ).casefold()
+    if any(marker in diagnostic for marker in (
+        "insufficient_quota", "insufficient quota", "insufficient_balance",
+        "insufficient balance", "quota_exceeded", "quota exceeded",
+        "quota exhausted", "exceeded your current quota", "out of credits",
+        "billing", "credit balance", "balance", "余额", "欠费", "配额耗尽",
+    )):
+        return False
+    if isinstance(error, openai.APIConnectionError):
+        return True
+    status = _provider_status(error)
+    return status in (408, 409, 429) or (status is not None and 500 <= status <= 599)
 
 
 def _failed_json_items(
@@ -897,18 +1185,132 @@ _EMAIL_EVIDENCE_RE = re.compile(_EMAIL_EVIDENCE_PATTERN)
 
 _PROSE_MIN_LOWERCASE_WORDS = 4
 
+# 已识别的应译角色：标题、摘要、图表标题与表头。它们即使很短也必须翻译，
+# 只允许真正的缩写/标识符原样返回（见 _title_verbatim_allowed）。
+_MUST_TRANSLATE_LAYOUT_LABELS = {
+    "title", "doc_title", "document_title", "paragraph_title", "section_title",
+    "heading", "abstract", "figure_caption", "table_caption", "table_header",
+    "index_terms", "keywords",
+}
+# 正文段落：不能靠“小写词少于四个”放行回显，只允许名称/标识符原样保留。
+_BODY_LAYOUT_LABELS = {
+    "text", "plain_text", "paragraph_hybrid", "body", "body_text",
+    "paragraph", "list", "list_item", "footnote", "note",
+}
+# 句子标记：正文出现这些词时，即使很短也按句子处理。
+_SENTENCE_MARKERS = {
+    "the", "we", "our", "this", "that", "these", "those", "it", "its",
+    "is", "are", "was", "were", "be", "been", "has", "have", "can", "will",
+    "not", "which", "while", "than", "then", "they", "their",
+}
+# 名称连接词：允许出现在机构、期刊、元数据等合法名称中。
+_NAME_CONNECTORS = {
+    "of", "and", "or", "for", "with", "to", "in", "on", "by", "from", "as",
+    "at", "via", "using", "based", "received", "revised", "accepted",
+}
 
-def verbatim_output_allowed(text: str) -> bool:
+
+def _normalized_layout_label(layout_label: Any) -> str:
+    return str(layout_label or "").strip().lower().replace(" ", "_")
+
+
+def _verbatim_identifier_like(text: str) -> bool:
+    """名称、缩写、数字、链接等可以原样保留；普通英文句子返回 False。"""
+    original_tokens = (text or "").split()
+    # 每个词都带 BabelDOC 占位符时（"mean{v1} variance{v2}"），它是公式/数据
+    # 列表而不是英文句子，必须原样保留。
+    if original_tokens and all(
+        _PLACEHOLDER_TOKEN_RE.search(token) for token in original_tokens
+    ):
+        return True
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
+    if not plain:
+        return False
+    if re.search(r"[\u3400-\u9fff]", plain):
+        return True
+    if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
+        return True
+    tokens = [
+        token.strip(",;:()[]\"'!?")
+        for token in plain.split()
+        if token.strip(",;:()[]\"'!?")
+    ]
+    if len(tokens) <= 1:
+        return True
+    lowered = [token.casefold() for token in tokens]
+    # 代词/系动词/冠词是句子标记；of/on/for 等连接词仍可属于合法名称。
+    if any(word in _SENTENCE_MARKERS for word in lowered):
+        return False
+    # 名称样：首词大写（"Department of Computer Science"、IEEE Transactions on …、
+    # Manuscript received …），或每个词都是大写/数字/符号。
+    if tokens[0][0].isupper():
+        return True
+    return all(
+        token[0].isupper() or re.search(r"[0-9\-_/.]", token)
+        for token in tokens
+    )
+
+
+def _title_verbatim_allowed(text: str) -> bool:
+    """已识别标题只允许缩写/标识符/专名原样返回。"""
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
+    if not plain:
+        return False
+    if re.search(r"[\u3400-\u9fff]", plain):
+        return True
+    if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
+        return True
+    tokens = [
+        token.strip(",;:()[]\"'!?")
+        for token in plain.split()
+        if token.strip(",;:()[]\"'!?")
+    ]
+    if not tokens:
+        return False
+
+    def identifier_like(token: str) -> bool:
+        if re.fullmatch(r"[A-Z]{2,6}[a-z]?", token):  # HTTP, IEEE, LLMs
+            return True
+        if re.search(r"[0-9]", token):  # CIC-IDS-2017, GPT-4, 754
+            return True
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+", token):
+            return True  # BERT-based, CIC-IDS
+        if re.match(r"[A-Z][a-z]+[A-Z]", token):  # ChangeMamba
+            return True
+        if token.casefold() in _NAME_CONNECTORS:  # Transactions on …
+            return True
+        return False
+
+    return all(identifier_like(token) for token in tokens)
+
+
+def verbatim_output_allowed(text: str, layout_label: str = "") -> bool:
     """Whether text may stay as it is (names, author/affiliation lines, labels,
-    identifiers, links): only real sentences are checked for being left in
-    English. A sentence has at least four plain lowercase words; tokens with
-    ".", "@", digits or braces (e-mails, placeholders) do not count. The prompt
-    tells the model to keep such items unchanged, so no further rules here."""
+    identifiers, links). 正文与已识别标题不按词数放行；未知角色保留旧的
+    短标签启发式，但明显以句号结尾的多词文本仍视为句子。"""
+    label = _normalized_layout_label(layout_label)
+    if label == "table_header":
+        # A confirmed table header has general meaning. An unchanged label is
+        # an untranslated header, not a name to preserve; only source text that
+        # is already Chinese (or has no letters at all) may stay as it is.
+        plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
+        if not plain:
+            return False
+        if re.search(r"[㐀-鿿]", plain):
+            return True
+        return not re.search(r"[A-Za-z]", plain)
+    if label in _MUST_TRANSLATE_LAYOUT_LABELS:
+        return _title_verbatim_allowed(text)
+    if label in _BODY_LAYOUT_LABELS:
+        return _verbatim_identifier_like(text)
+    if _verbatim_identifier_like(text):
+        return True
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
     # Count raw tokens: one carrying a placeholder ("mean{v1}") is not a word.
     # A trailing full stop ends a sentence ("design.") unless the word is a
     # short abbreviation ("avg.", "std.", "min.", "max."), which never counts.
     lowercase = []
-    for token in (text or "").split():
+    for token in plain.split():
         word = token.strip(",;:()[]\"'!?")
         if word.endswith(".") and not word.endswith(".."):
             word = word[:-1]
@@ -916,6 +1318,8 @@ def verbatim_output_allowed(text: str) -> bool:
                 continue
         if re.fullmatch(r"[a-z]+(?:['’-][a-z]+)*", word):
             lowercase.append(word)
+    if len(plain.split()) >= 2 and re.search(r"[.!?]\s*$", plain):
+        return False
     return len(lowercase) < _PROSE_MIN_LOWERCASE_WORDS
 
 
@@ -1010,7 +1414,7 @@ def validate_translation_output(
         return {"usable": False, "reason": "模型返回空译文，已进入合并补译。", "checks": checks}
 
     output = str(translated)
-    if _is_verbatim_output(source, output):
+    if _is_verbatim_output(source, output) and verbatim_output_allowed(source, item.get("layout_label", "")):
         checks["kept_verbatim"] = True
         return {"usable": True, "reason": "模型原样返回，保留原段落与排版。", "checks": checks}
 
@@ -1022,7 +1426,7 @@ def validate_translation_output(
     identical = " ".join(output.split()) == " ".join(source.split())
     # Label-like sources (names, author lines, labels) skip every
     # "left in English" heuristic; the prompt asks to keep them unchanged.
-    label_like = verbatim_output_allowed(source)
+    label_like = verbatim_output_allowed(source, item.get("layout_label", ""))
     verbatim_ok = identical and label_like
     if identical and not verbatim_ok:
         checks["identical_english"] = True
@@ -1121,6 +1525,14 @@ def validate_translation_output(
         checks["placeholder_issues"].append(
             {"reason": "unexpected_style_tag", "extra": extra_style_tags}
         )
+    # A model can keep every tag count and still move a citation span around
+    # ordinary translated prose. Protected citation spans must keep their own
+    # source text; that is what bounds the blue colour to the citation.
+    protected_spans = item.get("protected_spans") if isinstance(item, dict) else None
+    if protected_spans and not checks["placeholder_issues"]:
+        checks["placeholder_issues"].extend(
+            _style_guards().citation_span_issues(output, protected_spans)
+        )
     if not checks["placeholder_issues"]:
         source_nesting = _formula_placeholder_nesting(source)
         output_nesting = _formula_placeholder_nesting(output)
@@ -1136,9 +1548,18 @@ def validate_translation_output(
             if not checks["placeholder_issues"]:
                 checks["placeholder_issues"].append({"reason": "formula_nesting_changed"})
     if checks["placeholder_issues"]:
+        citation_broken = any(
+            str(issue.get("reason", "")).startswith("citation_span")
+            for issue in checks["placeholder_issues"]
+            if isinstance(issue, dict)
+        )
         return {
             "usable": False,
-            "reason": "译文中的占位符缺失、重复、被改写或移动了位置，已进入合并补译。",
+            "reason": (
+                "译文中的引用样式覆盖了普通正文，已进入合并补译。"
+                if citation_broken
+                else "译文中的占位符缺失、重复、被改写或移动了位置，已进入合并补译。"
+            ),
             "checks": checks,
         }
 
@@ -1178,6 +1599,106 @@ def validate_translation_output(
 
 def _paragraph_layout_label(paragraph: Any) -> str:
     return str(getattr(paragraph, "layout_label", "") or "").strip()
+
+
+def _request_layout_label(request_state: dict[str, Any], paragraph: Any) -> str:
+    """Model-facing layout label; confirmed table headers are not fallback lines."""
+    metadata = request_state.get("table_header_metadata", {}).get(id(paragraph))
+    if metadata is not None:
+        return "table_header"
+    return _paragraph_layout_label(paragraph)
+
+
+def _is_structural_quality_failure(checks: Any) -> bool:
+    """Whether a failure means the translation could not be restored safely.
+
+    Missing/changed placeholders and citation-style boundaries are structural:
+    the paragraph still holds source text, so it may not be reported as a
+    translatable paragraph that simply kept its original wording.
+    """
+    if not isinstance(checks, dict):
+        return False
+    if checks.get("apply_error") or checks.get("restore_failed"):
+        return True
+    return bool(checks.get("placeholder_issues"))
+
+
+def _paragraph_location(request_state: dict[str, Any], paragraph: Any) -> str:
+    positions = request_state.get("paragraph_positions") or {}
+    position = positions.get(id(paragraph)) if paragraph is not None else None
+    if position:
+        page_index, paragraph_index = position
+        location = f"第 {page_index + 1} 页第 {paragraph_index + 1} 段"
+    else:
+        location = "页码未知的段落"
+    label = _paragraph_layout_label(paragraph) if paragraph is not None else ""
+    return f"{location}（{label or 'text'}）"
+
+
+def _record_table_header_layout_failure(
+    request_state: dict[str, Any], paragraph: Any, api_key: str
+) -> None:
+    """An identified header whose translation cannot fit its cell fails the job."""
+    failed_ids = request_state.setdefault("table_header_layout_failed_ids", set())
+    if id(paragraph) in failed_ids:
+        return
+    failed_ids.add(id(paragraph))
+    table_metadata = request_state.get("table_header_metadata", {}).get(
+        id(paragraph)
+    ) or {}
+    _record_quality_failure(
+        request_state,
+        paragraph,
+        "已识别表头译文无法在单元格内安全排版，可能覆盖数据。",
+        {
+            "table_layout_failed": True,
+            "table": table_metadata.get("table", ""),
+            "role": table_metadata.get("role", ""),
+        },
+        api_key,
+        phase="typesetting",
+    )
+
+
+def _record_quality_failure(
+    request_state: dict[str, Any],
+    paragraph: Any,
+    reason: str,
+    checks: Any,
+    api_key: str,
+    phase: str = "repair",
+) -> None:
+    """Remember a structural failure; main() turns any of them into no result."""
+    location = _paragraph_location(request_state, paragraph)
+    key: Any = id(paragraph) if paragraph is not None else f"unbound:{location}:{reason}"
+    positions = request_state.get("paragraph_positions") or {}
+    position = positions.get(id(paragraph)) if paragraph is not None else None
+    entry = {
+        "location": location,
+        "page": position[0] + 1 if position else None,
+        "paragraph": position[1] + 1 if position else None,
+        "layout_label": (
+            _request_layout_label(request_state, paragraph)
+            if paragraph is not None
+            else ""
+        ),
+        "reason": reason,
+        "checks": checks if isinstance(checks, dict) else {},
+        "phase": phase,
+    }
+    request_state.setdefault("quality_failures", {})[key] = entry
+    _write_job_log(
+        request_state,
+        {
+            "event": "quality_failure",
+            "phase": phase,
+            "location": location,
+            "layout_label": entry["layout_label"],
+            "reason": reason,
+            "checks": entry["checks"],
+        },
+        api_key,
+    )
 
 
 def _caption_fragment_edge_boxes(layout: Any, page: Any, layouts: list[Any]) -> list[Any] | None:
@@ -1539,30 +2060,44 @@ def _with_table_cell_bounds(
     paragraph: Any,
     page: Any,
     operation: Any,
+    cell_box: Any = None,
 ) -> Any:
     """Run scale measurement or rendering with table expansion clamped to a cell."""
     paragraph_box = getattr(paragraph, "box", None)
     if paragraph_box is None:
         return operation()
-    try:
-        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
-        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
-        containing_tables = [
-            layout
-            for layout in getattr(page, "page_layout", ()) or ()
-            if getattr(layout, "class_name", "") == "table"
-            and layout.box.x <= center_x <= layout.box.x2
-            and layout.box.y <= center_y <= layout.box.y2
-        ]
-    except (TypeError, ValueError, AttributeError):
-        return operation()
-    if not containing_tables:
-        return operation()
-    table = min(
-        containing_tables,
-        key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
-    )
-    bounded_box = _table_cell_layout_box(paragraph_box, page, table)
+    bounded_box = None
+    if cell_box is not None:
+        try:
+            bounded_box = copy.copy(paragraph_box)
+            bounded_box.x, bounded_box.y, bounded_box.x2, bounded_box.y2 = (
+                float(cell_box[0]),
+                float(cell_box[1]),
+                float(cell_box[2]),
+                float(cell_box[3]),
+            )
+        except (TypeError, ValueError, AttributeError, IndexError):
+            bounded_box = None
+    if bounded_box is None:
+        try:
+            center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
+            center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
+            containing_tables = [
+                layout
+                for layout in getattr(page, "page_layout", ()) or ()
+                if getattr(layout, "class_name", "") == "table"
+                and layout.box.x <= center_x <= layout.box.x2
+                and layout.box.y <= center_y <= layout.box.y2
+            ]
+        except (TypeError, ValueError, AttributeError):
+            return operation()
+        if not containing_tables:
+            return operation()
+        table = min(
+            containing_tables,
+            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+        )
+        bounded_box = _table_cell_layout_box(paragraph_box, page, table)
     if bounded_box is None:
         return operation()
 
@@ -1722,8 +2257,15 @@ def _apply_common_table_scales(
             paragraph.optimal_scale = common_scale
 
 
-def collect_table_fragment_ids(document: Any) -> set[int]:
-    """Table paragraphs far shorter than their table's lines, kept as they are."""
+def collect_table_fragment_ids(
+    document: Any, excluded_ids: set[int] | None = None
+) -> set[int]:
+    """Table paragraphs far shorter than their table's lines, kept as they are.
+
+    Confirmed header/body roles are excluded: a short header such as "F1" is a
+    real header, not a fragment split from a neighbouring cell.
+    """
+    excluded_ids = excluded_ids or set()
     fragment_ids: set[int] = set()
     for page in getattr(document, "page", ()) or ():
         tables = [
@@ -1733,6 +2275,8 @@ def collect_table_fragment_ids(document: Any) -> set[int]:
         ]
         groups: dict[int, list[tuple[Any, float]]] = {}
         for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            if id(paragraph) in excluded_ids:
+                continue
             box = getattr(paragraph, "box", None)
             if box is None:
                 continue
@@ -2540,6 +3084,8 @@ class TranslationPolicy(logging.Handler):
         self._thread_state = threading.local()
         self._attempted_paragraph_ids: dict[int, Any] = {}
         self._failed_paragraph_ids: set[int] = set()
+        self.failure_reasons: dict[int, str] = {}
+        self.paragraph_locations: dict[int, tuple[int, int]] = {}
         self._unbound_failed_paragraphs = 0
         self.paragraph_attempts = 0
         self.failed_paragraphs = 0
@@ -2566,6 +3112,7 @@ class TranslationPolicy(logging.Handler):
                 paragraph_id = id(paragraph)
                 self._attempted_paragraph_ids.setdefault(paragraph_id, paragraph)
                 self._failed_paragraph_ids.add(paragraph_id)
+                self.failure_reasons[paragraph_id] = sanitize_provider_error(message)
             self.paragraph_attempts = len(self._attempted_paragraph_ids)
             self.failed_paragraphs = (
                 len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
@@ -2581,6 +3128,7 @@ class TranslationPolicy(logging.Handler):
             return
         with self._lock:
             self._failed_paragraph_ids.discard(id(paragraph))
+            self.failure_reasons.pop(id(paragraph), None)
             self.failed_paragraphs = (
                 len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
             )
@@ -2722,6 +3270,8 @@ class TranslationPolicy(logging.Handler):
             with self._lock:
                 if not self.first_error:
                     self.first_error = error
+                if paragraph is not None:
+                    self.failure_reasons[id(paragraph)] = error
         except Exception:
             # Diagnostics must never interfere with BabelDOC's translation threads.
             return
@@ -2730,25 +3280,28 @@ class TranslationPolicy(logging.Handler):
         with self._lock:
             attempts = self.paragraph_attempts
             failures = self.failed_paragraphs
-            completion_tokens = self.completion_tokens
             first_error = self.first_error
+            details = []
+            for paragraph_id in sorted(self._failed_paragraph_ids, key=lambda key: self.paragraph_locations.get(key, (math.inf, key))):
+                location = self.paragraph_locations.get(paragraph_id)
+                details.append({
+                    "page": location[0] + 1 if location is not None else None,
+                    "paragraph": location[1] + 1 if location is not None else None,
+                    "reason": self.failure_reasons.get(paragraph_id) or first_error or "应译段落未完成",
+                })
 
         count_summary = self.count_summary()
 
-        all_paragraphs_failed = attempts > 0 and failures >= attempts
-        no_completion_tokens = attempts > 0 and completion_tokens == 0
-        if no_completion_tokens or all_paragraphs_failed:
+        if failures:
+            locations = "；".join(
+                f"第 {item['page']} 页段落 {item['paragraph']}：{item['reason']}"
+                for item in details if item["page"] is not None
+            )
             return {
                 "kind": "translation_failed",
                 "failed_paragraphs": failures,
-                "message": (first_error or "BabelDOC produced no completion tokens for paragraph text.")
-                + (f"；{count_summary}" if count_summary else ""),
-            }
-        if failures:
-            return {
-                "kind": "warning",
-                "failed_paragraphs": failures,
-                "message": (first_error or "One or more paragraph translations failed.")
+                "failures": details,
+                "message": (locations or first_error or "应译段落补译后仍失败。")
                 + (f"；{count_summary}" if count_summary else ""),
             }
         return None
@@ -2996,6 +3549,12 @@ def _install_min_request_patches(
     from babeldoc.translator.translator import OpenAITranslator
 
     _install_pdf_unicode_patch()
+    formula_spec = importlib.util.spec_from_file_location(
+        "ztf_inline_formulas", os.path.join(os.path.dirname(__file__), "ztf_inline_formulas.py")
+    )
+    formula_module = importlib.util.module_from_spec(formula_spec)
+    formula_spec.loader.exec_module(formula_module)
+    formula_module.install_inline_formula_patch()
     original_openai = openai.OpenAI
 
     original_post_translate_paragraph = ILTranslator.post_translate_paragraph
@@ -3049,6 +3608,33 @@ def _install_min_request_patches(
         return result
 
     ILTranslator.post_translate_paragraph = post_translate_paragraph_with_log
+
+    # Keep the pre-translation paragraph text for the link mapping and for
+    # diagnostics.  ILTranslatorLLMOnly has its own translate method, so both
+    # classes are wrapped; a second call never overwrites the source text.
+    source_text_by_id = request_state.setdefault("source_paragraph_text", {})
+
+    def snapshot_paragraph_source_text(document: Any) -> None:
+        for page in getattr(document, "page", ()) or ():
+            for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+                text = getattr(paragraph, "unicode", None)
+                if text and id(paragraph) not in source_text_by_id:
+                    source_text_by_id[id(paragraph)] = str(text)
+
+    for translator_class in (ILTranslator, llm_module.ILTranslatorLLMOnly):
+        original_translate = getattr(translator_class, "translate", None)
+        if original_translate is None:
+            continue
+
+        @functools.wraps(original_translate)
+        def translate_with_source_snapshot(
+            instance: Any, document: Any, *args: Any,
+            _original: Any = original_translate, **kwargs: Any
+        ) -> Any:
+            snapshot_paragraph_source_text(document)
+            return _original(instance, document, *args, **kwargs)
+
+        translator_class.translate = translate_with_source_snapshot
 
     original_generate_fallback_line_layouts = (
         LayoutParser.generate_fallback_line_layout_for_page
@@ -3169,6 +3755,15 @@ def _install_min_request_patches(
             api_key,
         )
         if not repair_failed or request_state.get("fatal_error"):
+            if not repair_failed:
+                _record_quality_failure(
+                    request_state,
+                    paragraph,
+                    reason,
+                    {"apply_error": True},
+                    api_key,
+                    phase="main",
+                )
             policy.record_failure(paragraph, reason)
             return
         request_state.setdefault("failed_batch_paragraph_ids", set()).add(id(paragraph))
@@ -3180,7 +3775,7 @@ def _install_min_request_patches(
             "reason": reason,
             "checks": {"apply_error": True},
             "metadata": metadata,
-            "layout_label": _paragraph_layout_label(paragraph),
+            "layout_label": _request_layout_label(request_state, paragraph),
             "fragment": bool(metadata.get("fragment")),
             "repair_status": "pending",
         }
@@ -3276,7 +3871,10 @@ def _install_min_request_patches(
         use_english_line_break: bool = True,
         apply_layout: bool = False,
     ) -> Any:
-        return _with_table_cell_bounds(
+        cell_box = request_state.get("table_header_cell_boxes", {}).get(
+            id(paragraph)
+        )
+        result = _with_table_cell_bounds(
             instance,
             paragraph,
             page,
@@ -3289,7 +3887,15 @@ def _install_min_request_patches(
                 use_english_line_break,
                 apply_layout,
             ),
+            cell_box=cell_box,
         )
+        if (
+            apply_layout
+            and id(paragraph) in request_state.get("table_header_ids", set())
+            and (not isinstance(result, (tuple, list)) or len(result) < 2 or result[1] is None)
+        ):
+            _record_table_header_layout_failure(request_state, paragraph, api_key)
+        return result
 
     Typesetting._find_optimal_scale_and_layout = find_table_scale_with_cell_bounds
 
@@ -3426,7 +4032,23 @@ def _install_min_request_patches(
     def typesetting_document_with_scale_log(
         instance: Any, document: Any
     ) -> Any:
+        # Capture the source layout before typesetting mutates paragraph boxes
+        # in place; the link restorer needs both source and translated boxes.
+        link_snapshots = _paragraph_layout_snapshot(
+            document, request_state.get("source_paragraph_text")
+        )
         result = typesetting_document_two_phase(instance, document)
+        page_offset = int(request_state.get("link_page_offset", 0) or 0)
+        link_map = _link_paragraph_map(document, link_snapshots, page_offset)
+        combined = request_state.setdefault(
+            "link_paragraph_map", {"version": 1, "paragraphs": []}
+        )
+        combined["paragraphs"].extend(link_map["paragraphs"])
+        request_state["link_page_offset"] = page_offset + len(
+            getattr(document, "page", ()) or ()
+        )
+        if page_offset:
+            request_state["link_paragraph_map_split"] = True
         by_page: dict[int, list[float]] = {}
         by_class: dict[float, list[float]] = {}
         for page_index, page in enumerate(getattr(document, "page", ()) or (), start=1):
@@ -3628,55 +4250,23 @@ def _install_min_request_patches(
                 request_state["repair_request_count"] = int(
                     request_state.get("repair_request_count", 0)
                 ) + 1
-            try:
-                response = create_completion_adapting(
-                    instance.client,
-                    request_state,
-                    max_output_tokens,
-                    model=instance.model,
-                    **options,
-                    messages=[{"role": "user", "content": prompt_text}],
-                    extra_headers=extra_headers,
-                    extra_body=instance.extra_body,
-                )
-            except Exception as error:
-                _write_job_log(
-                    request_state,
-                    {
-                        "event": "request",
-                        "phase": phase,
-                        "request_index": request_budget.requests,
-                        "item_count": len(batch),
-                        "estimated_output_tokens": estimated_output_tokens,
-                        "actual_output_tokens": None,
-                        "finish_reason": None,
-                        "error": log_safe_error(error, api_key),
-                        "provider_message": provider_message_for_log(error, api_key, prompt_text),
-                        "items": request_items_log,
-                    },
-                    api_key,
-                )
-                raise
+            response = create_completion_adapting(
+                instance.client,
+                request_state,
+                max_output_tokens,
+                request_metadata={"phase": phase, "item_count": len(batch),
+                                  "estimated_output_tokens": estimated_output_tokens, "items": request_items_log},
+                api_key=api_key,
+                model=instance.model,
+                **options,
+                messages=[{"role": "user", "content": prompt_text}],
+                extra_headers=extra_headers,
+                extra_body=instance.extra_body,
+            )
             instance.update_token_count(response)
             choice = response.choices[0]
             message = choice.message
-            usage = getattr(response, "usage", None)
-            actual_output_tokens = getattr(usage, "completion_tokens", None)
             finish_reason = getattr(choice, "finish_reason", None)
-            _write_job_log(
-                request_state,
-                {
-                    "event": "request",
-                    "phase": phase,
-                    "request_index": request_budget.requests,
-                    "item_count": len(batch),
-                    "estimated_output_tokens": estimated_output_tokens,
-                    "actual_output_tokens": actual_output_tokens,
-                    "finish_reason": finish_reason,
-                    "items": request_items_log,
-                },
-                api_key,
-            )
             return (
                 message.content or "",
                 finish_reason,
@@ -3838,6 +4428,10 @@ def _install_min_request_patches(
                         "continued_from": None,
                         "previous_context": previous_context,
                         "next_context": next_context,
+                        "table": packed_item.get("table_metadata"),
+                        "protected_spans": _style_guards().protected_span_specs(
+                            getattr(translate_input, "placeholders", ()) or ()
+                        ),
                     }
                     packed_item["validation_metadata"] = metadata
                     return translate_input, metadata
@@ -3853,10 +4447,19 @@ def _install_min_request_patches(
                     paragraph = prepared_paragraphs[paragraph_index]
                     packed_item = packed_items_by_paragraph.get(id(paragraph), {})
                     _, metadata = metadata_for_packed_item(packed_item)
+                    input_item["layout_label"] = _request_layout_label(
+                        request_state, paragraph
+                    )
+                    table_metadata = metadata.get("table") or {}
+                    if table_metadata:
+                        input_item["table_role"] = table_metadata.get("role")
+                        input_item["table_context"] = table_metadata.get("context")
                     if metadata["required_placeholders"]:
                         input_item["required_placeholders"] = metadata[
                             "required_placeholders"
                         ]
+                    if metadata.get("protected_spans"):
+                        input_item["protected_spans"] = metadata["protected_spans"]
                     request_entries.append((input_item, paragraph, metadata))
 
                 _link_fragment_items(
@@ -3909,7 +4512,7 @@ def _install_min_request_patches(
                         continue
                     if not _is_verbatim_output(
                         input_item.get("input"), output_item.get("output")
-                    ):
+                    ) or not verbatim_output_allowed(str(input_item.get("input", "")), input_item.get("layout_label", "")):
                         continue
                     try:
                         paragraph_index = int(item_id)
@@ -3994,8 +4597,8 @@ def _install_min_request_patches(
                                 "reason": reason,
                                 "checks": {"fragment_group_invalid": True},
                                 "metadata": member_metadata,
-                                "layout_label": _paragraph_layout_label(
-                                    member_paragraph
+                                "layout_label": _request_layout_label(
+                                    request_state, member_paragraph
                                 ),
                                 "fragment": True,
                                 "repair_status": "pending",
@@ -4120,7 +4723,9 @@ def _install_min_request_patches(
                                     "reason": item_reason,
                                     "checks": checks,
                                     "metadata": metadata,
-                                    "layout_label": _paragraph_layout_label(paragraph),
+                                    "layout_label": _request_layout_label(
+                                        request_state, paragraph
+                                    ),
                                     "fragment": bool(metadata.get("fragment")),
                                     "repair_status": "pending",
                                 }
@@ -4130,6 +4735,15 @@ def _install_min_request_patches(
                             id(paragraph) not in final_fragment_failure_ids
                             and (not fragment_group_failure or not repair_failed)
                         ):
+                            if _is_structural_quality_failure(checks):
+                                _record_quality_failure(
+                                    request_state,
+                                    paragraph,
+                                    item_reason,
+                                    checks,
+                                    api_key,
+                                    phase="main",
+                                )
                             policy.record_failure(paragraph, item_reason)
                     elif usable and paragraph is not None:
                         if checks.get("kept_verbatim"):
@@ -4315,7 +4929,7 @@ def _install_min_request_patches(
                     ),
                     "checks": {"fragment_group_invalid": True},
                     "metadata": metadata,
-                    "layout_label": _paragraph_layout_label(paragraph),
+                    "layout_label": _request_layout_label(request_state, paragraph),
                     "fragment": True,
                     "repair_status": "pending",
                 }
@@ -4329,6 +4943,15 @@ def _install_min_request_patches(
                 record["repair_status"] = "unavailable"
                 record["repair_reason"] = record.get("reason", "补译不可用。")
                 record["repair_checks"] = {"repair_available": False}
+                if _is_structural_quality_failure(record.get("checks")):
+                    _record_quality_failure(
+                        request_state,
+                        record.get("paragraph"),
+                        record["repair_reason"],
+                        record.get("checks", {}),
+                        api_key,
+                        phase="repair",
+                    )
                 policy.record_failure(record.get("paragraph"), record["repair_reason"])
                 metadata = record.get("metadata", {})
                 _write_job_log(
@@ -4362,16 +4985,94 @@ def _install_min_request_patches(
         records_by_repair_id: dict[int, dict[str, Any]] = {}
         for repair_id, record in enumerate(repair_records):
             metadata = record.get("metadata", {})
+            paragraph = record.get("paragraph")
+            original_input = record.get("source", "")
+            repair_input = original_input
+            repair_translate_input = record.get("translate_input")
+            simplified_style = False
+            # A model that keeps dropping style tags gets one simpler input in
+            # this same repair pass: ordinary local styles are unwrapped to the
+            # paragraph body style, while citation styles and formulas stay.
+            if repair_translate_input is not None and _style_guards().style_related_issue(
+                record.get("checks", {})
+            ):
+                try:
+                    simplified, kept_placeholders, style_report = (
+                        _style_guards().simplify_rich_text_source(
+                            original_input,
+                            getattr(repair_translate_input, "placeholders", ()) or (),
+                        )
+                    )
+                    if style_report["removed_style_tags"] and simplified != original_input:
+                        base_style = getattr(paragraph, "pdf_style", None) or getattr(
+                            repair_translate_input, "base_style", None
+                        )
+                        simplified_input = type(repair_translate_input)(
+                            simplified, kept_placeholders, base_style
+                        )
+                        set_tokens = getattr(
+                            simplified_input, "set_original_placeholder_tokens", None
+                        )
+                        if callable(set_tokens):
+                            set_tokens({})
+                        repair_translate_input = simplified_input
+                        repair_input = simplified
+                        simplified_style = True
+                        record["repair_translate_input"] = simplified_input
+                        record["simplified_style"] = True
+                        _write_job_log(
+                            request_state,
+                            {
+                                "event": "style_simplified",
+                                "phase": "repair",
+                                "id": repair_id,
+                                "layout_label": record.get("layout_label", "text"),
+                                "removed_style_tags": style_report[
+                                    "removed_style_tags"
+                                ],
+                                "kept_style_tags": style_report["kept_style_tags"],
+                                "preserved_placeholders": style_report[
+                                    "kept_placeholders"
+                                ],
+                            },
+                            api_key,
+                        )
+                except Exception as error:
+                    _write_job_log(
+                        request_state,
+                        {
+                            "event": "style_simplify_error",
+                            "phase": "repair",
+                            "id": repair_id,
+                            "error": log_safe_error(error, api_key),
+                        },
+                        api_key,
+                    )
+            required_placeholders = metadata.get("required_placeholders", [])
+            if simplified_style and repair_translate_input is not None:
+                required_placeholders = [
+                    {"token": token, "count": count}
+                    for token, count in sorted(
+                        _expected_placeholder_counts(repair_translate_input).items()
+                    )
+                ]
             repair_item: dict[str, Any] = {
                 "id": repair_id,
-                "input": record.get("source", ""),
+                "input": repair_input,
                 "layout_label": record.get("layout_label", "text"),
                 "repair_reason": record.get("reason", ""),
-                "required_placeholders": metadata.get("required_placeholders", []),
+                "required_placeholders": required_placeholders,
+                "protected_spans": metadata.get("protected_spans", []),
                 "previous_context": metadata.get("previous_context", ""),
                 "next_context": metadata.get("next_context", ""),
             }
-            placeholders_hint = getattr(record.get("translate_input"), "get_placeholders_hint", None)
+            table_metadata = metadata.get("table") or {}
+            if table_metadata:
+                repair_item["table_role"] = table_metadata.get("role")
+                repair_item["table_context"] = table_metadata.get("context")
+            placeholders_hint = getattr(
+                repair_translate_input, "get_placeholders_hint", None
+            )
             if callable(placeholders_hint):
                 hint = placeholders_hint()
                 if hint:
@@ -4398,7 +5099,10 @@ def _install_min_request_patches(
             "one part (fragment_part) of a sentence split across a column or page break, and "
             "continues_in / continued_from name the other part's id when it is in this "
             "request; translate only this item's own fragment; do not move content between "
-            "items and do not return an empty output. Return only a JSON array with one "
+            "items and do not return an empty output. When table_role/table_context are "
+            "present, the item is a confirmed table header: translate the label and keep "
+            "method names, dataset names, abbreviations, numbers and symbols unchanged. "
+            "Return only a JSON array with one "
             "{id, output} object per input.\n"
             "## Here is the input:\n"
         )
@@ -4449,8 +5153,8 @@ def _install_min_request_patches(
             )
 
         def log_repair_batch_error(error: Exception) -> None:
-            # Not fatal: the batch's paragraphs keep their original text and the
-            # remaining repair batches (and earlier results) are unaffected.
+            # 鉴权、配置错误或用尽两次恢复后应立即停止后续批次。
+            record_request_error(error)
             _write_job_log(
                 request_state,
                 {
@@ -4460,6 +5164,7 @@ def _install_min_request_patches(
                 },
                 api_key,
             )
+            raise error
 
         try:
             repaired_outputs = translate_json_items_with_splitting(
@@ -4526,7 +5231,7 @@ def _install_min_request_patches(
                 continue
             if _is_verbatim_output(
                 repair_items[repair_id].get("input"), output_item.get("output")
-            ):
+            ) and verbatim_output_allowed(str(repair_items[repair_id].get("input", "")), repair_items[repair_id].get("layout_label", "")):
                 paragraph_id = id(record["paragraph"])
                 repair_kept_verbatim_paragraph_ids.add(paragraph_id)
                 _mark_paragraph_kept_verbatim(
@@ -4544,6 +5249,7 @@ def _install_min_request_patches(
 
         repair_quality_by_id: dict[int, dict[str, Any]] = {}
         repair_translation_by_id: dict[int, Any] = {}
+        repair_structural_by_id: dict[int, bool] = {}
         for repair_id, record in records_by_repair_id.items():
             repair_item = repair_items[repair_id]
             output_item = outputs_by_id.get(repair_id, {})
@@ -4560,6 +5266,9 @@ def _install_min_request_patches(
                 else {"usable": False, "reason": str(failure_message), "checks": {"non_empty": False}}
             )
             repair_translation_by_id[repair_id] = translated
+            repair_structural_by_id[repair_id] = _is_structural_quality_failure(
+                quality.get("checks", {})
+            )
             group_id = str(record.get("metadata", {}).get("fragment_id") or "")
             if (
                 group_id in failed_repair_groups
@@ -4590,7 +5299,8 @@ def _install_min_request_patches(
                         document_translator.il_translator.post_translate_paragraph(
                             record["paragraph"],
                             record["tracker"],
-                            record["translate_input"],
+                            record.get("repair_translate_input")
+                            or record["translate_input"],
                             str(translated),
                         )
                     )
@@ -4605,6 +5315,15 @@ def _install_min_request_patches(
                         {"event": "repair_apply_error", "error": log_safe_error(error, api_key)},
                         api_key,
                     )
+            if (
+                not applied
+                and quality.get("usable")
+                and not quality.get("checks", {}).get("kept_verbatim")
+            ):
+                # Accepted text that BabelDOC still refused to apply is a
+                # restoration failure, not a paragraph that may keep its source.
+                quality.setdefault("checks", {})["restore_failed"] = True
+                repair_structural_by_id[repair_id] = True
             applied_by_id[repair_id] = applied
             if applied:
                 request_state.setdefault("translated_paragraph_ids", set()).add(
@@ -4660,6 +5379,22 @@ def _install_min_request_patches(
                     record["repair_reason"] = quality.get("reason") or "补译未通过检查，已保留原文。"
                     record["repair_checks"] = quality.get("checks", {})
             if not applied and repair_id not in kept_verbatim_by_id:
+                if repair_structural_by_id.get(repair_id) or _is_structural_quality_failure(
+                    quality.get("checks")
+                ):
+                    # The repair pass already ran; do not tell the user it is
+                    # about to enter that same pass again.
+                    failure_reason = str(record["repair_reason"]).replace(
+                        "，已进入合并补译。", "。"
+                    )
+                    _record_quality_failure(
+                        request_state,
+                        record.get("paragraph"),
+                        failure_reason,
+                        quality.get("checks", {}),
+                        api_key,
+                        phase="repair",
+                    )
                 policy.record_failure(record.get("paragraph"), record["repair_reason"])
 
             _write_job_log(
@@ -4803,12 +5538,75 @@ def _install_min_request_patches(
             request_state["preserved_paragraph_ids"] = set()
             docs = translator.il_translator.docs
             original_paragraph_state = snapshot_paragraph_state(docs)
+
+            # Table roles are decided from BabelDOC's table boundary and the
+            # whole table's cells (same request, no per-cell requests). Only
+            # confirmed headers enter translation; every other table cell is
+            # preserved. An unreadable table is kept whole and reported.
+            table_plans = _table_headers().analyze_document(docs)
+            table_header_metadata: dict[int, dict[str, Any]] = {}
+            table_header_cell_boxes: dict[int, tuple[float, float, float, float]] = {}
+            table_header_ids: set[int] = set()
+            table_body_ids: set[int] = set()
+            table_warnings: list[dict[str, Any]] = []
+            for plan in table_plans:
+                if plan.get("status") == "uncertain":
+                    table_warnings.append(
+                        {
+                            "table": plan.get("table", ""),
+                            "table_number": plan.get("table_number", ""),
+                            "page": plan.get("page"),
+                            "reason": plan.get("reason", ""),
+                        }
+                    )
+                for header in plan.get("headers", ()):
+                    paragraph = header.get("paragraph")
+                    if paragraph is None:
+                        continue
+                    paragraph_id = id(paragraph)
+                    table_header_ids.add(paragraph_id)
+                    table_header_metadata[paragraph_id] = {
+                        "role": header.get("role", "column_header"),
+                        "context": header.get("context") or {},
+                        "table": plan.get("table", ""),
+                        "table_number": plan.get("table_number", ""),
+                        "page": plan.get("page"),
+                    }
+                    cell_box = header.get("cell_box")
+                    if cell_box:
+                        table_header_cell_boxes[paragraph_id] = tuple(cell_box)
+                for body in plan.get("body", ()):
+                    paragraph = body.get("paragraph")
+                    if paragraph is not None:
+                        table_body_ids.add(id(paragraph))
+            # A paragraph that belongs to two overlapping layout boxes is a
+            # header if either table identified it as one.
+            table_body_ids -= table_header_ids
+            request_state["table_plans"] = table_plans
+            request_state["table_header_ids"] = table_header_ids
+            request_state["table_header_metadata"] = table_header_metadata
+            request_state["table_header_cell_boxes"] = table_header_cell_boxes
+            request_state["table_body_ids"] = table_body_ids
+            request_state["table_warnings"] = table_warnings
+            _write_job_log(
+                request_state,
+                {
+                    "event": "table_analysis",
+                    "tables": _table_headers().summary(table_plans),
+                },
+                api_key,
+            )
+
             repeated_marginal_ids = collect_repeated_marginal_ids(docs)
-            table_fragment_ids = collect_table_fragment_ids(docs)
+            table_fragment_ids = collect_table_fragment_ids(
+                docs, table_header_ids | table_body_ids
+            )
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
                     page_positions[id(paragraph)] = (page_index, paragraph_index)
+            policy.paragraph_locations = page_positions
+            request_state["paragraph_positions"] = page_positions
 
             flattened: list[dict[str, Any]] = []
             seen_paragraphs: set[int] = set()
@@ -4887,6 +5685,7 @@ def _install_min_request_patches(
                             "fragment_index": fragment_siblings.get(paragraph_id, (None, None))[0],
                             "fragment_sibling_id": fragment_siblings.get(paragraph_id, (None, None))[1],
                             "fragment_sibling_paragraph": fragment_sibling_paragraphs.get(paragraph_id),
+                            "table_metadata": table_header_metadata.get(paragraph_id),
                             "source_tokens": translator.calc_token_count(
                                 paragraph.unicode or ""
                             ),
@@ -4906,7 +5705,17 @@ def _install_min_request_patches(
 
             def prepare_paragraph(item: dict[str, Any]) -> Any:
                 paragraph = item["paragraph"]
-                if (
+                paragraph_id = id(paragraph)
+                if paragraph_id in request_state.get("table_header_ids", set()):
+                    # Confirmed header: translate it even when the generic
+                    # layout rules would have kept this short label.
+                    pass
+                elif paragraph_id in request_state.get("table_body_ids", set()):
+                    request_state["preserved_paragraph_ids"].add(paragraph_id)
+                    if pbar is not None:
+                        pbar.advance(1)
+                    return None, None
+                elif (
                     id(paragraph) in request_state["reference_paragraph_ids"]
                     or id(paragraph) in repeated_marginal_ids
                     or id(paragraph) in table_fragment_ids
@@ -5140,6 +5949,104 @@ def babeldoc_version_error() -> str | None:
     return None
 
 
+def _restore_links_after_layout(
+    state: dict[str, Any], request_state: dict[str, Any], api_key: str
+) -> dict[str, Any]:
+    """Restore source links in the finished monolingual PDF.
+
+    Called after BabelDOC has written the PDF, so the annotations are added to
+    the final file and reference the re-typeset text positions.
+    """
+    output_pdf = str(state.get("result") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    if not output_pdf or not source_pdf:
+        summary = {"source": 0, "restored": 0, "unresolved": 0,
+                   "unsupported": 0, "skipped": "missing_path"}
+        _write_job_log(
+            request_state,
+            {"event": "links_restore", "skipped": "missing_path"},
+            api_key,
+        )
+        return summary
+    try:
+        helper = _links_helper()
+        stats = helper.restore_links(
+            source_pdf,
+            output_pdf,
+            request_state.get("link_paragraph_map"),
+            output_pdf + ".links.json",
+        )
+    except Exception as error:
+        summary = {
+            "source": 0,
+            "restored": 0,
+            "unresolved": 0,
+            "unsupported": 0,
+            "error": log_safe_error(error, api_key),
+        }
+        _write_job_log(
+            request_state,
+            {"event": "links_restore_error", "error": summary["error"]},
+            api_key,
+        )
+        return summary
+
+    records = stats.pop("records", [])
+    stats.pop("_paragraphs", None)
+    stats["split_layout"] = bool(request_state.get("link_paragraph_map_split"))
+    _write_job_log(
+        request_state,
+        {
+            "event": "links_restore",
+            "source_links": stats.get("source", 0),
+            "restored": stats.get("restored", 0),
+            "unresolved": stats.get("unresolved", 0),
+            "unsupported": stats.get("unsupported", 0),
+            "by_kind": stats.get("by_kind", {}),
+            "mapping_path": stats.get("mapping_path", ""),
+            "split_layout": stats["split_layout"],
+        },
+        api_key,
+    )
+    for record in records:
+        if record.get("status") == "restored":
+            continue
+        _write_job_log(
+            request_state,
+            {
+                "event": "link_restore_failure",
+                "page": record.get("source_page", -1) + 1,
+                "kind": record.get("kind", ""),
+                "anchor": (record.get("anchor") or {}).get("text", ""),
+                "source_text": record.get("source_text", ""),
+                "status": record.get("status", ""),
+                "reason": record.get("reason", ""),
+                "destination": record.get("destination", {}),
+            },
+            api_key,
+        )
+    return stats
+
+
+def _link_warning_message(stats: dict[str, Any]) -> str:
+    if stats.get("error"):
+        return "译文链接恢复失败：" + str(stats["error"]) + "；已记录诊断信息。"
+    if stats.get("mapping_error"):
+        return "链接映射文件写入失败，双语复用信息不可用；已记录诊断信息。"
+    source = int(stats.get("source") or 0)
+    unresolved = int(stats.get("unresolved") or 0)
+    unsupported = int(stats.get("unsupported") or 0)
+    if not unresolved and not unsupported:
+        return ""
+    details = []
+    if unresolved:
+        details.append(f"{unresolved} 个未能在译文中定位")
+    if unsupported:
+        details.append(f"{unsupported} 个使用了不支持的目的地类型")
+    return ("共 %d 个原文链接中%s；已记录诊断信息，其余链接已恢复。"
+            % (source, "，".join(details)))
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -5165,11 +6072,10 @@ def main() -> int:
     sys.argv = ensure_runner_options(sys.argv)
 
     try:
-        max_output_tokens = _read_integer_setting(
-            "ZTF_MAX_OUTPUT_TOKENS", 8192, 1024
-        )
-        max_requests = _read_integer_setting("ZTF_MAX_REQUESTS", 20, 1)
-        repair_failed = _read_boolean_setting("ZTF_REPAIR_FAILED", True)
+        # 历史偏好和旧版插件传入的环境变量均不能改变固定策略。
+        max_output_tokens = MAX_OUTPUT_TOKENS
+        max_requests = None
+        repair_failed = True
         translate_references = _read_boolean_setting(
             "ZTF_TRANSLATE_REFERENCES", False
         )
@@ -5228,6 +6134,7 @@ def main() -> int:
     request_budget = RequestBudget(max_requests, emit_request_progress)
     token_param = os.environ.pop("ZTF_TOKEN_PARAM", "").strip()
     request_state: dict[str, Any] = {
+        "request_budget": request_budget,
         # The provider's token-limit parameter, learned by the plugin's
         # connection test; requests still adapt if the provider rejects it.
         "token_param": token_param if token_param in TOKEN_LIMIT_PARAMETERS else "max_tokens",
@@ -5352,6 +6259,23 @@ def main() -> int:
         return message
 
     if request_state.get("fatal_error"):
+        # 补译批次因鉴权/重试耗尽而失败时，policy 已记录每个受影响段落的
+        # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
+        fatal_decision = policy_instance.decision() if policy_instance else None
+        fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
+        # reasons 可能带服务商/文档回显；日志与协议只保留有界摘要。
+        fatal_failures = [
+            {
+                **item,
+                "reason": _bounded_log_reason(item.get("reason", ""), api_key),
+            }
+            for item in fatal_failures
+        ]
+        fatal_message = request_state["fatal_error"]
+        if fatal_failures:
+            # decision.message 已含计数摘要，统一在最后补一次，避免重复。
+            fatal_message = fatal_message + "；" + fatal_decision["message"]
+        fatal_message = with_translation_counts(fatal_message)
         _write_job_log(
             request_state,
             {
@@ -5364,14 +6288,66 @@ def main() -> int:
                 # redacted, in the alert); the log only gets the fixed summary.
                 "error": request_state.get("fatal_error_log")
                 or log_safe_error(request_state["fatal_error"], api_key),
+                "failures": fatal_failures,
             },
             api_key,
         )
         _emit(
             "ZTF_ERROR ",
             {
-                "message": with_translation_counts(request_state["fatal_error"]),
+                "message": fatal_message,
                 "kind": request_state.get("fatal_kind") or "api_error",
+                "failed_paragraphs": len(fatal_failures),
+                "failures": fatal_failures,
+                "requests": request_budget.requests,
+                "planned": request_budget.planned,
+                "log_path": job_log_path or None,
+            },
+            api_key,
+        )
+        return 1
+
+    quality_failures = list((request_state.get("quality_failures") or {}).values())
+    if quality_failures:
+        details = "；".join(
+            f"{failure['location']}：{failure['reason']}"
+            for failure in quality_failures[:5]
+        )
+        message = (
+            f"整篇翻译失败：{len(quality_failures)} 段应译内容无法安全还原"
+            + (f"（{details}）" if details else "")
+            + "。"
+        )
+        failure_details = [
+            {
+                "page": failure.get("page"),
+                "paragraph": failure.get("paragraph"),
+                "reason": _bounded_log_reason(
+                    str(failure.get("reason", "")), api_key
+                ),
+            }
+            for failure in quality_failures
+        ]
+        _write_job_log(
+            request_state,
+            {
+                "event": "job_finished",
+                "outcome": "failed",
+                "kind": "translation_failed",
+                "requests": request_budget.requests,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "failures": failure_details,
+            },
+            api_key,
+        )
+        _emit(
+            "ZTF_ERROR ",
+            {
+                "message": with_translation_counts(message),
+                "kind": "translation_failed",
+                "failed_paragraphs": len(quality_failures),
+                "failures": failure_details,
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,
@@ -5401,6 +6377,7 @@ def main() -> int:
                 "message": with_translation_counts(decision["message"]),
                 "kind": decision["kind"],
                 "failed_paragraphs": decision["failed_paragraphs"],
+                "failures": decision.get("failures", []),
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,
@@ -5449,30 +6426,68 @@ def main() -> int:
         )
         return exit_code or 1
 
+    link_stats = _restore_links_after_layout(state, request_state, api_key)
+    request_state["link_stats"] = link_stats
+    table_warnings = list(request_state.get("table_warnings") or [])
+    table_warning_message = "；".join(
+        f"{warning.get('table') or '未编号表'}（物理第 {warning.get('page')} 页）"
+        f"无法可靠识别表头，已整表保留原文"
+        + (f"：{warning['reason']}" if warning.get("reason") else "")
+        for warning in table_warnings
+    )
+    warning_messages = []
+    warning_failed = 0
     if decision and decision["kind"] == "warning":
+        warning_messages.append(str(decision["message"]))
+        warning_failed += int(decision.get("failed_paragraphs") or 0)
+    if table_warning_message:
+        warning_messages.append(table_warning_message)
+    if warning_messages:
         _emit(
             "ZTF_WARNING ",
             {
-                "message": decision["message"],
-                "failed_paragraphs": decision["failed_paragraphs"],
+                "message": "；".join(warning_messages),
+                "failed_paragraphs": warning_failed,
+                "tables": table_warnings,
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
             },
             api_key,
         )
+    else:
+        link_message = _link_warning_message(link_stats)
+        if link_message:
+            _emit(
+                "ZTF_WARNING ",
+                {
+                    "message": link_message,
+                    "failed_paragraphs": 0,
+                    "links_unresolved": link_stats.get("unresolved", 0),
+                    "links_unsupported": link_stats.get("unsupported", 0),
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                },
+                api_key,
+            )
     _write_job_log(
         request_state,
         {
             "event": "job_finished",
-            "outcome": "warning" if decision and decision["kind"] == "warning" else "success",
+            "outcome": "warning" if warning_messages else "success",
             "requests": request_budget.requests,
             "planned_requests": request_budget.planned,
             "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
             "repair_request_count": request_state.get("repair_request_count", 0),
             "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
             "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
+            "table_warnings": table_warnings,
             "token_param": request_state.get("token_param"),
             "parameter_adaptations": request_state.get("parameter_adaptations", []),
+            "links": {
+                key: link_stats.get(key)
+                for key in ("source", "restored", "unresolved", "unsupported",
+                            "mapping_path", "error", "split_layout", "paragraphs")
+            } if link_stats else None,
         },
         api_key,
     )
@@ -5490,6 +6505,12 @@ def main() -> int:
             "log_path": job_log_path or None,
             "repair_request_count": request_state.get("repair_request_count", 0),
             "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+            "links": {
+                key: link_stats.get(key)
+                for key in ("source", "restored", "unresolved", "unsupported",
+                            "mapping_path", "error", "split_layout", "paragraphs")
+            } if link_stats else None,
+            "table_warnings": table_warnings,
         },
         api_key,
     )

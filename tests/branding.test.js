@@ -44,8 +44,12 @@ assert.match(preferenceMarkup, /id="babeldoc-for-zotero-preferences"/);
 assert.match(preferenceMarkup, /preference="extensions\.babeldoc-for-zotero\.baseURL"/);
 assert.doesNotMatch(preferenceMarkup, /babeldoc-for-zotero-pref-request-help/);
 assert.doesNotMatch(preferenceMarkup, /(?:id|class)="zotero-translate-files-/);
-assert.match(read("addon/locale/zh-CN/babeldoc-for-zotero.ftl"), /^babeldoc-for-zotero-pref-repair-failed = 失败段落合并补译$/m);
-assert.match(read("addon/locale/en-US/babeldoc-for-zotero.ftl"), /^babeldoc-for-zotero-pref-repair-failed = Retry failed paragraphs in one batch$/m);
+for (const removed of ["max-output-tokens", "max-requests", "repair-failed"]) {
+  assert.equal(read("addon/content/preferences.xhtml").includes("preferences-" + removed), false);
+  for (const locale of ["zh-CN", "en-US"]) {
+    assert.equal(read("addon/locale/" + locale + "/babeldoc-for-zotero.ftl").includes("pref-" + removed), false);
+  }
+}
 for (const locale of ["zh-CN", "en-US"]) {
   const localization = read(`addon/locale/${locale}/babeldoc-for-zotero.ftl`);
   assert.doesNotMatch(localization, /^babeldoc-for-zotero-pref-request-help\s*=/m);
@@ -86,7 +90,7 @@ for (const relativePath of [
 
 assert.match(read("addon/content/preferences.js"), /return "BabelDOC for Zotero"/);
 assert.match(read("addon/content/modules/queue.js"), /progress\.changeHeadline\("BabelDOC for Zotero"\)/);
-assert.equal(manifest.version, "0.4.1");
+assert.equal(manifest.version, "0.4.2");
 assert.match(read("addon/bootstrap.js"), /content\/modules\/installer\.js/);
 assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero\.downloadSource/);
 assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero-pref-section-environment/);

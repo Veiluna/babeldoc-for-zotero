@@ -78,14 +78,11 @@ const oldPrefix = "extensions.zotero-translate-files.";
   );
 
   assert.equal(typeof state.config.migrateLegacyPreferences, "function");
-  assert.equal(state.config.migrateLegacyPreferences(), 8);
+  assert.equal(state.config.migrateLegacyPreferences(), 5);
   for (const name of [
     "baseURL",
     "apiKey",
     "model",
-    "maxOutputTokens",
-    "maxRequests",
-    "repairFailed",
     "translateReferences",
     "tokenParam",
   ]) {
@@ -94,7 +91,13 @@ const oldPrefix = "extensions.zotero-translate-files.";
   assert.equal(state.values.get(newPrefix + "legacyPrefsMigrated"), true);
   assert.equal(state.userValues.has(newPrefix + "legacyPrefsMigrated"), true);
   assert.equal(state.logs.length, 1);
-  assert.match(state.logs[0], /8/);
+  assert.match(state.logs[0], /5/);
+  assert.equal(state.config.getSettings().maxOutputTokens, 50000);
+  assert.equal(state.config.getSettings().maxRequests, null);
+  assert.equal(state.config.getSettings().repairFailed, true);
+  for (const name of ["maxOutputTokens", "maxRequests", "repairFailed"]) {
+    assert.equal(state.userValues.has(newPrefix + name), false, "已移除的策略偏好不再迁移");
+  }
   assert.equal(state.values.has(newPrefix + "babeldocPath"), false, "the removed path preference is not migrated");
   assert.equal(state.logs.join("\n").includes(secret), false);
 }
