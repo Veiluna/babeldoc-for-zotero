@@ -90,6 +90,10 @@ function makeHarness(options = {}) {
       const outputDirectory = callOptions.arguments[callOptions.arguments.indexOf("--output") + 1];
       const outputPath = outputDirectory + "\\paper.zh.mono.pdf";
       if (options.outputSize !== 0) files.set(outputPath, { exists: true, isFile: true, fileSize: 800 });
+      const dualPath = outputDirectory + "\\paper.zh.dual.pdf";
+      if (options.outputMode === "dual" || options.outputMode === "both") {
+        files.set(dualPath, { exists: true, isFile: true, fileSize: 900 });
+      }
 
       const progressLine = "ZTF_PROGRESS " + JSON.stringify(Object.assign({
         overall: 42.5,
@@ -105,6 +109,9 @@ function makeHarness(options = {}) {
           ? ""
           : "ZTF_RESULT " + JSON.stringify(Object.assign(
             { mono: outputPath },
+            options.outputMode === "dual" || options.outputMode === "both"
+              ? { dual: dualPath }
+              : {},
             options.requestCount == null ? {} : { requests: options.requestCount },
             options.repairRequestCount == null ? {} : { repair_request_count: options.repairRequestCount },
             options.fragmentItemCount == null ? {} : { fragment_item_count: options.fragmentItemCount },
@@ -166,6 +173,7 @@ function makeHarness(options = {}) {
             baseURL: options.baseURL || "https://api.example.test/v1/chat/completions",
             apiKey,
             model: "test-model",
+            outputMode: options.outputMode || "mono",
           };
           return values[name.slice(prefix.length)];
         },
@@ -439,8 +447,29 @@ async function abortKillsTheChildAndCleansUp() {
   assert.equal(harness.removedDirectories.length, 1);
 }
 
+async function supportsBilingualOutputs() {
+  for (const mode of ["mono", "dual", "both"]) {
+    const harness = makeHarness({ outputMode: mode });
+    const result = await harness.runner.translate(harness.item, {});
+    const args = harness.calls[0].arguments;
+    if (mode === "mono") {
+      assert.ok(args.includes("--no-dual"), "mono keeps a single output");
+      assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "mono");
+    } else {
+      assert.ok(!args.includes("--no-dual"), mode + " requests the dual PDF");
+      assert.equal(
+        result.outputPaths.map(entry => entry.kind).join(","),
+        mode === "both" ? "mono,dual" : "dual",
+      );
+      assert.equal(result.outputPath, result.outputPaths[0].path);
+    }
+    await result.cleanup();
+  }
+}
+
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
+  await supportsBilingualOutputs();
   await reportsRequestCountsInProgressAndResult();
   await exposesLinkRestorationStatsAndMappingPath();
   await rejectsQueryURLsBeforeStartingBabelDOC();

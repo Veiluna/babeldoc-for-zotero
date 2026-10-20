@@ -52,3 +52,7 @@ babeldoc-for-zotero-pref-api-network-error = 接口：网络错误，未收到 H
 babeldoc-for-zotero-import-tag-warning-title = 译本已添加，但无法标记为已翻译
 babeldoc-for-zotero-import-tag-warning-description = { $title } 已添加到 Zotero，但未能添加“已翻译”标记。
 babeldoc-for-zotero-import-tag-warning-default-name = 中文译本
+babeldoc-for-zotero-pref-output-mode = 输出格式
+babeldoc-for-zotero-pref-output-mono = 单语中文译本
+babeldoc-for-zotero-pref-output-dual = 左右双语对照
+babeldoc-for-zotero-pref-output-both = 同时生成两种

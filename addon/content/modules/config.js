@@ -12,6 +12,7 @@ var ZoteroTranslateFilesConfig = (function () {
     model: PREFERENCE_PREFIX + "model",
     downloadSource: PREFERENCE_PREFIX + "downloadSource",
     translateReferences: PREFERENCE_PREFIX + "translateReferences",
+    outputMode: PREFERENCE_PREFIX + "outputMode",
     // Learned, not user-facing: "max_tokens" or "max_completion_tokens".
     tokenParam: PREFERENCE_PREFIX + "tokenParam",
   };
@@ -85,10 +86,19 @@ var ZoteroTranslateFilesConfig = (function () {
       maxRequests: null,
       repairFailed: true,
       translateReferences: readBoolean("translateReferences", false),
+      outputMode: readOutputMode(),
       tokenParam: TOKEN_LIMIT_PARAMETERS.indexOf(read("tokenParam")) !== -1
         ? read("tokenParam")
         : "max_tokens",
     };
+  }
+
+  var OUTPUT_MODES = ["mono", "dual", "both"];
+
+  function readOutputMode() {
+    var value = Zotero.Prefs.get(preferences.outputMode, true);
+    var normalized = String(value == null ? "" : value).trim().toLowerCase();
+    return OUTPUT_MODES.indexOf(normalized) !== -1 ? normalized : "mono";
   }
 
   function getDownloadSource() {

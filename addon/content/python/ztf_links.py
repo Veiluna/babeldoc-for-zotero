@@ -976,3 +976,139 @@ def restore_links(source_path: str, output_path: str,
     finally:
         output_doc.close()
         source_doc.close()
+
+
+def restore_dual_links(source_path: str, dual_path: str, mono_mapping_path: str,
+                       mapping_path: str | None = None,
+                       log: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    """Restore GOTO/URI links on both halves of a side-by-side dual PDF.
+
+    The left half is the untouched source page, so source link rectangles apply.
+    The right half is the translated page, so the monolingual mapping's output
+    rectangles are shifted by one page width.  Each side keeps its own target
+    side, matching the source link's intent.
+    """
+    with open(mono_mapping_path, encoding="utf-8") as handle:
+        mono_payload = json.load(handle)
+    mono_links = mono_payload.get("links") or []
+    source_doc = pymupdf.open(source_path)
+    dual_doc = pymupdf.open(dual_path)
+    records: list[dict[str, Any]] = []
+    try:
+        if len(dual_doc) != len(source_doc):
+            raise ValueError("双语文档页数与原文不一致")
+        halves: list[float] = []
+        for index in range(len(dual_doc)):
+            source_width = float(source_doc[index].rect.width)
+            dual_width = float(dual_doc[index].rect.width)
+            if abs(dual_width - 2 * source_width) > 1.5:
+                raise ValueError("双语文档不是左右并排布局")
+            halves.append(dual_width / 2)
+
+        def insert(page_index: int, rect: Any, destination: dict[str, Any],
+                   target_page: int | None, target_point: list[float] | None,
+                   side: str, text: str) -> None:
+            try:
+                _insert_link(dual_doc, dual_doc[page_index], rect, destination,
+                             target_page, target_point)
+                records.append({"side": side, "page": page_index,
+                                "from": _rect_list(rect), "text": text,
+                                "status": "restored"})
+            except Exception as error:
+                records.append({"side": side, "page": page_index,
+                                "from": _rect_list(rect), "text": text,
+                                "status": "unresolved",
+                                "error": type(error).__name__})
+
+        for record in mono_links:
+            if record.get("status") != "restored":
+                records.append({"side": "both",
+                                "status": record.get("status", "unresolved"),
+                                "text": record.get("source_text", ""),
+                                "reason": record.get("reason", "")})
+                continue
+            source_page = int(record.get("source_page", 0))
+            if source_page >= len(dual_doc):
+                continue
+            if source_doc[source_page].rotation:
+                # 旋转页左半坐标需要额外变换；记录为不支持，不猜造。
+                records.append({"side": "both", "status": "unsupported",
+                                "text": record.get("source_text", ""),
+                                "reason": "rotated_source_page"})
+                continue
+            destination = record.get("destination") or {}
+            text = str(record.get("source_text", ""))
+            left_rect = pymupdf.Rect(record.get("source_from") or [0, 0, 0, 0])
+            output = record.get("output") or {}
+            if destination.get("type") == "uri":
+                uri = destination.get("uri", "")
+                if not uri:
+                    continue
+                insert(source_page, left_rect, {"type": "uri", "uri": uri},
+                       None, None, "left", text)
+                if output:
+                    right_page = int(output.get("page", source_page))
+                    offset = halves[right_page]
+                    rect = pymupdf.Rect(output.get("from") or [0, 0, 0, 0])
+                    rect = pymupdf.Rect(rect.x0 + offset, rect.y0,
+                                        rect.x1 + offset, rect.y1)
+                    insert(right_page, rect, {"type": "uri", "uri": uri},
+                           None, None, "right", text)
+                continue
+            if not output:
+                continue
+            target_page = destination.get("page")
+            target_point = destination.get("point")
+            right_target_page = output.get("target_page")
+            right_target_point = output.get("target_to")
+            if target_page is None or target_point is None:
+                continue
+            insert(source_page, left_rect, {"type": "goto"},
+                   int(target_page), list(target_point), "left", text)
+            if right_target_page is None or right_target_point is None:
+                continue
+            right_page = int(output.get("page", source_page))
+            offset = halves[right_page]
+            rect = pymupdf.Rect(output.get("from") or [0, 0, 0, 0])
+            rect = pymupdf.Rect(rect.x0 + offset, rect.y0,
+                                rect.x1 + offset, rect.y1)
+            insert(right_page, rect, {"type": "goto"},
+                   int(right_target_page),
+                   [float(right_target_point[0]) + offset,
+                    float(right_target_point[1])],
+                   "right", text)
+
+        temp_path = dual_path + ".links.tmp"
+        dual_doc.save(temp_path, garbage=0, deflate=True)
+        dual_doc.close()
+        os.replace(temp_path, dual_path)
+        stats = {
+            "source": len(mono_links),
+            "restored": sum(1 for item in records if item.get("status") == "restored"),
+            "unresolved": sum(1 for item in records if item.get("status") == "unresolved"),
+            "unsupported": sum(1 for item in records if item.get("status") == "unsupported"),
+            "left": sum(1 for item in records if item.get("side") == "left"),
+            "right": sum(1 for item in records if item.get("side") == "right"),
+        }
+        if mapping_path is None:
+            mapping_path = dual_path + ".links.json"
+        payload = {"version": MAPPING_VERSION,
+                   "source": os.path.abspath(source_path),
+                   "output": os.path.abspath(dual_path),
+                   "stats": stats, "links": records}
+        try:
+            directory = os.path.dirname(os.path.abspath(mapping_path))
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(mapping_path, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+            stats["mapping_path"] = mapping_path
+        except OSError:
+            stats["mapping_path"] = ""
+        return stats
+    finally:
+        try:
+            dual_doc.close()
+        except Exception:
+            pass
+        source_doc.close()

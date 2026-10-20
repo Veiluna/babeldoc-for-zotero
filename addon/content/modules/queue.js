@@ -563,22 +563,39 @@ var ZoteroTranslateFilesQueue = (function () {
       }
 
       if (controller.signal.aborted) return;
-      var outputPath = typeof translationResult === "string"
-        ? translationResult
-        : translationResult && translationResult.outputPath;
-      if (!outputPath) throw new Error("BabelDOC 没有返回可导入的译本文件。");
+      var artifacts = [];
+      if (translationResult && Array.isArray(translationResult.outputPaths)) {
+        artifacts = translationResult.outputPaths.filter(function (artifact) {
+          return artifact && artifact.path;
+        });
+      }
+      if (!artifacts.length) {
+        var outputPath = typeof translationResult === "string"
+          ? translationResult
+          : translationResult && translationResult.outputPath;
+        if (outputPath) artifacts = [{ kind: "mono", path: outputPath }];
+      }
+      if (!artifacts.length) throw new Error("BabelDOC 没有返回可导入的译本文件。");
 
       var resultImporter = importer;
       if (!resultImporter && ZoteroTranslateFiles && ZoteroTranslateFiles.modules) {
         resultImporter = ZoteroTranslateFiles.modules.importer;
       }
       if (resultImporter && typeof resultImporter.importResult === "function") {
-        var translatedAttachment = await resultImporter.importResult(attachmentItem, outputPath);
-        if (translatedAttachment && typeof translatedAttachment.getField === "function") {
-          try {
-            completedTitle = String(translatedAttachment.getField("title") || "");
-          } catch (error) {
-            completedTitle = null;
+        for (var artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex++) {
+          if (controller.signal.aborted) return;
+          var artifact = artifacts[artifactIndex];
+          var translatedAttachment = await resultImporter.importResult(
+            attachmentItem,
+            artifact.path,
+            artifact.kind
+          );
+          if (translatedAttachment && typeof translatedAttachment.getField === "function") {
+            try {
+              completedTitle = String(translatedAttachment.getField("title") || "") || completedTitle;
+            } catch (error) {
+              // Keep the last successful title.
+            }
           }
         }
         if (!completedTitle) {

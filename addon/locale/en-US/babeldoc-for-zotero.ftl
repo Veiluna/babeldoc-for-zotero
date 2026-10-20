@@ -52,3 +52,7 @@ babeldoc-for-zotero-pref-api-network-error = API: Network error; no HTTP respons
 babeldoc-for-zotero-import-tag-warning-title = Translation added, but could not be marked as translated
 babeldoc-for-zotero-import-tag-warning-description = { $title } was added to Zotero, but could not be marked as translated.
 babeldoc-for-zotero-import-tag-warning-default-name = Chinese translation
+babeldoc-for-zotero-pref-output-mode = Output
+babeldoc-for-zotero-pref-output-mono = Chinese translation only
+babeldoc-for-zotero-pref-output-dual = Side-by-side bilingual
+babeldoc-for-zotero-pref-output-both = Both PDFs

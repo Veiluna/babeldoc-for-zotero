@@ -939,8 +939,29 @@ async function maintenanceLockRefusesActiveWorkAndPausesNewJobs() {
   assert.deepEqual(started, [1, 2], "queued work should resume when maintenance releases the lock");
 }
 
+async function importsBilingualArtifactsInOrder() {
+  const harness = makeHarness({ runner: { translate: async () => ({
+    outputPath: "mono.pdf",
+    outputPaths: [
+      { kind: "mono", path: "mono.pdf" },
+      { kind: "dual", path: "dual.pdf" },
+    ],
+    cleanup() {},
+  }) } });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await harness.queue.onIdle();
+  assert.equal(harness.imports.length, 2, "both selected artifacts must be imported");
+  assert.equal(
+    harness.imports.map(entry => entry[1]).join(","),
+    "mono.pdf,dual.pdf",
+    "artifacts keep the requested order",
+  );
+}
+
 (async () => {
   await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
+  await importsBilingualArtifactsInOrder();
   await failedShowRestoresRegistrationAndRemovesUnloadListener();
   await silentStagesKeepShowingRealElapsedTime();
   await stageTimersStayWithTheirJobAndStopOnTerminalPaths();
