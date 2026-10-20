@@ -86,13 +86,14 @@ async function testConnection(
   const config = {
     getSettings() {
       if (settingsError) throw settingsError;
-      if (invalidMaxRequests) return realConfig.getSettings();
       return {
         baseURL,
         apiKey,
         model: "test-model",
         downloadSource: "china",
         tokenParam: realConfig.getSettings().tokenParam,
+        ...(invalidMaxRequests ? realConfig.getSettings() : {}),
+        baseURL, apiKey, model: "test-model",
       };
     },
     getDownloadSource: realConfig.getDownloadSource,
@@ -330,8 +331,8 @@ async function testConnection(
     false,
     true,
   );
-  assert.match(invalidMaxRequestsInstallCase.statusElement.textContent,
-    /单篇最多请求次数必须是大于或等于 1 的整数/);
+  assert.equal(invalidMaxRequestsInstallCase.status.messageID, "babeldoc-for-zotero-pref-api-success",
+    "历史请求上限无效值不能再阻止连接测试");
   await invalidMaxRequestsInstallCase.installClick({ currentTarget: invalidMaxRequestsInstallCase.installButton });
   assert.equal(invalidMaxRequestsInstallCase.installerCalls.length, 1,
     "invalid translation settings must not block the settings install button");

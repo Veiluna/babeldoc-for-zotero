@@ -28,14 +28,12 @@ const context = {
 vm.runInNewContext(source, context, { filename: "config.js" });
 
 const settings = context.ZoteroTranslateFilesConfig.getSettings();
-assert.equal(settings.maxOutputTokens, 8192);
-assert.equal(settings.maxRequests, 20);
+assert.equal(settings.maxOutputTokens, 50000);
+assert.equal(settings.maxRequests, null);
+assert.equal(settings.repairFailed, true);
 assert.equal(settings.downloadSource, "china");
 preferences["extensions.babeldoc-for-zotero.maxOutputTokens"] = 1023;
-assert.throws(
-  () => context.ZoteroTranslateFilesConfig.getSettings(),
-  /模型单次最大输出 token 数必须是大于或等于 1024 的整数/,
-);
+assert.equal(context.ZoteroTranslateFilesConfig.getSettings().maxOutputTokens, 50000);
 preferences["extensions.babeldoc-for-zotero.maxOutputTokens"] = 4096;
 preferences["extensions.babeldoc-for-zotero.maxRequests"] = 0;
 assert.equal(context.ZoteroTranslateFilesConfig.getDownloadSource(), "china",
@@ -47,10 +45,9 @@ delete preferences["extensions.babeldoc-for-zotero.downloadSource"];
 assert.equal(context.ZoteroTranslateFilesConfig.getDownloadSource(), "china",
   "a missing download source should default to china");
 preferences["extensions.babeldoc-for-zotero.downloadSource"] = "china";
-assert.throws(
-  () => context.ZoteroTranslateFilesConfig.getSettings(),
-  /单篇最多请求次数必须是大于或等于 1 的整数/,
-);
+preferences["extensions.babeldoc-for-zotero.repairFailed"] = false;
+assert.equal(context.ZoteroTranslateFilesConfig.getSettings().maxRequests, null);
+assert.equal(context.ZoteroTranslateFilesConfig.getSettings().repairFailed, true);
 assert.equal(
   context.ZoteroTranslateFilesConfig.redact("invalid setting: " + apiKey),
   "invalid setting: [已隐藏]",

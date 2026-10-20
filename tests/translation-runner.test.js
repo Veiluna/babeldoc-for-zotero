@@ -227,9 +227,9 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   // The prompt is owned by the Python runner (ensure_runner_options); passing
   // a copy from JS previously replaced the runner's fragment rules.
   assert.equal(args.indexOf("--custom-system-prompt"), -1);
-  assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, "8192");
-  assert.equal(call.environment.ZTF_MAX_REQUESTS, "20");
-  assert.equal(call.environment.ZTF_REPAIR_FAILED, "1");
+  assert.equal(call.environment.ZTF_MAX_OUTPUT_TOKENS, undefined);
+  assert.equal(call.environment.ZTF_MAX_REQUESTS, undefined);
+  assert.equal(call.environment.ZTF_REPAIR_FAILED, undefined);
   assert.equal(call.environment.ZTF_TRANSLATE_REFERENCES, "0");
   assert.equal(call.environment.ZTF_TOKEN_PARAM, "max_tokens");
   assert.match(call.environment.ZTF_JOB_LOG_PATH, /\\logs\\.*-ABCD1234\.jsonl$/);

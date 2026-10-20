@@ -11,9 +11,6 @@ var ZoteroTranslateFilesConfig = (function () {
     apiKey: PREFERENCE_PREFIX + "apiKey",
     model: PREFERENCE_PREFIX + "model",
     downloadSource: PREFERENCE_PREFIX + "downloadSource",
-    maxOutputTokens: PREFERENCE_PREFIX + "maxOutputTokens",
-    maxRequests: PREFERENCE_PREFIX + "maxRequests",
-    repairFailed: PREFERENCE_PREFIX + "repairFailed",
     translateReferences: PREFERENCE_PREFIX + "translateReferences",
     // Learned, not user-facing: "max_tokens" or "max_completion_tokens".
     tokenParam: PREFERENCE_PREFIX + "tokenParam",
@@ -69,16 +66,6 @@ var ZoteroTranslateFilesConfig = (function () {
       return String(value == null ? "" : value).trim();
     }
 
-    function readInteger(name, fallback, minimum, label) {
-      var value = Zotero.Prefs.get(preferences[name], true);
-      if (value == null || String(value).trim() === "") return fallback;
-      var number = Number(value);
-      if (!Number.isSafeInteger(number) || number < minimum) {
-        throw new Error(label + "必须是大于或等于 " + minimum + " 的整数。");
-      }
-      return number;
-    }
-
     function readBoolean(name, fallback) {
       var value = Zotero.Prefs.get(preferences[name], true);
       if (value == null) return fallback;
@@ -94,14 +81,9 @@ var ZoteroTranslateFilesConfig = (function () {
       apiKey: read("apiKey"),
       model: read("model"),
       downloadSource: getDownloadSource(),
-      maxOutputTokens: readInteger(
-        "maxOutputTokens",
-        8192,
-        1024,
-        "模型单次最大输出 token 数"
-      ),
-      maxRequests: readInteger("maxRequests", 20, 1, "单篇最多请求次数"),
-      repairFailed: readBoolean("repairFailed", true),
+      maxOutputTokens: 50000,
+      maxRequests: null,
+      repairFailed: true,
       translateReferences: readBoolean("translateReferences", false),
       tokenParam: TOKEN_LIMIT_PARAMETERS.indexOf(read("tokenParam")) !== -1
         ? read("tokenParam")
