@@ -8,6 +8,7 @@ import datetime
 import functools
 import html
 import importlib.metadata
+import importlib.util
 import json
 import logging
 import logging.handlers
@@ -2996,6 +2997,12 @@ def _install_min_request_patches(
     from babeldoc.translator.translator import OpenAITranslator
 
     _install_pdf_unicode_patch()
+    formula_spec = importlib.util.spec_from_file_location(
+        "ztf_inline_formulas", os.path.join(os.path.dirname(__file__), "ztf_inline_formulas.py")
+    )
+    formula_module = importlib.util.module_from_spec(formula_spec)
+    formula_spec.loader.exec_module(formula_module)
+    formula_module.install_inline_formula_patch()
     original_openai = openai.OpenAI
 
     original_post_translate_paragraph = ILTranslator.post_translate_paragraph
