@@ -18,6 +18,7 @@ import re
 import statistics
 import sys
 import threading
+import time
 import traceback
 import unicodedata
 from collections import Counter
@@ -26,6 +27,7 @@ from typing import Any
 
 
 EXPECTED_BABELDOC_VERSION = "0.6.4"
+MAX_OUTPUT_TOKENS = 50000
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -352,8 +354,8 @@ def call_translator_without_cache(
 class RequestBudget:
     """Count completion attempts and update the request progress display."""
 
-    def __init__(self, max_requests: int, on_update: Any = None) -> None:
-        self.max_requests = max_requests
+    def __init__(self, max_requests: int | None = None, on_update: Any = None) -> None:
+        self.max_requests = math.inf if max_requests is None else max_requests
         self.requests = 0
         self.planned = 0
         self.on_update = on_update
@@ -448,39 +450,115 @@ def create_completion_adapting(
     client: Any,
     request_state: dict[str, Any],
     token_limit: int,
+    *,
+    request_metadata: dict[str, Any] | None = None,
+    api_key: str = "",
     **kwargs: Any,
 ) -> Any:
     """``client.chat.completions.create`` with the provider's parameter dialect.
 
-    The token-limit parameter name lives in ``request_state["token_param"]``
-    (initialised from the plugin setting). If the provider rejects a parameter
-    as unsupported, the request is reshaped and sent again — at most twice, in
-    the same counted request slot, since the rejected attempt was not processed.
-    The learned dialect is kept for the rest of the job.
+    参数适配与短暂故障恢复均逐次计数、记录；已完成的批次不在此处重发。
+    首次尝试由调用方 request_once 计数，其余网络尝试在这里计数。
     """
     attempts = 0
+    retries = 0
+    network_attempt = 0
+    budget = request_state.get("request_budget")
     while True:
         call = dict(kwargs)
         if request_state.get("drop_sampling"):
             for name in _SAMPLING_PARAMETERS:
                 call.pop(name, None)
         call[request_state.get("token_param", "max_tokens")] = token_limit
+        # extra_body 由 SDK 最后合并，不能让它覆盖固定输出策略。
+        if isinstance(call.get("extra_body"), dict):
+            call["extra_body"] = {key: value for key, value in call["extra_body"].items() if key not in TOKEN_LIMIT_PARAMETERS}
+        if network_attempt and budget is not None:
+            budget.add_additional_requests(1)
+            budget.reserve_request()
+        network_attempt += 1
+        response = None
+        failure = None
+        delay = 0
         try:
-            return client.chat.completions.create(**call)
+            response = client.chat.completions.create(**call)
+            return response
         except Exception as error:
+            failure = error
             adaptation = parameter_adaptation(error)
-            if adaptation is None or attempts >= 2:
-                raise
-            attempts += 1
-            if adaptation == "drop_sampling":
-                if request_state.get("drop_sampling"):
-                    raise
-                request_state["drop_sampling"] = True
+            if adaptation is not None and attempts < 2:
+                attempts += 1
+                if adaptation == "drop_sampling":
+                    if request_state.get("drop_sampling"):
+                        raise
+                    request_state["drop_sampling"] = True
+                else:
+                    if request_state.get("token_param") == adaptation:
+                        raise
+                    request_state["token_param"] = adaptation
+                request_state.setdefault("parameter_adaptations", []).append(adaptation)
+            elif retries < 2 and temporary_request_error(error):
+                delay = (2, 4)[retries]
+                retries += 1
             else:
-                if request_state.get("token_param") == adaptation:
-                    raise
-                request_state["token_param"] = adaptation
-            request_state.setdefault("parameter_adaptations", []).append(adaptation)
+                raise
+        finally:
+            usage = getattr(response, "usage", None)
+            choices = getattr(response, "choices", None)
+            record = dict(request_metadata or {"phase": "main", "item_count": 0})
+            record.update({
+                "event": "request",
+                "request_index": budget.requests if budget is not None else network_attempt,
+                "token_param": next(name for name in TOKEN_LIMIT_PARAMETERS if name in call),
+                "max_output_tokens": token_limit,
+                "actual_output_tokens": getattr(usage, "completion_tokens", None),
+                "finish_reason": getattr(choices[0], "finish_reason", None) if choices else None,
+            })
+            if failure is not None:
+                record["error"] = log_safe_error(failure, api_key)
+                record["provider_message"] = provider_message_for_log(failure, api_key, "")
+                record["status_code"] = _provider_status(failure)
+            _write_job_log(request_state, record, api_key)
+        if delay:
+            _write_job_log(request_state, {"event": "request_retry", "delay_seconds": delay,
+                                          "request_index": budget.requests if budget else None}, api_key)
+            # Zotero 取消会终止本进程，等待期间同样立即生效。
+            time.sleep(delay)
+
+
+def temporary_request_error(error: Exception) -> bool:
+    """只恢复明确的短暂故障；余额、鉴权、配置错误立即失败。"""
+    import openai
+
+    body = getattr(error, "body", None)
+    details: dict[str, Any] = {}
+    if isinstance(body, dict):
+        inner = body.get("error", body)
+        if isinstance(inner, dict):
+            details = inner
+        elif isinstance(inner, str):
+            # 部分网关直接以纯文本返回 "Insufficient balance"。
+            details = {"message": inner}
+    elif isinstance(body, str):
+        details = {"message": body}
+    diagnostic = " ".join(
+        str(part or "")
+        for part in (
+            details.get("code"),
+            details.get("type"),
+            details.get("message"),
+            "" if isinstance(error, openai.APIConnectionError) else str(error),
+        )
+    ).casefold()
+    if any(marker in diagnostic for marker in (
+        "insufficient_quota", "insufficient_balance", "insufficient balance", "quota_exceeded",
+        "billing", "credit balance", "balance", "余额", "欠费", "配额耗尽",
+    )):
+        return False
+    if isinstance(error, openai.APIConnectionError):
+        return True
+    status = _provider_status(error)
+    return status in (408, 409, 429) or (status is not None and 500 <= status <= 599)
 
 
 def _failed_json_items(
@@ -897,18 +975,101 @@ _EMAIL_EVIDENCE_RE = re.compile(_EMAIL_EVIDENCE_PATTERN)
 
 _PROSE_MIN_LOWERCASE_WORDS = 4
 
+# 已识别的应译角色：标题、摘要、图表标题与表头。它们即使很短也必须翻译，
+# 只允许真正的缩写/标识符原样返回（见 _title_verbatim_allowed）。
+_MUST_TRANSLATE_LAYOUT_LABELS = {
+    "title", "doc_title", "document_title", "paragraph_title", "section_title",
+    "heading", "abstract", "figure_caption", "table_caption", "table_header",
+    "index_terms", "keywords",
+}
+# 正文段落：不能靠“小写词少于四个”放行回显，只允许名称/标识符原样保留。
+_BODY_LAYOUT_LABELS = {
+    "text", "plain_text", "paragraph_hybrid", "body", "body_text",
+    "paragraph", "list", "list_item", "footnote", "note",
+}
+_VERBATIM_FUNCTION_WORDS = {
+    "a", "an", "the", "of", "and", "or", "for", "with", "to", "in", "on", "by",
+    "is", "are", "was", "were", "be", "been", "we", "our", "this", "that",
+    "these", "those", "from", "as", "at", "it", "its", "has", "have", "can",
+    "will", "not", "which", "while", "than", "then", "their", "they",
+}
 
-def verbatim_output_allowed(text: str) -> bool:
+
+def _normalized_layout_label(layout_label: Any) -> str:
+    return str(layout_label or "").strip().lower().replace(" ", "_")
+
+
+def _verbatim_identifier_like(text: str) -> bool:
+    """名称、缩写、数字、链接等可以原样保留；普通英文句子返回 False。"""
+    original_tokens = (text or "").split()
+    # 每个词都带 BabelDOC 占位符时（"mean{v1} variance{v2}"），它是公式/数据
+    # 列表而不是英文句子，必须原样保留。
+    if original_tokens and all(
+        _PLACEHOLDER_TOKEN_RE.search(token) for token in original_tokens
+    ):
+        return True
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
+    if not plain:
+        return False
+    if re.search(r"[\u3400-\u9fff]", plain):
+        return True
+    if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
+        return True
+    tokens = [token for token in plain.split() if token.strip(",;:()[]\"'!?")]
+    if len(tokens) <= 1:
+        return True
+    if any(token.strip(",;:()[]\"'!?").casefold() in _VERBATIM_FUNCTION_WORDS for token in tokens):
+        return False
+    # 多词名称必须每个词都是大写开头或含数字/连接符（"IEEE Transactions",
+    # "GPT-4 Turbo"），否则视为待翻译正文。
+    return all(
+        token.strip(",;:()[]\"'!?")[0].isupper()
+        or re.search(r"[0-9\-_/.]", token.strip(",;:()[]\"'!?"))
+        for token in tokens
+    )
+
+
+def _title_verbatim_allowed(text: str) -> bool:
+    """已识别标题只允许缩写/标识符原样返回。"""
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
+    if not plain:
+        return False
+    if re.search(r"[\u3400-\u9fff]", plain):
+        return True
+    if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
+        return True
+    tokens = plain.split()
+    if len(tokens) != 1:
+        return False
+    token = tokens[0].strip(",;:()[]\"'!?")
+    if not token:
+        return False
+    if re.fullmatch(r"[A-Z]{2,6}", token):  # HTTP, IEEE
+        return True
+    if re.search(r"[0-9]", token):  # CIC-IDS-2017, GPT-4
+        return True
+    if re.match(r"[A-Z][a-z]+[A-Z]", token):  # ChangeMamba
+        return True
+    return False
+
+
+def verbatim_output_allowed(text: str, layout_label: str = "") -> bool:
     """Whether text may stay as it is (names, author/affiliation lines, labels,
-    identifiers, links): only real sentences are checked for being left in
-    English. A sentence has at least four plain lowercase words; tokens with
-    ".", "@", digits or braces (e-mails, placeholders) do not count. The prompt
-    tells the model to keep such items unchanged, so no further rules here."""
+    identifiers, links). 正文与已识别标题不按词数放行；未知角色保留旧的
+    短标签启发式，但明显以句号结尾的多词文本仍视为句子。"""
+    label = _normalized_layout_label(layout_label)
+    if label in _MUST_TRANSLATE_LAYOUT_LABELS:
+        return _title_verbatim_allowed(text)
+    if label in _BODY_LAYOUT_LABELS:
+        return _verbatim_identifier_like(text)
+    if _verbatim_identifier_like(text):
+        return True
+    plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
     # Count raw tokens: one carrying a placeholder ("mean{v1}") is not a word.
     # A trailing full stop ends a sentence ("design.") unless the word is a
     # short abbreviation ("avg.", "std.", "min.", "max."), which never counts.
     lowercase = []
-    for token in (text or "").split():
+    for token in plain.split():
         word = token.strip(",;:()[]\"'!?")
         if word.endswith(".") and not word.endswith(".."):
             word = word[:-1]
@@ -916,6 +1077,8 @@ def verbatim_output_allowed(text: str) -> bool:
                 continue
         if re.fullmatch(r"[a-z]+(?:['’-][a-z]+)*", word):
             lowercase.append(word)
+    if len(plain.split()) >= 2 and re.search(r"[.!?]\s*$", plain):
+        return False
     return len(lowercase) < _PROSE_MIN_LOWERCASE_WORDS
 
 
@@ -1010,7 +1173,7 @@ def validate_translation_output(
         return {"usable": False, "reason": "模型返回空译文，已进入合并补译。", "checks": checks}
 
     output = str(translated)
-    if _is_verbatim_output(source, output):
+    if _is_verbatim_output(source, output) and verbatim_output_allowed(source, item.get("layout_label", "")):
         checks["kept_verbatim"] = True
         return {"usable": True, "reason": "模型原样返回，保留原段落与排版。", "checks": checks}
 
@@ -1022,7 +1185,7 @@ def validate_translation_output(
     identical = " ".join(output.split()) == " ".join(source.split())
     # Label-like sources (names, author lines, labels) skip every
     # "left in English" heuristic; the prompt asks to keep them unchanged.
-    label_like = verbatim_output_allowed(source)
+    label_like = verbatim_output_allowed(source, item.get("layout_label", ""))
     verbatim_ok = identical and label_like
     if identical and not verbatim_ok:
         checks["identical_english"] = True
@@ -2540,6 +2703,8 @@ class TranslationPolicy(logging.Handler):
         self._thread_state = threading.local()
         self._attempted_paragraph_ids: dict[int, Any] = {}
         self._failed_paragraph_ids: set[int] = set()
+        self.failure_reasons: dict[int, str] = {}
+        self.paragraph_locations: dict[int, tuple[int, int]] = {}
         self._unbound_failed_paragraphs = 0
         self.paragraph_attempts = 0
         self.failed_paragraphs = 0
@@ -2566,6 +2731,7 @@ class TranslationPolicy(logging.Handler):
                 paragraph_id = id(paragraph)
                 self._attempted_paragraph_ids.setdefault(paragraph_id, paragraph)
                 self._failed_paragraph_ids.add(paragraph_id)
+                self.failure_reasons[paragraph_id] = sanitize_provider_error(message)
             self.paragraph_attempts = len(self._attempted_paragraph_ids)
             self.failed_paragraphs = (
                 len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
@@ -2581,6 +2747,7 @@ class TranslationPolicy(logging.Handler):
             return
         with self._lock:
             self._failed_paragraph_ids.discard(id(paragraph))
+            self.failure_reasons.pop(id(paragraph), None)
             self.failed_paragraphs = (
                 len(self._failed_paragraph_ids) + self._unbound_failed_paragraphs
             )
@@ -2722,6 +2889,8 @@ class TranslationPolicy(logging.Handler):
             with self._lock:
                 if not self.first_error:
                     self.first_error = error
+                if paragraph is not None:
+                    self.failure_reasons[id(paragraph)] = error
         except Exception:
             # Diagnostics must never interfere with BabelDOC's translation threads.
             return
@@ -2730,25 +2899,28 @@ class TranslationPolicy(logging.Handler):
         with self._lock:
             attempts = self.paragraph_attempts
             failures = self.failed_paragraphs
-            completion_tokens = self.completion_tokens
             first_error = self.first_error
+            details = []
+            for paragraph_id in sorted(self._failed_paragraph_ids, key=lambda key: self.paragraph_locations.get(key, (math.inf, key))):
+                location = self.paragraph_locations.get(paragraph_id)
+                details.append({
+                    "page": location[0] + 1 if location is not None else None,
+                    "paragraph": location[1] + 1 if location is not None else None,
+                    "reason": self.failure_reasons.get(paragraph_id) or first_error or "应译段落未完成",
+                })
 
         count_summary = self.count_summary()
 
-        all_paragraphs_failed = attempts > 0 and failures >= attempts
-        no_completion_tokens = attempts > 0 and completion_tokens == 0
-        if no_completion_tokens or all_paragraphs_failed:
+        if failures:
+            locations = "；".join(
+                f"第 {item['page']} 页段落 {item['paragraph']}：{item['reason']}"
+                for item in details if item["page"] is not None
+            )
             return {
                 "kind": "translation_failed",
                 "failed_paragraphs": failures,
-                "message": (first_error or "BabelDOC produced no completion tokens for paragraph text.")
-                + (f"；{count_summary}" if count_summary else ""),
-            }
-        if failures:
-            return {
-                "kind": "warning",
-                "failed_paragraphs": failures,
-                "message": (first_error or "One or more paragraph translations failed.")
+                "failures": details,
+                "message": (locations or first_error or "应译段落补译后仍失败。")
                 + (f"；{count_summary}" if count_summary else ""),
             }
         return None
@@ -3628,55 +3800,23 @@ def _install_min_request_patches(
                 request_state["repair_request_count"] = int(
                     request_state.get("repair_request_count", 0)
                 ) + 1
-            try:
-                response = create_completion_adapting(
-                    instance.client,
-                    request_state,
-                    max_output_tokens,
-                    model=instance.model,
-                    **options,
-                    messages=[{"role": "user", "content": prompt_text}],
-                    extra_headers=extra_headers,
-                    extra_body=instance.extra_body,
-                )
-            except Exception as error:
-                _write_job_log(
-                    request_state,
-                    {
-                        "event": "request",
-                        "phase": phase,
-                        "request_index": request_budget.requests,
-                        "item_count": len(batch),
-                        "estimated_output_tokens": estimated_output_tokens,
-                        "actual_output_tokens": None,
-                        "finish_reason": None,
-                        "error": log_safe_error(error, api_key),
-                        "provider_message": provider_message_for_log(error, api_key, prompt_text),
-                        "items": request_items_log,
-                    },
-                    api_key,
-                )
-                raise
+            response = create_completion_adapting(
+                instance.client,
+                request_state,
+                max_output_tokens,
+                request_metadata={"phase": phase, "item_count": len(batch),
+                                  "estimated_output_tokens": estimated_output_tokens, "items": request_items_log},
+                api_key=api_key,
+                model=instance.model,
+                **options,
+                messages=[{"role": "user", "content": prompt_text}],
+                extra_headers=extra_headers,
+                extra_body=instance.extra_body,
+            )
             instance.update_token_count(response)
             choice = response.choices[0]
             message = choice.message
-            usage = getattr(response, "usage", None)
-            actual_output_tokens = getattr(usage, "completion_tokens", None)
             finish_reason = getattr(choice, "finish_reason", None)
-            _write_job_log(
-                request_state,
-                {
-                    "event": "request",
-                    "phase": phase,
-                    "request_index": request_budget.requests,
-                    "item_count": len(batch),
-                    "estimated_output_tokens": estimated_output_tokens,
-                    "actual_output_tokens": actual_output_tokens,
-                    "finish_reason": finish_reason,
-                    "items": request_items_log,
-                },
-                api_key,
-            )
             return (
                 message.content or "",
                 finish_reason,
@@ -3853,6 +3993,7 @@ def _install_min_request_patches(
                     paragraph = prepared_paragraphs[paragraph_index]
                     packed_item = packed_items_by_paragraph.get(id(paragraph), {})
                     _, metadata = metadata_for_packed_item(packed_item)
+                    input_item["layout_label"] = _paragraph_layout_label(paragraph)
                     if metadata["required_placeholders"]:
                         input_item["required_placeholders"] = metadata[
                             "required_placeholders"
@@ -3909,7 +4050,7 @@ def _install_min_request_patches(
                         continue
                     if not _is_verbatim_output(
                         input_item.get("input"), output_item.get("output")
-                    ):
+                    ) or not verbatim_output_allowed(str(input_item.get("input", "")), input_item.get("layout_label", "")):
                         continue
                     try:
                         paragraph_index = int(item_id)
@@ -4449,8 +4590,8 @@ def _install_min_request_patches(
             )
 
         def log_repair_batch_error(error: Exception) -> None:
-            # Not fatal: the batch's paragraphs keep their original text and the
-            # remaining repair batches (and earlier results) are unaffected.
+            # 鉴权、配置错误或用尽两次恢复后应立即停止后续批次。
+            record_request_error(error)
             _write_job_log(
                 request_state,
                 {
@@ -4460,6 +4601,7 @@ def _install_min_request_patches(
                 },
                 api_key,
             )
+            raise error
 
         try:
             repaired_outputs = translate_json_items_with_splitting(
@@ -4526,7 +4668,7 @@ def _install_min_request_patches(
                 continue
             if _is_verbatim_output(
                 repair_items[repair_id].get("input"), output_item.get("output")
-            ):
+            ) and verbatim_output_allowed(str(repair_items[repair_id].get("input", "")), repair_items[repair_id].get("layout_label", "")):
                 paragraph_id = id(record["paragraph"])
                 repair_kept_verbatim_paragraph_ids.add(paragraph_id)
                 _mark_paragraph_kept_verbatim(
@@ -4809,6 +4951,7 @@ def _install_min_request_patches(
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
                     page_positions[id(paragraph)] = (page_index, paragraph_index)
+            policy.paragraph_locations = page_positions
 
             flattened: list[dict[str, Any]] = []
             seen_paragraphs: set[int] = set()
@@ -5165,11 +5308,10 @@ def main() -> int:
     sys.argv = ensure_runner_options(sys.argv)
 
     try:
-        max_output_tokens = _read_integer_setting(
-            "ZTF_MAX_OUTPUT_TOKENS", 8192, 1024
-        )
-        max_requests = _read_integer_setting("ZTF_MAX_REQUESTS", 20, 1)
-        repair_failed = _read_boolean_setting("ZTF_REPAIR_FAILED", True)
+        # 历史偏好和旧版插件传入的环境变量均不能改变固定策略。
+        max_output_tokens = MAX_OUTPUT_TOKENS
+        max_requests = None
+        repair_failed = True
         translate_references = _read_boolean_setting(
             "ZTF_TRANSLATE_REFERENCES", False
         )
@@ -5228,6 +5370,7 @@ def main() -> int:
     request_budget = RequestBudget(max_requests, emit_request_progress)
     token_param = os.environ.pop("ZTF_TOKEN_PARAM", "").strip()
     request_state: dict[str, Any] = {
+        "request_budget": request_budget,
         # The provider's token-limit parameter, learned by the plugin's
         # connection test; requests still adapt if the provider rejects it.
         "token_param": token_param if token_param in TOKEN_LIMIT_PARAMETERS else "max_tokens",
@@ -5352,6 +5495,15 @@ def main() -> int:
         return message
 
     if request_state.get("fatal_error"):
+        # 补译批次因鉴权/重试耗尽而失败时，policy 已记录每个受影响段落的
+        # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
+        fatal_decision = policy_instance.decision() if policy_instance else None
+        fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
+        fatal_message = request_state["fatal_error"]
+        if fatal_failures:
+            fatal_message = (
+                with_translation_counts(fatal_message) + "；" + fatal_decision["message"]
+            )
         _write_job_log(
             request_state,
             {
@@ -5364,14 +5516,17 @@ def main() -> int:
                 # redacted, in the alert); the log only gets the fixed summary.
                 "error": request_state.get("fatal_error_log")
                 or log_safe_error(request_state["fatal_error"], api_key),
+                "failures": fatal_failures,
             },
             api_key,
         )
         _emit(
             "ZTF_ERROR ",
             {
-                "message": with_translation_counts(request_state["fatal_error"]),
+                "message": fatal_message,
                 "kind": request_state.get("fatal_kind") or "api_error",
+                "failed_paragraphs": len(fatal_failures),
+                "failures": fatal_failures,
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,
@@ -5401,6 +5556,7 @@ def main() -> int:
                 "message": with_translation_counts(decision["message"]),
                 "kind": decision["kind"],
                 "failed_paragraphs": decision["failed_paragraphs"],
+                "failures": decision.get("failures", []),
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,

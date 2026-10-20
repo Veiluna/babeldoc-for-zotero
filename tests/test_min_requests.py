@@ -1061,8 +1061,8 @@ def test_fragment_validation_and_placeholder_integrity() -> None:
     assert not empty_result["usable"] and not empty_result["checks"]["non_empty"]
 
     identical_result = runner.validate_translation_output(source, source, {}, len)
-    assert identical_result["usable"]
-    assert identical_result["checks"]["kept_verbatim"]
+    assert not identical_result["usable"]
+    assert identical_result["checks"]["identical_english"]
 
     placeholder_item = {"required_placeholders": [{"token": "{v1}", "count": 1}]}
     missing = runner.validate_translation_output("formula {v1}", "公式", placeholder_item, len)

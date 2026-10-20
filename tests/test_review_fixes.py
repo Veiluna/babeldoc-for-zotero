@@ -266,15 +266,15 @@ def test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved():
     assert runner._paragraph_is_marginal_or_stamp(licence, page), "explicit licence sentence counts anywhere"
 
 
-def test_verbatim_outputs_are_kept_without_content_rules():
+def test_prose_echoes_fail_but_protected_identifiers_are_kept():
     for phrase in ("of the system design", "in all of our experiments", "as shown in the table"):
         result = runner.validate_translation_output(phrase, phrase, {}, len)
-        assert result["usable"] and result["checks"]["kept_verbatim"], phrase
+        assert not result["usable"] and result["checks"]["identical_english"], phrase
     fragment = {"fragment_id": "cross-column:a:b", "fragment_part": "second"}
     result = runner.validate_translation_output(
         "of the system design", "of the system design", fragment, len
     )
-    assert result["usable"] and result["checks"]["kept_verbatim"]
+    assert not result["usable"] and result["checks"]["identical_english"]
     for identifier in ("HTTP", "CIC-IDS-2017", "pcap", "Random Forest"):
         result = runner.validate_translation_output(identifier, identifier, {}, len)
         assert result["usable"] and result["checks"]["kept_verbatim"], identifier
@@ -472,10 +472,10 @@ def test_urls_emails_and_author_lines_may_stay_verbatim():
     ):
         result = runner.validate_translation_output(text, text, {}, words)
         assert result["usable"], (text, result)
-    # Exact prose echoes are retained by the same comparison as any other text.
+    # 正文中包含 URL 也不能因此豁免未翻译的句子。
     prose = "see the project page at https://example.org for the data and the code"
     prose_echo = runner.validate_translation_output(prose, prose, {}, words)
-    assert prose_echo["usable"] and prose_echo["checks"]["kept_verbatim"]
+    assert not prose_echo["usable"] and prose_echo["checks"]["identical_english"]
     # Exact output equality applies to headings and labels as it does to other text.
     for label_like in (
         "II. BACKGROUND AND RELATED WORK",
@@ -666,7 +666,7 @@ if __name__ == "__main__":
     test_placeholder_diagnostics_are_redacted_before_truncation()
     test_log_summary_never_keeps_echoed_metadata_or_bodies()
     test_ieee_xplore_in_body_text_is_translated_but_edge_stamp_is_preserved()
-    test_verbatim_outputs_are_kept_without_content_rules()
+    test_prose_echoes_fail_but_protected_identifiers_are_kept()
     test_repeated_running_headers_are_preserved_even_when_labeled_body_text()
     test_repeated_marginal_threshold_scales_with_document_length()
     test_formula_placeholder_moved_into_style_span_is_rejected()

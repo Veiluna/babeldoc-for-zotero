@@ -224,9 +224,6 @@ var ZoteroTranslateFilesRunner = (function () {
         arguments: args,
         environment: {
           ZTF_OPENAI_API_KEY: apiKey,
-          ZTF_MAX_OUTPUT_TOKENS: String(settings.maxOutputTokens),
-          ZTF_MAX_REQUESTS: String(settings.maxRequests),
-          ZTF_REPAIR_FAILED: settings.repairFailed ? "1" : "0",
           ZTF_TRANSLATE_REFERENCES: settings.translateReferences ? "1" : "0",
           ZTF_TOKEN_PARAM: settings.tokenParam || "max_tokens",
           ZTF_JOB_LOG_PATH: logPath,

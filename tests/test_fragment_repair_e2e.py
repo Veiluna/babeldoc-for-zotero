@@ -258,131 +258,59 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
             if source:
                 self.assertNotIn(source, compact_pdf_text)
 
-    def test_malformed_repair_response_keeps_the_entire_group_original(self) -> None:
+    def test_malformed_repair_response_fails_the_document_without_result(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
-            repair_enabled=True,
-            bad_fragment_repairs=True,
+            repair_enabled=True, bad_fragment_repairs=True,
         )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            msg=f"runner failed\nstdout:\n{completed.stdout[-5000:]}\nstderr:\n{completed.stderr[-5000:]}",
-        )
-        self.assertIsNotNone(result, completed.stdout[-5000:])
-        main_items = [
-            record
-            for record in records
-            if record.get("event") == "item_outcome"
-            and record.get("phase") == "main"
-            and record.get("fragment_id") == selected_group
-            and record.get("outcome") == "needs_repair"
-        ]
-        repair_items = [
-            record
-            for record in records
-            if record.get("event") == "item_outcome"
-            and record.get("phase") == "repair"
-            and record.get("fragment_id") == selected_group
-        ]
-        self.assertEqual(len(main_items), 2, main_items)
+        self.assertNotEqual(completed.returncode, 0, completed.stdout[-5000:])
+        self.assertIsNone(result, completed.stdout[-5000:])
+        self.assertFalse(text_blocks)
+        repair_items = [record for record in records if record.get("event") == "item_outcome"
+                        and record.get("phase") == "repair" and record.get("fragment_id") == selected_group]
         self.assertEqual(len(repair_items), 2, repair_items)
-        self.assertTrue(
-            all(item.get("outcome") == "retained_source" for item in repair_items),
-            repair_items,
-        )
-        self.assertTrue(
-            all(item.get("checks", {}).get("fragment_group_invalid") for item in repair_items),
-            repair_items,
-        )
-        self.assertEqual(result["repair_request_count"], 1)
-        self.assertLessEqual(result["requests"], result["main_minimum_requests"] + 1)
-        self.assertEqual(request_count, result["requests"])
-        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
-        self.assertIsNotNone(warning_match, completed.stdout[-5000:])
-        warning = json.loads(warning_match.group(1))
-        self.assertGreaterEqual(warning["failed_paragraphs"], 2, warning)
-        compact_pdf_text = "".join(text_blocks)
-        for main_item in main_items:
-            source = _compact(main_item.get("preview", ""))
-            self.assertTrue(source and source in compact_pdf_text, main_item)
-        for repair_item in repair_items:
-            translated = _compact(repair_item.get("output_preview", ""))
-            self.assertFalse(translated and translated in compact_pdf_text, repair_item)
+        self.assertTrue(all(item.get("outcome") == "retained_source" for item in repair_items))
+        error_match = re.search(r"(?m)^ZTF_ERROR (\{.*\})\s*$", completed.stdout)
+        self.assertIsNotNone(error_match, completed.stdout[-5000:])
+        error = json.loads(error_match.group(1))
+        self.assertEqual(error["kind"], "translation_failed")
+        self.assertGreaterEqual(error["failed_paragraphs"], 2)
+        self.assertTrue(all(item.get("page") and item.get("paragraph") and item.get("reason") for item in error["failures"]))
+        self.assertEqual(request_count, error["requests"])
+        summary = next(record for record in records if record.get("event") == "repair_summary")
+        self.assertEqual(summary["repair_request_count"], 1)
 
-    def test_repair_disabled_rolls_back_and_counts_every_fragment_member(self) -> None:
+    def test_legacy_repair_disabled_still_repairs_the_group(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
-            repair_enabled=False
+            repair_enabled=False,
         )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            msg=f"runner failed\nstdout:\n{completed.stdout[-5000:]}\nstderr:\n{completed.stderr[-5000:]}",
-        )
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
         self.assertIsNotNone(result, completed.stdout[-5000:])
-        main_items = [
-            record
-            for record in records
-            if record.get("event") == "item_outcome"
-            and record.get("phase") == "main"
-            and record.get("fragment_id") == selected_group
-            and record.get("outcome") == "retained_source"
-        ]
-        self.assertEqual(len(main_items), 2, main_items)
-        self.assertEqual(result["repair_request_count"], 0)
-        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
-        self.assertIsNotNone(warning_match, completed.stdout[-5000:])
-        warning = json.loads(warning_match.group(1))
-        self.assertGreaterEqual(warning["failed_paragraphs"], 2, warning)
-        self.assertEqual(request_count, result["requests"])
-        compact_pdf_text = "".join(text_blocks)
-        for main_item in main_items:
-            source = _compact(main_item.get("preview", ""))
-            self.assertTrue(source and source in compact_pdf_text, main_item)
-
-    def test_verbatim_fragment_is_kept_out_of_group_repair_and_failures(self) -> None:
-        completed, result, records, request_count, selected_group, text_blocks = self._run_job(
-            repair_enabled=True,
-            bad_fragment_repairs=True,
-            echo_first_fragment=True,
-        )
-        self.assertEqual(
-            completed.returncode,
-            0,
-            msg=f"runner failed\nstdout:\n{completed.stdout[-5000:]}\nstderr:\n{completed.stderr[-5000:]}",
-        )
-        self.assertIsNotNone(result, completed.stdout[-5000:])
-        main_items = [
-            record
-            for record in records
-            if record.get("event") == "item_outcome"
-            and record.get("phase") == "main"
-            and record.get("fragment_id") == selected_group
-        ]
-        kept_items = [item for item in main_items if item.get("outcome") == "kept_verbatim"]
-        repair_items = [
-            record
-            for record in records
-            if record.get("event") == "item_outcome"
-            and record.get("phase") == "repair"
-            and record.get("fragment_id") == selected_group
-        ]
-        self.assertEqual(len(kept_items), 1, main_items)
-        self.assertEqual(len(repair_items), 1, repair_items)
-        self.assertEqual(repair_items[0].get("outcome"), "retained_source")
-        self.assertTrue(result.get("mono"))
-        self.assertEqual(request_count, result["requests"])
         self.assertEqual(result["repair_request_count"], 1)
-        repair_summary = next(
-            record for record in records if record.get("event") == "repair_summary"
+        self.assertEqual(request_count, result["requests"])
+        repaired = [record for record in records if record.get("event") == "item_outcome"
+                    and record.get("phase") == "repair" and record.get("fragment_id") == selected_group]
+        self.assertEqual(len(repaired), 2, repaired)
+        self.assertTrue(all(item.get("outcome") == "repaired" for item in repaired))
+        self.assertTrue(text_blocks)
+        self.assertNotIn("ZTF_WARNING ", completed.stdout)
+
+    def test_untranslated_prose_fragment_is_not_a_protected_name(self) -> None:
+        completed, result, records, request_count, selected_group, text_blocks = self._run_job(
+            repair_enabled=True, bad_fragment_repairs=True, echo_first_fragment=True,
         )
-        self.assertEqual(repair_summary.get("failed_items"), 1, repair_summary)
-        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
-        self.assertIsNotNone(warning_match, completed.stdout[-5000:])
-        warning = json.loads(warning_match.group(1))
-        self.assertEqual(warning["failed_paragraphs"], 1, warning)
-        compact_pdf_text = "".join(text_blocks)
-        source = _compact(kept_items[0].get("preview", ""))
-        self.assertTrue(source and source in compact_pdf_text, kept_items[0])
+        self.assertNotEqual(completed.returncode, 0, completed.stdout[-5000:])
+        self.assertIsNone(result)
+        self.assertFalse(text_blocks)
+        main_items = [record for record in records if record.get("event") == "item_outcome"
+                      and record.get("phase") == "main" and record.get("fragment_id") == selected_group]
+        self.assertFalse(any(item.get("outcome") == "kept_verbatim" for item in main_items), main_items)
+        summary = next(record for record in records if record.get("event") == "repair_summary")
+        self.assertGreaterEqual(summary["failed_items"], 2, summary)
+        self.assertEqual(summary["repair_request_count"], 1)
+        error = json.loads(re.search(r"(?m)^ZTF_ERROR (\{.*\})\s*$", completed.stdout).group(1))
+        self.assertEqual(error["kind"], "translation_failed")
+        self.assertGreaterEqual(error["failed_paragraphs"], 2)
+        self.assertEqual(request_count, error["requests"])
 
 
 if __name__ == "__main__":
