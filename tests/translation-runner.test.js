@@ -109,6 +109,7 @@ function makeHarness(options = {}) {
             options.repairRequestCount == null ? {} : { repair_request_count: options.repairRequestCount },
             options.fragmentItemCount == null ? {} : { fragment_item_count: options.fragmentItemCount },
             options.logPath == null ? {} : { log_path: options.logPath },
+            options.links == null ? {} : { links: options.links },
           )) + "\r\n";
       const warningLine = options.warning
         ? "ZTF_WARNING " + JSON.stringify(options.warning) + "\r\n"
@@ -209,7 +210,7 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   assert.equal(harness.copiedFiles.find(entry => entry[0] === "write-runner")[3], "utf-8");
   assert.ok(harness.copiedFiles.some(entry => entry[0] === "copy-input" && entry[2].endsWith("\\input.pdf")));
   const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
-  for (const helperName of ["ztf_inline_formulas.py", "ztf_style_guards.py"]) {
+  for (const helperName of ["ztf_inline_formulas.py", "ztf_style_guards.py", "ztf_links.py"]) {
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
       entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "write-runner" &&
@@ -281,6 +282,34 @@ async function reportsRequestCountsInProgressAndResult() {
   assert.equal(result.repairRequestCount, 1);
   assert.equal(result.fragmentItemCount, 2);
   assert.equal(result.logPath, "C:\\Zotero\\babeldoc-for-zotero\\logs\\job.jsonl");
+  await result.cleanup();
+}
+
+async function exposesLinkRestorationStatsAndMappingPath() {
+  const harness = makeHarness({
+    links: {
+      source: 7,
+      restored: 6,
+      unresolved: 1,
+      unsupported: 0,
+      mapping_path: "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+    },
+  });
+  const result = await harness.runner.translate(harness.item, {});
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.linkStats)),
+    {
+      source: 7,
+      restored: 6,
+      unresolved: 1,
+      unsupported: 0,
+      mappingPath: "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+    },
+  );
+  assert.equal(
+    result.linkMappingPath,
+    "C:\\Zotero\\babeldoc-for-zotero\\paper.links.json",
+  );
   await result.cleanup();
 }
 
@@ -405,6 +434,7 @@ async function abortKillsTheChildAndCleansUp() {
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
   await reportsRequestCountsInProgressAndResult();
+  await exposesLinkRestorationStatsAndMappingPath();
   await rejectsQueryURLsBeforeStartingBabelDOC();
   await errorsAreUsefulAndKeyFree();
   await parsesAndRedactsPartialFailureWarning();

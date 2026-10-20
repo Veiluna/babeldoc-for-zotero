@@ -137,6 +137,175 @@ def _style_guards() -> Any:
     return _STYLE_GUARDS_MODULE
 
 
+_LINKS_MODULE: Any = None
+
+
+def _links_helper() -> Any:
+    """Load the sibling helper module that restores PDF links after layout."""
+    global _LINKS_MODULE
+    if _LINKS_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_links",
+            os.path.join(os.path.dirname(__file__), "ztf_links.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_links.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _LINKS_MODULE = module
+    return _LINKS_MODULE
+
+
+def _argument_value(arguments: list[str], name: str) -> str:
+    """Read a single-valued BabelDOC CLI option."""
+    for index, argument in enumerate(arguments):
+        if argument == name and index + 1 < len(arguments):
+            return arguments[index + 1]
+        if argument.startswith(name + "="):
+            return argument[len(name) + 1:]
+    return ""
+
+
+def _box_tuple(box: Any) -> list[float] | None:
+    if box is None:
+        return None
+    try:
+        values = [float(box.x), float(box.y), float(box.x2), float(box.y2)]
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not all(math.isfinite(value) for value in values):
+        return None
+    if values[2] <= values[0] or values[3] <= values[1]:
+        return None
+    return [round(value, 3) for value in values]
+
+
+def _il_page_geometry(il_page: Any) -> tuple[float, float, float]:
+    """MediaBox height and CropBox origin for a BabelDOC IL page."""
+    try:
+        media = il_page.mediabox.box
+        crop = il_page.cropbox.box
+        return float(crop.x), float(crop.y), float(media.y2)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0, 0.0, 0.0
+
+
+def _il_box_to_text_box(box: Any, il_page: Any) -> list[float] | None:
+    """BabelDOC IL boxes use PDF user space (bottom-left origin).
+
+    Link rectangles, text extraction and paragraph output boxes used by this
+    helper are CropBox-relative top-left coordinates.  Conversion is required;
+    page rotation does not affect IL boxes because those are unrotated.
+    """
+    values = _box_tuple(box)
+    if values is None:
+        return None
+    crop_x, crop_y, media_y2 = _il_page_geometry(il_page)
+    if media_y2 <= 0:
+        return values
+    return [
+        round(values[0] - crop_x, 3),
+        round(media_y2 - values[3] - crop_y, 3),
+        round(values[2] - crop_x, 3),
+        round(media_y2 - values[1] - crop_y, 3),
+    ]
+
+
+def _paragraph_text_bbox(paragraph: Any, il_page: Any = None) -> list[float] | None:
+    """Union of a paragraph's laid-out line/character boxes after typesetting."""
+    boxes: list[Any] = []
+    for composition in getattr(paragraph, "pdf_paragraph_composition", ()) or ():
+        for attribute in ("pdf_line", "pdf_same_style_characters", "pdf_formula",
+                          "pdf_character"):
+            owner = getattr(composition, attribute, None)
+            if owner is None:
+                continue
+            box = getattr(owner, "box", None)
+            if box is not None:
+                boxes.append(box)
+            for character in getattr(owner, "pdf_character", ()) or ():
+                character_box = getattr(character, "box", None)
+                if character_box is not None:
+                    boxes.append(character_box)
+    if not boxes:
+        return _il_box_to_text_box(getattr(paragraph, "box", None), il_page)
+    union = None
+    for box in boxes:
+        values = _il_box_to_text_box(box, il_page)
+        if values is None:
+            continue
+        if union is None:
+            union = list(values)
+        else:
+            union = [
+                min(union[0], values[0]), min(union[1], values[1]),
+                max(union[2], values[2]), max(union[3], values[3]),
+            ]
+    return union
+
+
+def _paragraph_formula_boxes(paragraph: Any, il_page: Any) -> list[list[float]]:
+    """Formula boxes are the rendered citation glyphs when text extraction fails."""
+    boxes: list[list[float]] = []
+    for composition in getattr(paragraph, "pdf_paragraph_composition", ()) or ():
+        formula = getattr(composition, "pdf_formula", None)
+        if formula is None:
+            continue
+        box = _il_box_to_text_box(getattr(formula, "box", None), il_page)
+        if box is not None:
+            boxes.append(box)
+    return boxes
+
+
+def _paragraph_layout_snapshot(
+    document: Any, source_text_by_id: dict[int, str] | None = None
+) -> dict[int, dict[str, Any]]:
+    """Record source paragraph boxes before typesetting mutates them in place."""
+    snapshots: dict[int, dict[str, Any]] = {}
+    source_text_by_id = source_text_by_id or {}
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            if getattr(paragraph, "xobj_id", None) not in (None, 0):
+                continue
+            box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if box is None:
+                continue
+            snapshots[id(paragraph)] = {
+                "id": id(paragraph),
+                "source_page": page_index,
+                "source_box": box,
+                "source_text": _text_preview(
+                    source_text_by_id.get(id(paragraph))
+                    or getattr(paragraph, "unicode", "")
+                ),
+            }
+    return snapshots
+
+
+def _link_paragraph_map(
+    document: Any, snapshots: dict[int, dict[str, Any]], page_offset: int = 0
+) -> dict[str, Any]:
+    """Combine source boxes with final translated paragraph geometry."""
+    paragraphs = []
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            snapshot = snapshots.get(id(paragraph))
+            if snapshot is None:
+                continue
+            output_box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if output_box is None:
+                continue
+            paragraphs.append({
+                **snapshot,
+                "source_page": snapshot["source_page"] + page_offset,
+                "output_page": page_index + page_offset,
+                "output_box": output_box,
+                "output_text_bbox": _paragraph_text_bbox(paragraph, page),
+                "output_formula_boxes": _paragraph_formula_boxes(paragraph, page),
+            })
+    return {"version": 1, "paragraphs": paragraphs}
+
+
 class RequestCapExceeded(RuntimeError):
     """Raised before issuing a completion request beyond the configured cap."""
 
@@ -3350,6 +3519,33 @@ def _install_min_request_patches(
 
     ILTranslator.post_translate_paragraph = post_translate_paragraph_with_log
 
+    # Keep the pre-translation paragraph text for the link mapping and for
+    # diagnostics.  ILTranslatorLLMOnly has its own translate method, so both
+    # classes are wrapped; a second call never overwrites the source text.
+    source_text_by_id = request_state.setdefault("source_paragraph_text", {})
+
+    def snapshot_paragraph_source_text(document: Any) -> None:
+        for page in getattr(document, "page", ()) or ():
+            for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+                text = getattr(paragraph, "unicode", None)
+                if text and id(paragraph) not in source_text_by_id:
+                    source_text_by_id[id(paragraph)] = str(text)
+
+    for translator_class in (ILTranslator, llm_module.ILTranslatorLLMOnly):
+        original_translate = getattr(translator_class, "translate", None)
+        if original_translate is None:
+            continue
+
+        @functools.wraps(original_translate)
+        def translate_with_source_snapshot(
+            instance: Any, document: Any, *args: Any,
+            _original: Any = original_translate, **kwargs: Any
+        ) -> Any:
+            snapshot_paragraph_source_text(document)
+            return _original(instance, document, *args, **kwargs)
+
+        translator_class.translate = translate_with_source_snapshot
+
     original_generate_fallback_line_layouts = (
         LayoutParser.generate_fallback_line_layout_for_page
     )
@@ -3735,7 +3931,23 @@ def _install_min_request_patches(
     def typesetting_document_with_scale_log(
         instance: Any, document: Any
     ) -> Any:
+        # Capture the source layout before typesetting mutates paragraph boxes
+        # in place; the link restorer needs both source and translated boxes.
+        link_snapshots = _paragraph_layout_snapshot(
+            document, request_state.get("source_paragraph_text")
+        )
         result = typesetting_document_two_phase(instance, document)
+        page_offset = int(request_state.get("link_page_offset", 0) or 0)
+        link_map = _link_paragraph_map(document, link_snapshots, page_offset)
+        combined = request_state.setdefault(
+            "link_paragraph_map", {"version": 1, "paragraphs": []}
+        )
+        combined["paragraphs"].extend(link_map["paragraphs"])
+        request_state["link_page_offset"] = page_offset + len(
+            getattr(document, "page", ()) or ()
+        )
+        if page_offset:
+            request_state["link_paragraph_map_split"] = True
         by_page: dict[int, list[float]] = {}
         by_class: dict[float, list[float]] = {}
         for page_index, page in enumerate(getattr(document, "page", ()) or (), start=1):
@@ -5548,6 +5760,104 @@ def babeldoc_version_error() -> str | None:
     return None
 
 
+def _restore_links_after_layout(
+    state: dict[str, Any], request_state: dict[str, Any], api_key: str
+) -> dict[str, Any]:
+    """Restore source links in the finished monolingual PDF.
+
+    Called after BabelDOC has written the PDF, so the annotations are added to
+    the final file and reference the re-typeset text positions.
+    """
+    output_pdf = str(state.get("result") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    if not output_pdf or not source_pdf:
+        summary = {"source": 0, "restored": 0, "unresolved": 0,
+                   "unsupported": 0, "skipped": "missing_path"}
+        _write_job_log(
+            request_state,
+            {"event": "links_restore", "skipped": "missing_path"},
+            api_key,
+        )
+        return summary
+    try:
+        helper = _links_helper()
+        stats = helper.restore_links(
+            source_pdf,
+            output_pdf,
+            request_state.get("link_paragraph_map"),
+            output_pdf + ".links.json",
+        )
+    except Exception as error:
+        summary = {
+            "source": 0,
+            "restored": 0,
+            "unresolved": 0,
+            "unsupported": 0,
+            "error": log_safe_error(error, api_key),
+        }
+        _write_job_log(
+            request_state,
+            {"event": "links_restore_error", "error": summary["error"]},
+            api_key,
+        )
+        return summary
+
+    records = stats.pop("records", [])
+    stats.pop("_paragraphs", None)
+    stats["split_layout"] = bool(request_state.get("link_paragraph_map_split"))
+    _write_job_log(
+        request_state,
+        {
+            "event": "links_restore",
+            "source_links": stats.get("source", 0),
+            "restored": stats.get("restored", 0),
+            "unresolved": stats.get("unresolved", 0),
+            "unsupported": stats.get("unsupported", 0),
+            "by_kind": stats.get("by_kind", {}),
+            "mapping_path": stats.get("mapping_path", ""),
+            "split_layout": stats["split_layout"],
+        },
+        api_key,
+    )
+    for record in records:
+        if record.get("status") == "restored":
+            continue
+        _write_job_log(
+            request_state,
+            {
+                "event": "link_restore_failure",
+                "page": record.get("source_page", -1) + 1,
+                "kind": record.get("kind", ""),
+                "anchor": (record.get("anchor") or {}).get("text", ""),
+                "source_text": record.get("source_text", ""),
+                "status": record.get("status", ""),
+                "reason": record.get("reason", ""),
+                "destination": record.get("destination", {}),
+            },
+            api_key,
+        )
+    return stats
+
+
+def _link_warning_message(stats: dict[str, Any]) -> str:
+    if stats.get("error"):
+        return "译文链接恢复失败：" + str(stats["error"]) + "；已记录诊断信息。"
+    if stats.get("mapping_error"):
+        return "链接映射文件写入失败，双语复用信息不可用；已记录诊断信息。"
+    source = int(stats.get("source") or 0)
+    unresolved = int(stats.get("unresolved") or 0)
+    unsupported = int(stats.get("unsupported") or 0)
+    if not unresolved and not unsupported:
+        return ""
+    details = []
+    if unresolved:
+        details.append(f"{unresolved} 个未能在译文中定位")
+    if unsupported:
+        details.append(f"{unsupported} 个使用了不支持的目的地类型")
+    return ("共 %d 个原文链接中%s；已记录诊断信息，其余链接已恢复。"
+            % (source, "，".join(details)))
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -5927,6 +6237,8 @@ def main() -> int:
         )
         return exit_code or 1
 
+    link_stats = _restore_links_after_layout(state, request_state, api_key)
+    request_state["link_stats"] = link_stats
     if decision and decision["kind"] == "warning":
         _emit(
             "ZTF_WARNING ",
@@ -5938,6 +6250,21 @@ def main() -> int:
             },
             api_key,
         )
+    else:
+        link_message = _link_warning_message(link_stats)
+        if link_message:
+            _emit(
+                "ZTF_WARNING ",
+                {
+                    "message": link_message,
+                    "failed_paragraphs": 0,
+                    "links_unresolved": link_stats.get("unresolved", 0),
+                    "links_unsupported": link_stats.get("unsupported", 0),
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                },
+                api_key,
+            )
     _write_job_log(
         request_state,
         {
@@ -5951,6 +6278,11 @@ def main() -> int:
             "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
             "token_param": request_state.get("token_param"),
             "parameter_adaptations": request_state.get("parameter_adaptations", []),
+            "links": {
+                key: link_stats.get(key)
+                for key in ("source", "restored", "unresolved", "unsupported",
+                            "mapping_path", "error", "split_layout", "paragraphs")
+            } if link_stats else None,
         },
         api_key,
     )
@@ -5968,6 +6300,11 @@ def main() -> int:
             "log_path": job_log_path or None,
             "repair_request_count": request_state.get("repair_request_count", 0),
             "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+            "links": {
+                key: link_stats.get(key)
+                for key in ("source", "restored", "unresolved", "unsupported",
+                            "mapping_path", "error", "split_layout", "paragraphs")
+            } if link_stats else None,
         },
         api_key,
     )
