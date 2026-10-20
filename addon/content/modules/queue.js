@@ -487,6 +487,15 @@ var ZoteroTranslateFilesQueue = (function () {
         if (Number.isFinite(failedParagraphs) && failedParagraphs > 0) {
           completionText += "（有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文）";
         }
+        var warningTables = warning && Array.isArray(warning.tables) ? warning.tables : [];
+        if (warningTables.length) {
+          var tableLabels = warningTables.map(function (table) {
+            var label = String(table && table.table ? table.table : "未编号表");
+            var page = Number(table && table.page);
+            return Number.isFinite(page) ? label + "（第 " + Math.floor(page) + " 页）" : label;
+          });
+          completionText += "（" + tableLabels.join("，") + "未能可靠识别表头，已整表保留原文）";
+        }
         var totalRequests = requestCount == null ? NaN : Number(requestCount);
         if (Number.isFinite(totalRequests)) {
           completionText += "（共请求 " + Math.floor(totalRequests) + " 次）";

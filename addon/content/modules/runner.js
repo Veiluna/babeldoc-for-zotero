@@ -190,6 +190,7 @@ var ZoteroTranslateFilesRunner = (function () {
       var pythonHelpers = [
         ["ztf_inline_formulas.py", "公式辅助模块"],
         ["ztf_style_guards.py", "样式保护辅助模块"],
+        ["ztf_table_headers.py", "表头识别辅助模块"],
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
         var helperName = pythonHelpers[helperIndex][0];
@@ -341,11 +342,24 @@ var ZoteroTranslateFilesRunner = (function () {
           eventErrorKind = String(event.kind || "");
         } else if (marker === "ZTF_WARNING ") {
           var failedParagraphs = Number(event.failed_paragraphs);
+          var warningTables = [];
+          if (Array.isArray(event.tables)) {
+            event.tables.forEach(function (table) {
+              if (!table || typeof table !== "object") return;
+              var page = Number(table.page);
+              warningTables.push({
+                table: String(table.table || "未编号表"),
+                page: Number.isFinite(page) ? Math.max(1, Math.floor(page)) : null,
+                reason: String(table.reason || ""),
+              });
+            });
+          }
           warning = {
             failed_paragraphs: Number.isFinite(failedParagraphs)
               ? Math.max(0, Math.floor(failedParagraphs))
               : 0,
             message: redact(event.message || "部分段落翻译失败。", apiKey),
+            tables: warningTables,
           };
         }
       }
