@@ -1439,8 +1439,12 @@ def _record_quality_failure(
     """Remember a structural failure; main() turns any of them into no result."""
     location = _paragraph_location(request_state, paragraph)
     key: Any = id(paragraph) if paragraph is not None else f"unbound:{location}:{reason}"
+    positions = request_state.get("paragraph_positions") or {}
+    position = positions.get(id(paragraph)) if paragraph is not None else None
     entry = {
         "location": location,
+        "page": position[0] + 1 if position else None,
+        "paragraph": position[1] + 1 if position else None,
         "layout_label": _paragraph_layout_label(paragraph) if paragraph is not None else "",
         "reason": reason,
         "checks": checks if isinstance(checks, dict) else {},
@@ -5049,10 +5053,15 @@ def _install_min_request_patches(
                 if repair_structural_by_id.get(repair_id) or _is_structural_quality_failure(
                     quality.get("checks")
                 ):
+                    # The repair pass already ran; do not tell the user it is
+                    # about to enter that same pass again.
+                    failure_reason = str(record["repair_reason"]).replace(
+                        "，已进入合并补译。", "。"
+                    )
                     _record_quality_failure(
                         request_state,
                         record.get("paragraph"),
-                        record["repair_reason"],
+                        failure_reason,
                         quality.get("checks", {}),
                         api_key,
                         phase="repair",
@@ -5810,16 +5819,26 @@ def main() -> int:
             + (f"（{details}）" if details else "")
             + "。"
         )
+        failure_details = [
+            {
+                "page": failure.get("page"),
+                "paragraph": failure.get("paragraph"),
+                "reason": _bounded_log_reason(
+                    str(failure.get("reason", "")), api_key
+                ),
+            }
+            for failure in quality_failures
+        ]
         _write_job_log(
             request_state,
             {
                 "event": "job_finished",
                 "outcome": "failed",
-                "kind": "translation_quality",
+                "kind": "translation_failed",
                 "requests": request_budget.requests,
                 "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
                 "repair_request_count": request_state.get("repair_request_count", 0),
-                "quality_failures": quality_failures,
+                "failures": failure_details,
             },
             api_key,
         )
@@ -5827,8 +5846,9 @@ def main() -> int:
             "ZTF_ERROR ",
             {
                 "message": with_translation_counts(message),
-                "kind": "translation_quality",
+                "kind": "translation_failed",
                 "failed_paragraphs": len(quality_failures),
+                "failures": failure_details,
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
                 "log_path": job_log_path or None,

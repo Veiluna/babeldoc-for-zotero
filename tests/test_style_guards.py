@@ -52,11 +52,14 @@ def test_citation_text_covers_numbers_references_and_markers() -> None:
     for text in ("local styles", "restoration", "This paper studies", "HTTP"):
         assert not guards.is_citation_text(text), text
 
-    # Only numbers and bracketed bibliography indices are forced verbatim;
-    # "Fig. 6" may become "图 6" while staying inside its link-coloured span.
-    assert guards.is_protected_span("6")
-    assert guards.is_protected_span("[40]")
-    assert not guards.is_protected_span("Fig. 6")
+    # Only link-coloured numeric spans are forced verbatim; black numbers
+    # (table cells, list indices) stay translatable, and "Fig. 6" may become
+    # "图 6" while staying inside its link-coloured span.
+    blue = "0 0 1 RG 0 0 1 rg"
+    assert guards.is_protected_span("6", blue)
+    assert guards.is_protected_span("[40]", blue)
+    assert not guards.is_protected_span("6", "0 g 0 G")
+    assert not guards.is_protected_span("Fig. 6", blue)
     assert guards.is_preserved_span("Fig. 6", "0 0 1 RG 0 0 1 rg")
     assert not guards.is_preserved_span("Fig. 6", "0 g 0 G")
 

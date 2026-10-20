@@ -102,17 +102,20 @@ def is_citation_text(text: Any) -> bool:
 
 
 def is_protected_span(text: Any, instruction: str = "") -> bool:
-    """A span whose exact text must stay bound to its style.
+    """A link-coloured numeric span whose exact text must stay bound to it.
 
-    Exact matching is limited to numeric/bracketed citation text: a link span
-    such as "Fig. 6" may legitimately be translated to "图 6", so it is kept in
-    the simplified input (when link-coloured) but not forced to be verbatim.
-    That still catches the reported failure, where a blue "6" span was moved
-    around ordinary translated prose.
+    Ordinary black numbers (table cells, list indices, page numbers) are not
+    citations and must stay translatable; only a blue/number span is forced to
+    keep its exact source text. A link span such as "Fig. 6" may legitimately
+    become "图 6", so it is preserved during simplification but not forced
+    verbatim.
     """
-    del instruction  # Colour alone is not enough to require an exact text match.
     compact = _compact(text)
-    return bool(compact) and bool(_NUMBER_RE.fullmatch(compact))
+    return (
+        bool(compact)
+        and is_link_style(instruction)
+        and bool(_NUMBER_RE.fullmatch(compact))
+    )
 
 
 def is_preserved_span(text: Any, instruction: str = "") -> bool:
