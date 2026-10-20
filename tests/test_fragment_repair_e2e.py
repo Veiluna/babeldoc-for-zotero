@@ -292,7 +292,13 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         self.assertEqual(len(repaired), 2, repaired)
         self.assertTrue(all(item.get("outcome") == "repaired" for item in repaired))
         self.assertTrue(text_blocks)
-        self.assertNotIn("ZTF_WARNING ", completed.stdout)
+        # #18 允许“不确定表格，整表保留”警告；它不得代表段落失败。
+        for line in completed.stdout.splitlines():
+            if not line.startswith("ZTF_WARNING "):
+                continue
+            warning = json.loads(line[len("ZTF_WARNING "):])
+            self.assertEqual(warning.get("failed_paragraphs"), 0, warning)
+            self.assertIn("tables", warning, warning)
 
     def test_untranslated_prose_fragment_is_not_a_protected_name(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
