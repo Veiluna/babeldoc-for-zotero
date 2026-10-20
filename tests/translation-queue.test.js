@@ -30,7 +30,15 @@ function makeHarness(options = {}) {
   const logs = [];
   const alerts = [];
   const scheduledCallbacks = [];
+  const timers = new Map();
+  let timerID = 0;
+  let now = 0;
   const mainWindow = { name: "most-recent-zotero-window" };
+  const progressWindowSet = { add() {} };
+  if (options.formatValue) {
+    mainWindow.document = { l10n: { formatValue: options.formatValue } };
+    mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
+  }
   const items = new Map();
   const settings = options.settings || {
     baseURL: "https://example.test/v1",
@@ -48,9 +56,13 @@ function makeHarness(options = {}) {
       },
     },
     setTimeout(callback, delay) {
-      scheduledCallbacks.push({ callback, delay });
-      return scheduledCallbacks.length;
+      const id = ++timerID;
+      if (delay === 0) scheduledCallbacks.push({ callback, delay });
+      else timers.set(id, { callback, at: now + delay });
+      return id;
     },
+    clearTimeout: id => timers.delete(id),
+    Date: class extends Date { static now() { return now; } },
     Zotero: {
       Prefs: {
         get(name) {
@@ -60,13 +72,41 @@ function makeHarness(options = {}) {
       },
       Items: { get: id => items.get(id) },
       getMainWindow: () => mainWindow,
+      ProgressWindowSet: progressWindowSet,
       ProgressWindow: function (settings = {}) {
         const notice = { descriptions: [], texts: [], shown: false };
+        const listeners = new Set();
+        notice.domWindow = {
+          closed: false,
+          addEventListener(type, listener) {
+            assert.equal(type, "unload");
+            listeners.add(listener);
+          },
+          removeEventListener(type, listener) {
+            assert.equal(type, "unload");
+            listeners.delete(listener);
+          },
+          close() {
+            this.closed = true;
+            notice.closed = true;
+            for (const listener of [...listeners]) listener({ type: "unload", target: this });
+          },
+          get unloadListenerCount() { return listeners.size; },
+        };
         if (settings.closeOnClick === false) progressWindows.push(notice);
         else notices.push(notice);
         this.changeHeadline = () => {};
         this.addDescription = value => notice.descriptions.push(value);
-        this.show = () => { notice.shown = true; };
+        this.show = () => {
+          notice.shown = true;
+          progressWindowSet.add(notice.domWindow, this);
+          if (options.failProgressShow && settings.closeOnClick === false) throw new Error("show failed");
+        };
+        this.close = () => {
+          notice.publicCloseCalls = (notice.publicCloseCalls || 0) + 1;
+          notice.domWindow.close();
+        };
+        notice.close = () => this.close();
         this.startCloseTimer = (...args) => { notice.closeTimerArgs = args; };
         this.ItemProgress = function (...args) {
           notice.itemProgressArgs = args;
@@ -109,6 +149,21 @@ function makeHarness(options = {}) {
     settings,
     alerts,
     mainWindow,
+    progressWindowSet,
+    get activeTimers() { return timers.size; },
+    async advanceTime(milliseconds) {
+      const target = now + milliseconds;
+      while (true) {
+        const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next || next[1].at > target) break;
+        now = next[1].at;
+        timers.delete(next[0]);
+        next[1].callback();
+        await settleLocalization();
+      }
+      now = target;
+      await settleLocalization();
+    },
     flushAlerts() {
       while (scheduledCallbacks.length) {
         const scheduled = scheduledCallbacks.shift();
@@ -117,6 +172,255 @@ function makeHarness(options = {}) {
       }
     },
   };
+}
+
+async function settleLocalization() {
+  for (let i = 0; i < 8; i++) await Promise.resolve();
+}
+
+async function nativePopupUnloadStopsTimersAndInvalidatesLateLocalization() {
+  const finish = deferred();
+  const lateLabels = [];
+  let reportProgress;
+  const harness = makeHarness({
+    formatValue() {
+      const label = deferred();
+      lateLabels.push(label);
+      return label.promise;
+    },
+    runner: { translate(_item, { onProgress }) { reportProgress = onProgress; return finish.promise; } },
+  });
+  const originalAdd = harness.progressWindowSet.add;
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  assert.equal(harness.progressWindowSet.add, originalAdd, "restore registration after show");
+  await harness.advanceTime(1000);
+  assert.equal(harness.activeTimers, 1);
+  const window = harness.progressWindows[0];
+  const textsBeforeClose = window.texts.length;
+  // Close the native DOM popup directly: never forward through ProgressWindow.close().
+  window.domWindow.close();
+  assert.equal(window.publicCloseCalls || 0, 0);
+  assert.equal(harness.activeTimers, 0, "native popup unload must immediately release its timer");
+  assert.equal(window.domWindow.unloadListenerCount, 0, "remove the owned unload listener");
+  lateLabels.forEach(label => label.resolve("LATE AFTER NATIVE CLOSE"));
+  await settleLocalization();
+  reportProgress({ stage: "Generate PDF", overall: 80 });
+  await harness.advanceTime(3000);
+  assert.equal(harness.activeTimers, 0, "native close must not allow the timer to reschedule");
+  assert.equal(window.texts.length, textsBeforeClose, "late labels and progress must not touch a destroyed popup");
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+  assert.equal(harness.activeTimers, 0);
+  assert.equal(harness.imports.length, 1, "closing UI must not cancel translation or import");
+}
+
+async function failedShowRestoresRegistrationAndRemovesUnloadListener() {
+  const harness = makeHarness({ failProgressShow: true });
+  const originalAdd = harness.progressWindowSet.add;
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await harness.queue.onIdle();
+  assert.equal(harness.progressWindowSet.add, originalAdd, "restore registration even when show throws");
+  assert.equal(harness.progressWindows[0].domWindow.unloadListenerCount, 0);
+  assert.equal(harness.activeTimers, 0);
+  assert.equal(harness.imports.length, 1, "a progress UI failure must not stop translation");
+}
+
+async function silentStagesKeepShowingRealElapsedTime() {
+  const finish = deferred();
+  let reportProgress;
+  const harness = makeHarness({ runner: {
+    translate(_item, { onProgress }) {
+      reportProgress = onProgress;
+      onProgress({ overall: 39, stage: "Translate Paragraphs", requests: 1, planned: 1 });
+      return finish.promise;
+    },
+  } });
+  const originalHook = harness.queue.onProgress;
+  let progressEvents = 0;
+  harness.queue.onProgress = (job, progress) => {
+    progressEvents++;
+    originalHook(job, progress);
+  };
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  const window = harness.progressWindows[0];
+  const before = window.texts.length;
+  await harness.advanceTime(3000);
+  assert.ok(window.texts.length >= before + 3, "silent requests must refresh text every second");
+  for (const elapsed of ["0:01", "0:02", "0:03"]) {
+    assert.ok(window.texts.some(text => text.includes(elapsed)), "show real elapsed time " + elapsed);
+  }
+  assert.equal(window.progress, 39, "the timer must not advance real percentage");
+  assert.match(window.text, /Translate Paragraphs · 39% · 请求 1\/1/);
+  assert.equal(progressEvents, 1, "UI ticks must not fabricate public progress events");
+
+  reportProgress({ overall: 40, stage: "Translate Paragraphs", requests: 2, planned: 3 });
+  harness.queue.enqueue([1]);
+  await harness.advanceTime(1000);
+  assert.match(window.text, /0:04/, "same-stage progress and queue updates must retain elapsed time");
+  assert.match(window.text, /40% · 请求 2\/3/);
+  await harness.advanceTime(60000);
+  assert.match(window.text, /1:04/);
+  assert.equal(window.progress, 40, "a long wait must not invent progress or a timeout failure");
+  assert.equal(harness.failures.length, 0);
+  reportProgress({ overall: 80, stage: "Generate PDF", requests: 2, planned: 3 });
+  await settleLocalization();
+  assert.match(window.text, /0:00/, "a new stage resets elapsed time");
+  await harness.advanceTime(1000);
+  assert.match(window.text, /Generate PDF · 80%/);
+  assert.match(window.text, /0:01/);
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+  assert.equal(harness.activeTimers, 0);
+}
+
+async function stageTimersStayWithTheirJobAndStopOnTerminalPaths() {
+  for (const outcome of ["success", "failure", "cancelAll", "shutdown", "close"]) {
+    const first = deferred();
+    const second = deferred();
+    const secondStarted = deferred();
+    const harness = makeHarness({ runner: {
+      translate(item, { onProgress }) {
+        onProgress({ overall: 39, stage: "Translate Paragraphs", requests: 1, planned: 1 });
+        if (item.id === 1) return first.promise;
+        secondStarted.resolve();
+        return second.promise;
+      },
+    } });
+    harness.items.set(1, { id: 1 });
+    harness.items.set(2, { id: 2 });
+    const failureTimerCounts = [];
+    const onJobFailed = harness.queue.onJobFailed;
+    harness.queue.onJobFailed = (job, error) => {
+      failureTimerCounts.push(harness.activeTimers);
+      onJobFailed(job, error);
+    };
+    harness.queue.enqueue([1, 2]);
+    await harness.advanceTime(2000);
+    const firstWindow = harness.progressWindows[0];
+    if (outcome === "cancelAll" || outcome === "shutdown") {
+      harness.queue[outcome]();
+      assert.equal(harness.activeTimers, 0, outcome + " clears immediately even before runner settles");
+    } else if (outcome === "close") {
+      firstWindow.close();
+      assert.equal(harness.activeTimers, 0, "destroying the progress window clears its timer");
+    }
+    if (outcome === "failure") first.reject(new Error("provider failed"));
+    else first.resolve("first.pdf");
+    if (outcome === "cancelAll" || outcome === "shutdown") {
+      await harness.queue.onIdle();
+      assert.equal(harness.progressWindows.length, 1);
+    } else {
+      await secondStarted.promise;
+      await settleLocalization();
+      assert.equal(harness.activeTimers, 1, "only the next job owns a timer after " + outcome);
+      assert.match(harness.progressWindows[1].text, /0:00/, "same stage in the next job starts fresh");
+      const firstTexts = firstWindow.texts.length;
+      await harness.advanceTime(1000);
+      assert.equal(firstWindow.texts.length, firstTexts, "old timer must not touch its completed window");
+      assert.match(harness.progressWindows[1].text, /0:01/);
+      second.resolve("second.pdf");
+      await harness.queue.onIdle();
+    }
+    assert.equal(harness.activeTimers, 0, outcome + " must release timers");
+    assert.ok(harness.progressWindows.every(window => window.domWindow.unloadListenerCount === 0),
+      outcome + " must remove popup unload listeners");
+    assert.deepEqual(failureTimerCounts, outcome === "failure" ? [0] : [],
+      "stop before notifying the failure hook");
+    const counts = harness.progressWindows.map(window => window.texts.length);
+    await harness.advanceTime(5000);
+    assert.deepEqual(harness.progressWindows.map(window => window.texts.length), counts);
+  }
+}
+
+async function elapsedLocalizationCannotOverwriteNewerOrFinishedProgress() {
+  const pendingLabels = [];
+  const finish = deferred();
+  const nextFinish = deferred();
+  const nextStarted = deferred();
+  let reportProgress;
+  const harness = makeHarness({
+    formatValue(id, args) {
+      assert.equal(id, "babeldoc-for-zotero-progress-stage-elapsed");
+      const label = deferred();
+      pendingLabels.push({ ...label, args });
+      return label.promise;
+    },
+    runner: { translate(item, { onProgress }) {
+      if (item.id === 2) { nextStarted.resolve(); return nextFinish.promise; }
+      reportProgress = onProgress;
+      return finish.promise;
+    } },
+  });
+  harness.items.set(1, { id: 1 });
+  harness.items.set(2, { id: 2 });
+  harness.queue.enqueue([1, 2]);
+  await harness.advanceTime(1000);
+  const oldLabels = pendingLabels.splice(0);
+  reportProgress({ stage: "Generate PDF", overall: 80 });
+  const current = pendingLabels.pop();
+  assert.equal(current.args.elapsed, "0:00");
+  current.resolve("本阶段已用时 0:00");
+  await settleLocalization();
+  const window = harness.progressWindows[0];
+  assert.match(window.text, /Generate PDF · 80%.*本阶段已用时 0:00/);
+  oldLabels.forEach(label => label.resolve("STALE"));
+  await settleLocalization();
+  assert.doesNotMatch(window.text, /STALE/);
+  await harness.advanceTime(1000);
+  const lateLabels = pendingLabels.splice(0);
+  finish.resolve("translated.pdf");
+  await nextStarted.promise;
+  await settleLocalization();
+  const completedText = window.text;
+  const nextWindow = harness.progressWindows[1];
+  const nextText = nextWindow.text;
+  lateLabels.forEach(label => label.resolve("LATE"));
+  await settleLocalization();
+  assert.equal(window.text, completedText, "late localization must not replace completion");
+  assert.equal(nextWindow.text, nextText, "old-job localization must not write to the next window");
+  nextFinish.resolve("next.pdf");
+  await harness.queue.onIdle();
+  pendingLabels.forEach(label => label.resolve("AFTER COMPLETION"));
+  await settleLocalization();
+  assert.match(nextWindow.text, /^已完成/);
+  assert.equal(harness.activeTimers, 0);
+}
+
+async function timersStopBeforeAsyncResultCleanupCompletes() {
+  const cleanupStarted = deferred();
+  const cleanupFinished = deferred();
+  const harness = makeHarness({ runner: { translate: async () => ({
+    outputPath: "translated.pdf",
+    cleanup() { cleanupStarted.resolve(); return cleanupFinished.promise; },
+  }) } });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await cleanupStarted.promise;
+  assert.equal(harness.activeTimers, 0, "completed translation must stop ticking before cleanup finishes");
+  const count = harness.progressWindows[0].texts.length;
+  await harness.advanceTime(3000);
+  assert.equal(harness.progressWindows[0].texts.length, count);
+  cleanupFinished.resolve();
+  await harness.queue.onIdle();
+}
+
+async function localizationErrorsFallBackWithoutStoppingTheQueue() {
+  for (const formatValue of [() => { throw new Error("private diagnostic"); },
+    () => Promise.reject(new Error("private diagnostic")), () => ""]) {
+    const finish = deferred();
+    const harness = makeHarness({ formatValue, runner: { translate: () => finish.promise } });
+    harness.items.set(1, { id: 1 });
+    harness.queue.enqueue([1]);
+    await harness.advanceTime(1000);
+    assert.match(harness.progressWindows[0].text, /Stage elapsed: 0:01/);
+    assert.ok(!harness.logs.join("\n").includes("private diagnostic"));
+    finish.resolve("translated.pdf");
+    await harness.queue.onIdle();
+    assert.equal(harness.activeTimers, 0);
+  }
 }
 
 async function fifoDedupeAndContinueAfterFailure() {
@@ -609,6 +913,13 @@ async function maintenanceLockRefusesActiveWorkAndPausesNewJobs() {
 }
 
 (async () => {
+  await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
+  await failedShowRestoresRegistrationAndRemovesUnloadListener();
+  await silentStagesKeepShowingRealElapsedTime();
+  await stageTimersStayWithTheirJobAndStopOnTerminalPaths();
+  await elapsedLocalizationCannotOverwriteNewerOrFinishedProgress();
+  await localizationErrorsFallBackWithoutStoppingTheQueue();
+  await timersStopBeforeAsyncResultCleanupCompletes();
   await fifoDedupeAndContinueAfterFailure();
   await validatesSettingsBeforeStarting();
   await rechecksTranslatablePDFBeforeRunnerStarts();

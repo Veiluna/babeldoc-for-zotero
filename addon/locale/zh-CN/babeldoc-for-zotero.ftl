@@ -13,6 +13,7 @@ babeldoc-for-zotero-pref-max-requests = 单篇最多请求次数
 babeldoc-for-zotero-pref-repair-failed = 失败段落合并补译
 babeldoc-for-zotero-pref-translate-references = 翻译参考文献
 babeldoc-for-zotero-log-path = 诊断日志：{ $path }
+babeldoc-for-zotero-progress-stage-elapsed = 本阶段已用时 { $elapsed }
 babeldoc-for-zotero-pref-test = 测试连接
 babeldoc-for-zotero-pref-download-source = 下载源
 babeldoc-for-zotero-pref-source-china =

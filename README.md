@@ -1,6 +1,6 @@
 # BabelDOC for Zotero
 
-当前版本：**0.4.0**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机自动安装的 BabelDOC 环境和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.4.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机自动安装的 BabelDOC 环境和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 
@@ -31,9 +31,9 @@ Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translat
 powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 ```
 
-脚本会把插件打包到 `build\babeldoc-for-zotero-<版本>.xpi`。也可以直接使用已构建的 `.xpi` 文件。
+脚本会把插件打包到 `build\babeldoc-for-zotero-<版本>.xpi`。不需要自行打包时，可以在 [GitHub Releases](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest) 下载已发布的 `.xpi` 文件。
 
-打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。清单中的自动更新地址为 `https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json`。由于此 GitHub 仓库目前是私有仓库，Zotero 在仓库或发布资源公开前无法读取更新清单，自动更新检查会静默失败；这不影响从本地 XPI 安装和使用。
+打包时也会根据 `addon/manifest.json` 生成 `build/updates.json`。发布自动更新时，将该文件作为 `release` 版本的 `updates.json` 资源发布，并将对应版本的 XPI 发布到 `v<版本>` 标签下。仓库和发布资源已公开，Zotero 可通过 `https://github.com/Veiluna/babeldoc-for-zotero/releases/download/release/updates.json` 检查更新。发布新版本时应先上传 XPI，再更新自动更新清单。
 
 ### 2. 在 Zotero 安装插件
 
@@ -117,6 +117,7 @@ python tests/test_min_requests.py
 
 `tests/test_min_requests.py` 文件头说明了如何启动本地 mock OpenAI 服务，并用已安装的 BabelDOC 环境对一页 PDF 做端到端检查。
 `python tests/test_fragment_repair_e2e.py` 会使用 `ztest/samples/liu2022/original.pdf` 和真实 runner 验证坏片段响应被整组补译；可用 `ZTF_FRAGMENT_REPAIR_PDF` 指定样本文件、用 `ZTF_BABELDOC_PYTHON` 指定 BabelDOC 环境的 Python。显式运行时缺少所需文件会报告路径错误，不会跳过。
+`python tests/test_pdf_unicode.py` 验证译本中的标准汉字可直接提取、搜索，并核对修复前后的页面渲染一致。
 
 ## 许可证与致谢
 
@@ -131,6 +132,17 @@ python tests/test_min_requests.py
 - 每个任务会在 Zotero 数据目录的 `babeldoc-for-zotero/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
 
 设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
+
+## 0.4.1 改进
+
+- 翻译进度窗口持续显示当前阶段的实际用时，长请求期间也能看到更新；切换阶段后重新计时。
+- 修正部分汉字复制为 CJK 兼容码位的问题，使标准汉字可在译本中正常搜索、复制，页面字形和位置保持不变。
+- 更新公开仓库的下载与自动更新说明，并同步插件和更新清单的版本号。
+
+## 0.4.0 改进
+
+- 插件装好后，Zotero 启动时自动下载并安装固定版本的翻译环境；无需手动安装 Python 或 Miniconda。
+- 设置页提供下载源选择和“安装 / 修复环境”，修复时完整重新安装翻译环境。
 
 ## 0.3.1 改进
 

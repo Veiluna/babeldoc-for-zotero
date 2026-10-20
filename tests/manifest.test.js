@@ -17,7 +17,7 @@ const manifest = JSON.parse(manifestBytes.toString("utf8"));
 assert.equal(manifest.manifest_version, 2);
 assert.equal(manifest.name, "BabelDOC for Zotero");
 assert.match(manifest.description, /Translate PDF attachments/);
-assert.equal(manifest.version, "0.4.0");
+assert.equal(manifest.version, "0.4.1");
 
 const zotero = manifest.applications && manifest.applications.zotero;
 assert.ok(zotero, "applications.zotero is required");
@@ -134,10 +134,10 @@ assert.notDeepEqual(
 );
 const updatesManifest = JSON.parse(updatesBytes.toString("utf8"));
 const release = updatesManifest.addons[zotero.id].updates[0];
-assert.equal(release.version, "0.3.1", "updates.json remains unchanged until the release metadata is published");
+assert.equal(release.version, manifest.version, "updates.json must match the packaged version");
 assert.equal(
   release.update_link,
-  "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.3.1/babeldoc-for-zotero-0.3.1.xpi"
+  "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.4.1/babeldoc-for-zotero-0.4.1.xpi"
 );
 assert.equal(release.applications.zotero.strict_min_version, zotero.strict_min_version);
 assert.equal(release.applications.zotero.strict_max_version, zotero.strict_max_version);
