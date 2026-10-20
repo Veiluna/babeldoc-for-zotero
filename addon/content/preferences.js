@@ -277,6 +277,20 @@ var ZoteroTranslateFilesPreferences = (function () {
     });
   }
 
+  function renderEnvironmentCheck(document, result) {
+    var target = document.getElementById(PANE_ID + "-check-result");
+    if (!target) return;
+    while (target.firstChild) target.removeChild(target.firstChild);
+    var lines = [];
+    (result && result.checks ? result.checks : []).forEach(function (item) {
+      lines.push((item.status === "pass" ? "通过" : "失败") + "：" + item.label + " — " + item.detail);
+    });
+    lines.push(result && result.ok
+      ? "环境检测通过。"
+      : "环境检测发现问题，请按提示修复。");
+    target.textContent = lines.join("\n");
+  }
+
   function initializePane(document, window) {
     var pane = document.getElementById(PANE_ID);
     if (!pane || pane.dataset.initialized === "true") return;
@@ -364,6 +378,38 @@ var ZoteroTranslateFilesPreferences = (function () {
         button.disabled = false;
       }
     });
+
+    var environmentCheckController = null;
+    var checkButton = document.getElementById(PANE_ID + "-check");
+    if (checkButton) {
+      checkButton.addEventListener("click", async function () {
+        if (environmentCheckController) {
+          environmentCheckController.abort();
+          return;
+        }
+        environmentCheckController = typeof AbortController === "function"
+          ? new AbortController()
+          : null;
+        setMessage(document, PANE_ID + "-check-result", "babeldoc-for-zotero-pref-check-running");
+        try {
+          var result = await ZoteroTranslateFilesInstaller.checkEnvironment({
+            source: ZoteroTranslateFilesConfig.getDownloadSource(),
+            signal: environmentCheckController ? environmentCheckController.signal : null,
+          });
+          renderEnvironmentCheck(document, result);
+        } catch (error) {
+          var cancelled = environmentCheckController &&
+            environmentCheckController.signal.aborted;
+          var detail = ZoteroTranslateFilesConfig.redact(
+            error && error.message ? error.message : error
+          );
+          setPlainText(document, PANE_ID + "-check-result",
+            cancelled ? "环境检测已取消。" : "环境检测失败：" + detail);
+        } finally {
+          environmentCheckController = null;
+        }
+      });
+    }
 
     updateInstallStatus(document);
   }

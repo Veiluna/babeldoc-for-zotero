@@ -41,6 +41,11 @@ async function testConnection(
     "babeldoc-for-zotero-preferences": pane,
     "babeldoc-for-zotero-preferences-test": button,
     "babeldoc-for-zotero-preferences-install": installButton,
+    // The environment check button only needs a listener during pane init.
+    "babeldoc-for-zotero-preferences-check": {
+      id: "babeldoc-for-zotero-preferences-check",
+      addEventListener() {},
+    },
   };
   const document = {
     l10n: {

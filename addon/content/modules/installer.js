@@ -223,6 +223,106 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     }
   }
 
+  var environmentCheck = null;
+
+  var CHECK_PYTHON_SCRIPT = [
+    "import importlib.metadata, sys",
+    "from pathlib import Path",
+    "print('python=' + '.'.join(map(str, sys.version_info[:2])))",
+    "print('babeldoc=' + importlib.metadata.version('BabelDOC'))",
+    "print('bitstring=' + importlib.metadata.version('bitstring'))",
+    "fonts = Path.home() / '.cache' / 'babeldoc' / 'fonts'",
+    "print('fonts=' + str(len(list(fonts.glob('*.ttf'))) if fonts.is_dir() else 0))",
+    "models = Path.home() / '.cache' / 'babeldoc' / 'models'",
+    "print('models=' + str(len(list(models.glob('*.onnx'))) if models.is_dir() else 0))",
+  ].join("\n");
+
+  var CHECK_SMOKE_SCRIPT = [
+    "import pymupdf",
+    "doc = pymupdf.open()",
+    "page = doc.new_page(width=200, height=100)",
+    "page.insert_text((20, 50), 'environment check', fontsize=10)",
+    "assert 'environment check' in page.get_text()",
+    "print('smoke=ok')",
+  ].join("\n");
+
+  async function checkEnvironment(options) {
+    options = options || {};
+    if (environmentCheck) return environmentCheck;
+    var signal = options.signal;
+    environmentCheck = (async function () {
+      var checks = [];
+      function record(id, label, status, detail) {
+        checks.push({ id: id, label: label, status: status, detail: String(detail || "") });
+      }
+      function throwIfCancelled() {
+        if (signal && signal.aborted) throw new Error("环境检测已取消。");
+      }
+      var base = "";
+      try { base = baseDir(); } catch (error) { base = ""; }
+      var paths = base ? pathsFor(base) : null;
+      var installed = false;
+      throwIfCancelled();
+      if (paths && fileExists(paths.python)) {
+        try {
+          var recordJSON = JSON.parse(await IOUtils.readUTF8(paths.installJSON));
+          installed = recordJSON.uv === UV_VERSION &&
+            recordJSON.python === PYTHON_VERSION &&
+            recordJSON.babeldoc === BABELDOC_VERSION;
+          record("install", "安装记录", installed ? "pass" : "fail",
+                 installed ? "uv、Python、BabelDOC 版本与当前插件一致"
+                           : "安装记录版本与当前插件不一致；请点击“修复环境”");
+        } catch (error) {
+          record("install", "安装记录", "fail", "缺少或无法读取安装记录；请点击“修复环境”");
+        }
+      } else {
+        record("install", "翻译环境", "fail", "尚未安装；请点击“修复环境”");
+      }
+      if (installed && paths) {
+        var logState = { parts: [] };
+        var source = normalizeSource(options.source);
+        var probe = await probeChild(paths.python, ["-c", CHECK_PYTHON_SCRIPT], paths,
+                                     source, signal, logState);
+        throwIfCancelled();
+        var values = {};
+        String(probe.stdout || "").split(/\r?\n/).forEach(function (line) {
+          var index = line.indexOf("=");
+          if (index > 0) values[line.slice(0, index).trim()] = line.slice(index + 1).trim();
+        });
+        record("python", "Python", values.python === PYTHON_VERSION ? "pass" : "fail",
+               values.python ? "Python " + values.python : "无法运行翻译环境的 Python");
+        var babeldocOK = values.babeldoc === BABELDOC_VERSION;
+        record("babeldoc", "BabelDOC", babeldocOK ? "pass" : "fail",
+               values.babeldoc ? "BabelDOC " + values.babeldoc : "未安装 BabelDOC");
+        var bitstringMajor = parseInt(String(values.bitstring || "").split(".")[0], 10);
+        var bitstringOK = Number.isFinite(bitstringMajor) && bitstringMajor < 5;
+        record("bitstring", "依赖版本", bitstringOK ? "pass" : "fail",
+               values.bitstring ? "bitstring " + values.bitstring : "无法读取 bitstring 版本");
+        var fontCount = parseInt(values.fonts, 10);
+        record("fonts", "字体资源", fontCount > 0 ? "pass" : "fail",
+               fontCount > 0 ? fontCount + " 个字体文件"
+                             : "未找到字体资源；请点击“修复环境”重新安装");
+        var modelCount = parseInt(values.models, 10);
+        record("models", "模型资源", modelCount > 0 ? "pass" : "fail",
+               modelCount > 0 ? modelCount + " 个模型文件"
+                              : "未找到版面模型；请点击“修复环境”重新安装");
+        if (babeldocOK) {
+          var smoke = await probeChild(paths.python, ["-c", CHECK_SMOKE_SCRIPT], paths,
+                                       source, signal, logState);
+          throwIfCancelled();
+          record("smoke", "本机处理检查", smoke.exitCode === 0 ? "pass" : "fail",
+                 smoke.exitCode === 0 ? "PDF 生成与文字提取正常"
+                                      : "小型 PDF 处理检查失败");
+        }
+      }
+      var ok = checks.every(function (item) { return item.status === "pass"; });
+      return { ok: ok, checkedAt: new Date().toISOString(), checks: checks };
+    })().finally(function () {
+      environmentCheck = null;
+    });
+    return environmentCheck;
+  }
+
   function ensureDirectory(path) {
     return Zotero.File.createDirectoryIfMissingAsync(path);
   }
@@ -1058,6 +1158,7 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
     cancelInFlight: cancelInFlight,
     baseDir: baseDir,
     isInstalling: function () { return activeInstall; },
+    checkEnvironment: checkEnvironment,
     addStateListener: function (callback) {
       if (typeof callback !== "function") return function () {};
       stateObservers.push(callback);
@@ -1074,6 +1175,8 @@ var ZoteroTranslateFilesInstaller = installerPriorSingleton &&
       downloadURLs: downloadURLs,
       childEnvironment: childEnvironment,
       packageProbe: PACKAGE_PROBE,
+      checkPythonScript: CHECK_PYTHON_SCRIPT,
+      checkSmokeScript: CHECK_SMOKE_SCRIPT,
       buildStepPlan: buildStepPlan,
       indexURL: function (source) { return normalizeSource(source) === "china" ? TUNA_INDEX : ""; },
       shortError: shortError,
