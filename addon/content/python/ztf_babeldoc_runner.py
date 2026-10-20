@@ -19,6 +19,7 @@ import statistics
 import sys
 import threading
 import traceback
+import unicodedata
 from collections import Counter
 from difflib import SequenceMatcher
 from typing import Any
@@ -2852,6 +2853,130 @@ def _extract_json_array_prompt(text: str) -> tuple[str, list[dict[str, Any]]] | 
     return text[:start], items
 
 
+def _normalize_cjk_tounicode(data: bytes) -> bytes:
+    """Patch single-character destinations in the backend's CMap records.
+
+    Keep unrelated entries (including multi-character destinations) verbatim.
+    This deliberately handles bfchar, scalar ranges and array ranges,
+    rather than parsing arbitrary source-PDF CMaps.
+    """
+    def destination(value: bytes) -> bytes:
+        # MuPDF also emits five-digit scalar values for supplementary glyphs.
+        if len(value) == 5:
+            code = int(value, 16)
+            if 0x2F800 <= code <= 0x2FA1F:
+                return unicodedata.normalize("NFD", chr(code)).encode("utf-16-be").hex().encode()
+            return value
+        if len(value) % 4:
+            return value
+        raw = bytes.fromhex(value.decode("ascii"))
+        try:
+            char = raw.decode("utf-16-be")
+        except UnicodeDecodeError:
+            return value
+        if len(char) == 1 and (
+            0xF900 <= ord(char) <= 0xFAFF or 0x2F800 <= ord(char) <= 0x2FA1F
+        ):
+            return unicodedata.normalize("NFD", char).encode("utf-16-be").hex().encode()
+        return value
+
+    def block(match: re.Match[bytes]) -> bytes:
+        kind, body = match.group("kind", "body")
+        if kind == b"bfchar":
+            changed = re.sub(
+                rb"(?m)^(\s*<[0-9a-fA-F]+>\s*)<([0-9a-fA-F]+)>([ \t]*\r?$)",
+                lambda entry: entry[1] + b"<" + destination(entry[2]) + b">" + entry[3],
+                body,
+            )
+            return match[0].replace(body, changed, 1)
+
+        def ranges(entry: re.Match[bytes]) -> list[bytes]:
+            first, last, value, array = entry.group(1, 2, 3, 4)
+            if array is not None:
+                changed = re.sub(
+                    rb"<([0-9a-fA-F]+)>",
+                    lambda item: b"<" + destination(item[1]) + b">", array,
+                )
+                return [entry[0].replace(array, changed, 1)]
+            start, stop = int(first, 16), int(last, 16)
+            # Generated Identity-H fonts use two-byte CIDs. Leave other forms alone.
+            if len(first) != 4 or len(last) != 4 or (len(value) != 5 and len(value) % 4):
+                return [entry[0]]
+            base = int(value, 16)
+            lines = []
+            run = start
+            for cid in range(start, stop + 1):
+                original = f"{base + cid - start:0{len(value)}x}".encode()
+                normalized = destination(original)
+                if normalized.lower() == original.lower():
+                    continue
+                if run < cid:
+                    lines.append(f"<{run:04x}><{cid - 1:04x}><{base + run - start:0{len(value)}x}>")
+                lines.append(f"<{cid:04x}><{cid:04x}><{normalized.decode('ascii')}>")
+                run = cid + 1
+            if not lines:
+                return [entry[0]]
+            if run <= stop:
+                lines.append(f"<{run:04x}><{stop:04x}><{base + run - start:0{len(value)}x}>")
+            return [line.encode() for line in lines]
+
+        records = []
+        changed = False
+        cursor = 0
+        for entry in re.finditer(
+            rb"<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*"
+            rb"(?:<([0-9a-fA-F]+)>|(\[(?:\s*<[0-9a-fA-F]+>)*\s*\]))",
+            body,
+        ):
+            # Keep an unsupported block intact instead of dropping its contents.
+            if body[cursor:entry.start()].strip():
+                return match[0]
+            rewritten = ranges(entry)
+            records.extend(rewritten)
+            changed |= rewritten != [entry[0]]
+            cursor = entry.end()
+        if not changed or body[cursor:].strip():
+            return match[0]
+        return b"\n".join(
+            str(len(records[offset:offset + 100])).encode() + b" beginbfrange\n"
+            + b"\n".join(records[offset:offset + 100]) + b"\nendbfrange"
+            for offset in range(0, len(records), 100)
+        )
+
+    return re.sub(
+        rb"\d+ begin(?P<kind>bfchar|bfrange)\s*\n(?P<body>.*?)end(?P=kind)",
+        block, data, flags=re.S,
+    )
+
+
+def _install_pdf_unicode_patch() -> None:
+    from babeldoc.assets.embedding_assets_metadata import FONT_NAMES
+    from babeldoc.format.pdf import high_level
+
+    def reproduce_cmap(doc: Any) -> Any:
+        seen = set()
+        for page in doc:
+            for font in page.get_fonts():
+                name = re.sub(r"^[A-Z]{6}\+", "", font[3])
+                if font[1] != "ttf" or name not in FONT_NAMES or ".ttf" not in font[4]:
+                    continue
+                kind, value = doc.xref_get_key(font[0], "ToUnicode")
+                if kind != "xref":
+                    continue
+                xref = int(value.split()[0])
+                if xref in seen:
+                    continue
+                seen.add(xref)
+                original = doc.xref_stream(xref)
+                normalized = _normalize_cjk_tounicode(original)
+                if normalized != original:
+                    doc.update_stream(xref, normalized)
+        return doc
+
+    # fix_cmap already saves to a working file before replacing each output PDF.
+    high_level.reproduce_cmap = reproduce_cmap
+
+
 def _install_min_request_patches(
     policy: TranslationPolicy,
     request_budget: RequestBudget,
@@ -2870,6 +2995,7 @@ def _install_min_request_patches(
     from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
     from babeldoc.translator.translator import OpenAITranslator
 
+    _install_pdf_unicode_patch()
     original_openai = openai.OpenAI
 
     original_post_translate_paragraph = ILTranslator.post_translate_paragraph

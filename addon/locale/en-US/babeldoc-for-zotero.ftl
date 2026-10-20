@@ -13,6 +13,7 @@ babeldoc-for-zotero-pref-max-requests = Maximum requests per document
 babeldoc-for-zotero-pref-repair-failed = Retry failed paragraphs in one batch
 babeldoc-for-zotero-pref-translate-references = Translate references
 babeldoc-for-zotero-log-path = Diagnostic log: { $path }
+babeldoc-for-zotero-progress-stage-elapsed = Stage elapsed: { $elapsed }
 babeldoc-for-zotero-pref-test = Test connection
 babeldoc-for-zotero-pref-download-source = Download source
 babeldoc-for-zotero-pref-source-china =

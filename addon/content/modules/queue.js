@@ -327,20 +327,102 @@ var ZoteroTranslateFilesQueue = (function () {
   }
 
   function refreshProgress(job, progress) {
-    if (!currentProgress || currentProgress.job !== job) return;
-    currentProgress.lastProgress = progress || currentProgress.lastProgress;
-    if (!currentProgress.itemProgress) return;
+    if (!currentProgress || currentProgress.job !== job || !currentProgress.active) return;
+    var entry = currentProgress;
+    var nextProgress = progress || entry.lastProgress;
+    if (String(nextProgress.stage || "正在翻译") !== String(entry.lastProgress.stage || "正在翻译")) {
+      entry.stageStartedAt = Date.now();
+    }
+    entry.lastProgress = nextProgress;
+    if (!entry.itemProgress) return;
 
     try {
-      var overall = Number(currentProgress.lastProgress && currentProgress.lastProgress.overall);
+      var overall = Number(entry.lastProgress && entry.lastProgress.overall);
       if (!Number.isFinite(overall)) overall = 0;
-      currentProgress.itemProgress.setProgress(Math.max(0, Math.min(100, overall)));
-      currentProgress.itemProgress.setText(
-        progressText(currentProgress.lastProgress, pending.length)
-      );
+      entry.itemProgress.setProgress(Math.max(0, Math.min(100, overall)));
+      var text = progressText(entry.lastProgress, pending.length);
+      var seconds = Math.max(0, Math.floor((Date.now() - entry.stageStartedAt) / 1000));
+      var elapsed = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
+      var fallback = "Stage elapsed: " + elapsed;
+      var sequence = ++entry.sequence;
+      entry.itemProgress.setText(text + " · " + fallback);
+      formatStageElapsed(elapsed, fallback).then(function (label) {
+        if (currentProgress !== entry || !entry.active || entry.sequence !== sequence) return;
+        try {
+          entry.itemProgress.setText(text + " · " + label);
+        } catch (error) {
+          // A late localization result must not interrupt the queue.
+        }
+      });
     } catch (error) {
       // Progress UI errors must not interrupt the translation queue.
     }
+  }
+
+  async function formatStageElapsed(elapsed, fallback) {
+    try {
+      var mainWindow = Zotero.getMainWindow();
+      var document = mainWindow && !mainWindow.closed && mainWindow.document;
+      if (document && document.l10n && typeof document.l10n.formatValue === "function") {
+        if (mainWindow.MozXULElement && typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
+          mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
+        }
+        return await document.l10n.formatValue(
+          "babeldoc-for-zotero-progress-stage-elapsed", { elapsed: elapsed }
+        ) || fallback;
+      }
+    } catch (error) {
+      // Match the existing localization fallback without exposing exception text.
+    }
+    return fallback;
+  }
+
+  function stopProgressTimer(entry) {
+    if (!entry) return;
+    entry.active = false;
+    entry.sequence++;
+    if (entry.timer !== null) clearTimeout(entry.timer);
+    entry.timer = null;
+    if (entry.popupWindow) {
+      try {
+        entry.popupWindow.removeEventListener("unload", entry.onPopupUnload);
+      } catch (error) {
+        // The native window may already have been destroyed.
+      }
+      entry.popupWindow = null;
+      entry.onPopupUnload = null;
+    }
+  }
+
+  function showProgressWindow(entry) {
+    // Zotero 10.0.6 keeps the DOM window private, but registers it with its instance
+    // synchronously during show(). Capture only this instance and restore the shared API.
+    var windowSet = Zotero.ProgressWindowSet;
+    var add = windowSet.add;
+    windowSet.add = function (popupWindow, instance) {
+      var result = add.apply(this, arguments);
+      if (instance === entry.window) {
+        entry.popupWindow = popupWindow;
+        entry.onPopupUnload = function () { stopProgressTimer(entry); };
+        popupWindow.addEventListener("unload", entry.onPopupUnload);
+      }
+      return result;
+    };
+    try {
+      entry.window.show();
+    } finally {
+      windowSet.add = add;
+    }
+  }
+
+  function scheduleProgressRefresh(entry) {
+    if (stopped || currentProgress !== entry || !entry.active) return;
+    entry.timer = setTimeout(function () {
+      entry.timer = null;
+      if (stopped || currentProgress !== entry || !entry.active) return;
+      refreshProgress(entry.job);
+      scheduleProgressRefresh(entry);
+    }, 1000);
   }
 
   function openProgressWindow(job, attachmentItem) {
@@ -351,13 +433,20 @@ var ZoteroTranslateFilesQueue = (function () {
       // Keep the generic title if the attachment cannot provide one.
     }
 
-    var entry = { job: job, window: null, itemProgress: null, lastProgress: {
+    var entry = { job: job, window: null, itemProgress: null,
+      timer: null, active: true, sequence: 0, stageStartedAt: Date.now(), lastProgress: {
       overall: 0,
       stage: "正在准备 BabelDOC",
     } };
     currentProgress = entry;
     try {
       entry.window = new Zotero.ProgressWindow({ closeOnClick: false });
+      // Zotero 10.0.6 also calls this public close method when the parent window closes.
+      var close = entry.window.close;
+      entry.window.close = function () {
+        stopProgressTimer(entry);
+        return close.apply(this, arguments);
+      };
       entry.window.changeHeadline("正在翻译：" + title);
       var itemTypeIconName = "attachment";
       try {
@@ -372,9 +461,11 @@ var ZoteroTranslateFilesQueue = (function () {
         title
       );
       entry.itemProgress.setProgress(0);
-      entry.itemProgress.setText(progressText(entry.lastProgress, pending.length));
-      entry.window.show();
+      refreshProgress(job);
+      showProgressWindow(entry);
+      scheduleProgressRefresh(entry);
     } catch (error) {
+      stopProgressTimer(entry);
       entry.window = null;
       entry.itemProgress = null;
       log("could not show translation progress window");
@@ -384,6 +475,7 @@ var ZoteroTranslateFilesQueue = (function () {
   function closeProgressWindow(job, succeeded, aborted, warning, completedTitle, requestCount, logPath) {
     if (!currentProgress || currentProgress.job !== job) return;
     var entry = currentProgress;
+    stopProgressTimer(entry);
     currentProgress = null;
     if (!entry.window || !entry.itemProgress) return;
 
@@ -491,6 +583,7 @@ var ZoteroTranslateFilesQueue = (function () {
       failure = error;
       if (error && error.logPath) job.logPath = error.logPath;
     } finally {
+      if (currentProgress && currentProgress.job === job) stopProgressTimer(currentProgress);
       if (translationResult && typeof translationResult.cleanup === "function") {
         try {
           await translationResult.cleanup();
@@ -621,6 +714,7 @@ var ZoteroTranslateFilesQueue = (function () {
 
     cancelAll: function () {
       stopped = true;
+      stopProgressTimer(currentProgress);
       for (var job of pending) queuedIDs.delete(String(job.attachmentID));
       pending = [];
       if (currentController) currentController.abort();
