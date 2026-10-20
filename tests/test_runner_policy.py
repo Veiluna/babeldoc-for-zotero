@@ -1083,29 +1083,49 @@ def test_short_prose_echo_is_not_kept_verbatim() -> None:
 
 
 def test_identifiers_and_titles_keep_their_verbatim_exception() -> None:
-    # 正文中的多词名称仍可原样保留，正文句子不可。
-    assert runner.verbatim_output_allowed("IEEE Transactions", "text")
-    assert runner.verbatim_output_allowed("GPT-4 Turbo", "text")
-    # 已识别标题只放行缩写与标识符，普通单词标题仍需翻译。
-    assert runner.verbatim_output_allowed("CIC-IDS-2017", "title")
-    assert runner.verbatim_output_allowed("HTTP", "title")
-    assert runner.verbatim_output_allowed("ChangeMamba", "title")
-    assert not runner.verbatim_output_allowed("INTRODUCTION", "title")
-    assert not runner.verbatim_output_allowed("Precision", "title")
-    assert not runner.verbatim_output_allowed(
-        "A Novel Method for Detection", "title"
-    )
+    # 正文中的多词名称/元数据可原样保留，正文句子不可。
+    for text in (
+        "IEEE Transactions",
+        "GPT-4 Turbo",
+        "Department of Computer Science",
+        "IEEE Transactions on Neural Networks",
+        "Manuscript received 12 March 2026; revised 1 May 2026",
+    ):
+        assert runner.verbatim_output_allowed(text, "text"), text
+    # 已识别标题只放行缩写/标识符/专名，普通单词标题仍需翻译。
+    for text in (
+        "CIC-IDS-2017",
+        "HTTP",
+        "ChangeMamba",
+        "LLMs",
+        "BERT-based",
+        "IEEE 754",
+        "CIC-IDS 2017",
+    ):
+        assert runner.verbatim_output_allowed(text, "title"), text
+    for text in (
+        "INTRODUCTION",
+        "Precision",
+        "A Novel Method for Detection",
+    ):
+        assert not runner.verbatim_output_allowed(text, "title"), text
 
 
 def test_plain_text_insufficient_balance_is_not_retried() -> None:
     from types import SimpleNamespace as NS
 
     # 部分网关用纯文本 body 返回余额不足；不能被当成 429 短暂故障。
+    for body in (
+        "Insufficient balance",
+        "Insufficient quota",
+        "Quota exceeded",
+        "You exceeded your current quota",
+    ):
+        assert runner.temporary_request_error(
+            NS(body=body, status_code=429)
+        ) is False, body
     assert runner.temporary_request_error(
-        NS(body="Insufficient balance", status_code=429)
-    ) is False
-    assert runner.temporary_request_error(
-        NS(body={"error": "Insufficient balance"}, status_code=429)
+        NS(body={"error": "Insufficient quota"}, status_code=429)
     ) is False
     assert runner.temporary_request_error(
         NS(body="temporary upstream failure", status_code=503)

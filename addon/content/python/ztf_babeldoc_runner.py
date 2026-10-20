@@ -552,7 +552,9 @@ def temporary_request_error(error: Exception) -> bool:
         )
     ).casefold()
     if any(marker in diagnostic for marker in (
-        "insufficient_quota", "insufficient_balance", "insufficient balance", "quota_exceeded",
+        "insufficient_quota", "insufficient quota", "insufficient_balance",
+        "insufficient balance", "quota_exceeded", "quota exceeded",
+        "quota exhausted", "exceeded your current quota", "out of credits",
         "billing", "credit balance", "balance", "余额", "欠费", "配额耗尽",
     )):
         return False
@@ -988,11 +990,16 @@ _BODY_LAYOUT_LABELS = {
     "text", "plain_text", "paragraph_hybrid", "body", "body_text",
     "paragraph", "list", "list_item", "footnote", "note",
 }
-_VERBATIM_FUNCTION_WORDS = {
-    "a", "an", "the", "of", "and", "or", "for", "with", "to", "in", "on", "by",
-    "is", "are", "was", "were", "be", "been", "we", "our", "this", "that",
-    "these", "those", "from", "as", "at", "it", "its", "has", "have", "can",
-    "will", "not", "which", "while", "than", "then", "their", "they",
+# 句子标记：正文出现这些词时，即使很短也按句子处理。
+_SENTENCE_MARKERS = {
+    "the", "we", "our", "this", "that", "these", "those", "it", "its",
+    "is", "are", "was", "were", "be", "been", "has", "have", "can", "will",
+    "not", "which", "while", "than", "then", "they", "their",
+}
+# 名称连接词：允许出现在机构、期刊、元数据等合法名称中。
+_NAME_CONNECTORS = {
+    "of", "and", "or", "for", "with", "to", "in", "on", "by", "from", "as",
+    "at", "via", "using", "based", "received", "revised", "accepted",
 }
 
 
@@ -1016,22 +1023,29 @@ def _verbatim_identifier_like(text: str) -> bool:
         return True
     if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
         return True
-    tokens = [token for token in plain.split() if token.strip(",;:()[]\"'!?")]
+    tokens = [
+        token.strip(",;:()[]\"'!?")
+        for token in plain.split()
+        if token.strip(",;:()[]\"'!?")
+    ]
     if len(tokens) <= 1:
         return True
-    if any(token.strip(",;:()[]\"'!?").casefold() in _VERBATIM_FUNCTION_WORDS for token in tokens):
+    lowered = [token.casefold() for token in tokens]
+    # 代词/系动词/冠词是句子标记；of/on/for 等连接词仍可属于合法名称。
+    if any(word in _SENTENCE_MARKERS for word in lowered):
         return False
-    # 多词名称必须每个词都是大写开头或含数字/连接符（"IEEE Transactions",
-    # "GPT-4 Turbo"），否则视为待翻译正文。
+    # 名称样：首词大写（"Department of Computer Science"、IEEE Transactions on …、
+    # Manuscript received …），或每个词都是大写/数字/符号。
+    if tokens[0][0].isupper():
+        return True
     return all(
-        token.strip(",;:()[]\"'!?")[0].isupper()
-        or re.search(r"[0-9\-_/.]", token.strip(",;:()[]\"'!?"))
+        token[0].isupper() or re.search(r"[0-9\-_/.]", token)
         for token in tokens
     )
 
 
 def _title_verbatim_allowed(text: str) -> bool:
-    """已识别标题只允许缩写/标识符原样返回。"""
+    """已识别标题只允许缩写/标识符/专名原样返回。"""
     plain = _PLACEHOLDER_TOKEN_RE.sub(" ", text or "").strip()
     if not plain:
         return False
@@ -1039,19 +1053,28 @@ def _title_verbatim_allowed(text: str) -> bool:
         return True
     if _URL_EMAIL_DOMAIN_RE.fullmatch(plain):
         return True
-    tokens = plain.split()
-    if len(tokens) != 1:
+    tokens = [
+        token.strip(",;:()[]\"'!?")
+        for token in plain.split()
+        if token.strip(",;:()[]\"'!?")
+    ]
+    if not tokens:
         return False
-    token = tokens[0].strip(",;:()[]\"'!?")
-    if not token:
+
+    def identifier_like(token: str) -> bool:
+        if re.fullmatch(r"[A-Z]{2,6}[a-z]?", token):  # HTTP, IEEE, LLMs
+            return True
+        if re.search(r"[0-9]", token):  # CIC-IDS-2017, GPT-4, 754
+            return True
+        if re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+", token):
+            return True  # BERT-based, CIC-IDS
+        if re.match(r"[A-Z][a-z]+[A-Z]", token):  # ChangeMamba
+            return True
+        if token.casefold() in _NAME_CONNECTORS:  # Transactions on …
+            return True
         return False
-    if re.fullmatch(r"[A-Z]{2,6}", token):  # HTTP, IEEE
-        return True
-    if re.search(r"[0-9]", token):  # CIC-IDS-2017, GPT-4
-        return True
-    if re.match(r"[A-Z][a-z]+[A-Z]", token):  # ChangeMamba
-        return True
-    return False
+
+    return all(identifier_like(token) for token in tokens)
 
 
 def verbatim_output_allowed(text: str, layout_label: str = "") -> bool:
@@ -5506,11 +5529,19 @@ def main() -> int:
         # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
         fatal_decision = policy_instance.decision() if policy_instance else None
         fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
+        # reasons 可能带服务商/文档回显；日志与协议只保留有界摘要。
+        fatal_failures = [
+            {
+                **item,
+                "reason": _bounded_log_reason(item.get("reason", ""), api_key),
+            }
+            for item in fatal_failures
+        ]
         fatal_message = request_state["fatal_error"]
         if fatal_failures:
-            fatal_message = (
-                with_translation_counts(fatal_message) + "；" + fatal_decision["message"]
-            )
+            # decision.message 已含计数摘要，统一在最后补一次，避免重复。
+            fatal_message = fatal_message + "；" + fatal_decision["message"]
+        fatal_message = with_translation_counts(fatal_message)
         _write_job_log(
             request_state,
             {
