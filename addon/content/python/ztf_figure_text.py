@@ -88,6 +88,52 @@ def _overlaps(first: pymupdf.Rect, second: pymupdf.Rect,
     )
 
 
+def _vertical_overlap_ratio(first: pymupdf.Rect,
+                            second: pymupdf.Rect) -> float:
+    """Fraction of *first*'s height that lies inside *second*."""
+    height = first.y1 - first.y0
+    if height <= 0:
+        return 0.0
+    overlap = min(first.y1, second.y1) - max(first.y0, second.y0)
+    return max(0.0, overlap) / height
+
+
+_ASCII_RUN_RE = re.compile(r"[ -~]+")
+
+
+def _mixed_runs(text: str) -> list[tuple[str, str]]:
+    """Split text into printable-ASCII and CJK runs with their fonts.
+
+    The built-in china-s font renders ASCII glyphs at full CJK width, which
+    turns mixed labels such as "WordPress扫描" into visibly spaced-out text.
+    ASCII runs are therefore drawn with helv, CJK runs with china-s.
+    """
+    runs = []
+    for match in re.finditer(r"[ -~]+|[^ -~]+", text):
+        run = match.group(0)
+        fontname = "helv" if _ASCII_RUN_RE.fullmatch(run) else "china-s"
+        runs.append((run, fontname))
+    return runs
+
+
+def _mixed_width(text: str, size: float) -> float:
+    return sum(
+        pymupdf.get_text_length(run, fontname=fontname, fontsize=size)
+        for run, fontname in _mixed_runs(text)
+    )
+
+
+def _insert_mixed_text(page: pymupdf.Page, point: pymupdf.Point,
+                       text: str, size: float) -> None:
+    x = float(point.x)
+    for run, fontname in _mixed_runs(text):
+        page.insert_text(
+            (x, point.y), run, fontname=fontname, fontsize=size,
+            color=(0, 0, 0),
+        )
+        x += pymupdf.get_text_length(run, fontname=fontname, fontsize=size)
+
+
 def _source_lines(page: pymupdf.Page, region: pymupdf.Rect) -> list[dict]:
     lines = []
     try:
@@ -178,9 +224,7 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
             realign = nearest is not None and abs(rect.x1 - nearest) > 2.0
             right = nearest if realign else rect.x1
             try:
-                width = pymupdf.get_text_length(
-                    text, fontname="china-s", fontsize=size
-                )
+                width = _mixed_width(text, size)
             except Exception:
                 if realign:
                     continue
@@ -235,10 +279,14 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
                 rect = pymupdf.Rect(line["bbox"])
                 if not _overlaps(rect, output_region, 0.0):
                     continue
+                # Require the fragment to sit mostly on the Chinese row.
+                # Merely touching the next table line (a 0.5pt overlap) must
+                # not count, otherwise ordinary table content is removed.
                 hits = [
                     row for row in chinese_rows
                     if row["point"] is not None
                     and _overlaps(rect, row["target"])
+                    and _vertical_overlap_ratio(rect, row["target"]) >= 0.5
                 ]
                 if not hits:
                     continue
@@ -264,9 +312,8 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
             if not (row["realign"] or row["force"]):
                 continue
             try:
-                output_page.insert_text(
-                    row["point"], row["text"], fontname="china-s",
-                    fontsize=row["size"], color=(0, 0, 0),
+                _insert_mixed_text(
+                    output_page, row["point"], row["text"], row["size"]
                 )
                 if row["realign"]:
                     stats["aligned_labels"] += 1
