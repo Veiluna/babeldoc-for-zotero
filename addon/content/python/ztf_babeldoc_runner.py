@@ -29,6 +29,8 @@ from typing import Any
 
 EXPECTED_BABELDOC_VERSION = "0.6.4"
 MAX_OUTPUT_TOKENS = 50000
+# 表2 的 13 个列标题只是一次短请求：输出远小于主翻译，固定上限避免浪费额度。
+TABLE2_OUTPUT_TOKENS = 4000
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -188,6 +190,25 @@ def _table_body_should_translate(paragraph: Any) -> bool:
         return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
     except Exception:
         return False
+
+
+_TABLE2_MODULE: Any = None
+
+
+def _table2_helper() -> Any:
+    """Load the sibling helper that translates rotated table headers."""
+    global _TABLE2_MODULE
+    if _TABLE2_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_table2",
+            os.path.join(os.path.dirname(__file__), "ztf_table2.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_table2.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TABLE2_MODULE = module
+    return _TABLE2_MODULE
 
 
 def _links_helper() -> Any:
@@ -6287,6 +6308,129 @@ def babeldoc_version_error() -> str | None:
     return None
 
 
+def _table2_translations(
+    request_state: dict[str, Any], headers: list[str], api_key: str
+) -> list[str] | None:
+    """Send one small completion for rotated table headers; cache it per document.
+
+    The monolingual and the bilingual PDF are post-processed separately, so the
+    translation must be reused: 0.6.0 promises exactly one extra request, not one
+    per output file.  A failure is recorded and returns None so the PDF keeps the
+    English headers; it never blocks the document.
+    """
+    cache = request_state.setdefault("table2_translation_cache", {})
+    key = tuple(headers)
+    if key in cache:
+        return cache[key]
+    helper = _table2_helper()
+    translator = request_state.get("openai_translator")
+    if translator is None:
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_skipped", "reason": "missing_translator"},
+            api_key,
+        )
+        cache[key] = None
+        return None
+
+    def request_headers() -> Any:
+        return create_completion_adapting(
+            translator.client,
+            request_state,
+            TABLE2_OUTPUT_TOKENS,
+            request_metadata={"phase": "table_headers", "item_count": len(headers)},
+            api_key=api_key,
+            model=translator.model,
+            messages=[{"role": "user", "content": helper.build_prompt_text(headers)}],
+        )
+
+    budget = request_state.get("request_budget")
+    try:
+        response = (
+            request_once(budget, request_headers)
+            if budget is not None
+            else request_headers()
+        )
+        content = response.choices[0].message.content or ""
+    except Exception as error:
+        cache[key] = None
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_error", "error": log_safe_error(error, api_key)},
+            api_key,
+        )
+        return None
+    translations = helper.parse_response(content, len(headers))
+    if translations is None or not all(
+        helper.is_valid_translation(original, translated)
+        for original, translated in zip(headers, translations)
+    ):
+        cache[key] = None
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_failed", "reason": "parse_or_validation"},
+            api_key,
+        )
+        return None
+    cache[key] = translations
+    return translations
+
+
+def _restore_figure_and_table_text(
+    source_pdf: str, output_pdf: str, request_state: dict[str, Any], api_key: str
+) -> None:
+    """Restore dropped figure labels and translate rotated table headers in place."""
+    try:
+        figure_helper = _figure_text_helper()
+        figure_stats = figure_helper.restore_figure_text(source_pdf, output_pdf)
+        _write_job_log(
+            request_state,
+            {
+                "event": "figure_text_restore",
+                "file": os.path.basename(output_pdf),
+                **figure_stats,
+            },
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "figure_text_restore_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+    try:
+        table2_helper = _table2_helper()
+        table2_stats = table2_helper.restore_rotated_headers(
+            source_pdf,
+            output_pdf,
+            lambda headers: _table2_translations(request_state, headers, api_key),
+        )
+        record = {
+            "event": "table2_restore",
+            "file": os.path.basename(output_pdf),
+        }
+        for name in ("groups", "requested", "translated", "redacted", "drawn", "skipped"):
+            if name in table2_stats:
+                record[name] = table2_stats[name]
+        record["failed_count"] = len(table2_stats.get("failed") or [])
+        _write_job_log(request_state, record, api_key)
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "table2_restore_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+
 def _restore_links_after_layout(
     state: dict[str, Any], request_state: dict[str, Any], api_key: str
 ) -> dict[str, Any]:
@@ -6306,25 +6450,10 @@ def _restore_links_after_layout(
             api_key,
         )
         return summary
-    # 图内文字必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，
-    # 且译文图5 行标签会失去右对齐；这两个修复只改图区域。
-    try:
-        figure_helper = _figure_text_helper()
-        figure_stats = figure_helper.restore_figure_text(source_pdf, output_pdf)
-        _write_job_log(
-            request_state,
-            {"event": "figure_text_restore", **figure_stats},
-            api_key,
-        )
-    except Exception as error:
-        _write_job_log(
-            request_state,
-            {
-                "event": "figure_text_restore_error",
-                "error": log_safe_error(error, api_key),
-            },
-            api_key,
-        )
+    # 图内文字与旋转表头必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，
+    # 译文图5 行标签会失去右对齐，表2 的 90° 列标题保持英文。三者都只改
+    # 图/表区域，链接恢复需要最终排版，因此顺序不能反。
+    _restore_figure_and_table_text(source_pdf, output_pdf, request_state, api_key)
 
     try:
         helper = _links_helper()
@@ -6396,8 +6525,12 @@ def _restore_dual_links_after_layout(
     dual_pdf = str(state.get("dual_result") or "")
     if not dual_pdf or not os.path.isfile(dual_pdf):
         return None
-    mono_mapping = str((link_stats or {}).get("mapping_path") or "")
     source_pdf = _argument_value(sys.argv, "--files")
+    # 最终交付的双语 PDF 同样需要图内文字恢复与旋转表头翻译；表2 的翻译
+    # 结果按标题缓存，因此双语版本复用单语版本的那一次额外请求。
+    if source_pdf:
+        _restore_figure_and_table_text(source_pdf, dual_pdf, request_state, api_key)
+    mono_mapping = str((link_stats or {}).get("mapping_path") or "")
     if not mono_mapping or not os.path.isfile(mono_mapping) or not source_pdf:
         summary = {"source": 0, "restored": 0, "skipped": "missing_mapping"}
         _write_job_log(

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import statistics
 import sys
@@ -63,6 +64,7 @@ class TextRun:
     bbox: pymupdf.Rect
     text: str
     chars: list[CharBox]
+    angle: float = 0.0
 
 
 @dataclass
@@ -162,7 +164,11 @@ def extract_lines(
             text = "".join(c.char for c in chars)
             if not text.strip():
                 continue
-            runs.append(TextRun(page_index, bbox, text, chars))
+            direction = line.get("dir") or (1.0, 0.0)
+            angle = math.degrees(
+                math.atan2(-float(direction[1]), float(direction[0]))
+            )
+            runs.append(TextRun(page_index, bbox, text, chars, angle))
     runs.sort(key=lambda run: (round(run.bbox.y0, 1), run.bbox.x0))
     return runs
 
@@ -773,6 +779,52 @@ def check_commas(ctx: Context) -> dict[str, object]:
     }
 
 
+def _vertical_cjk_columns(
+    chars: list[CharBox], clip: pymupdf.Rect
+) -> list[list[CharBox]]:
+    """Group CJK characters into upright vertical columns.
+
+    A rotated-header translation draws each character upright at a fixed x
+    centre and steps down/up in y, so a column is 2+ consecutive characters with
+    the same centre x and a monotonic y.  A 90-degree rotated string would put
+    every character on one horizontal line instead.
+    """
+    picked = [
+        char
+        for char in chars
+        if CJK_RE.match(char.char) and _rect_contains(clip, _center(char.bbox))
+    ]
+    columns: list[dict[str, object]] = []
+    for char in sorted(picked, key=lambda item: item.bbox.x0):
+        centre_x = _center(char.bbox).x
+        target = None
+        for column in columns:
+            if abs(float(column["x"]) - centre_x) <= 1.5:
+                target = column
+                break
+        if target is None:
+            columns.append({"x": centre_x, "chars": [char]})
+        else:
+            members = target["chars"]
+            assert isinstance(members, list)
+            members.append(char)
+            target["x"] = (
+                float(target["x"]) * (len(members) - 1) + centre_x
+            ) / len(members)
+    found: list[list[CharBox]] = []
+    for column in columns:
+        members = column["chars"]
+        assert isinstance(members, list)
+        if len(members) < 2:
+            continue
+        ys = [char.bbox.y0 for char in members]
+        ascending = all(right > left for left, right in zip(ys, ys[1:]))
+        descending = all(right < left for left, right in zip(ys, ys[1:]))
+        if ascending or descending:
+            found.append(members)
+    return found
+
+
 def check_table2(ctx: Context) -> dict[str, object]:
     if (
         PAGE_TABLE2 >= ctx.source.page_count
@@ -799,19 +851,26 @@ def check_table2(ctx: Context) -> dict[str, object]:
     translated_lines = [
         run
         for run in ctx.side_lines(PAGE_TABLE2, translated_clip)
-        if len(run.text.strip()) >= 2
+        if len(run.text.strip()) >= 1
     ]
     translated_titles = [run.text.strip() for run in translated_lines]
-    cjk_texts = [
-        text for text in translated_titles if CJK_RE.search(text)
-    ]
+    cjk_lines = [run for run in translated_lines if CJK_RE.search(run.text)]
+    # 字形正立：逐字竖排绘制的每个汉字仍是水平字形（dir=(1,0)）。
+    upright_ok = bool(cjk_lines) and all(
+        abs(run.angle) <= 5.0 for run in cjk_lines
+    )
+    columns = _vertical_cjk_columns(ctx.page_chars(PAGE_TABLE2), translated_clip)
     cjk_chars = sum(
         1 for text in translated_titles for char in text if CJK_RE.match(char)
     )
-    status = "PASS" if len(cjk_texts) >= 2 else "FAIL"
+    status = (
+        "PASS"
+        if len(cjk_lines) >= 2 and upright_ok and len(columns) >= 2
+        else "FAIL"
+    )
     summary = (
-        f"源列标题 {len(source_titles)} 个；"
-        f"译文表头 {len(translated_titles)} 个，其中含 CJK {len(cjk_texts)} 个"
+        f"源列标题 {len(source_titles)} 个；译文含 CJK 行 {len(cjk_lines)} 个，"
+        f"竖排列 {len(columns)} 个，字形正立 {upright_ok}"
     )
     details = [
         f"检查页: p{PAGE_TABLE2 + 1}，表2 表头区域",
@@ -819,8 +878,17 @@ def check_table2(ctx: Context) -> dict[str, object]:
         f"源标题: {', '.join(source_titles[:15])}",
         f"译标题: {', '.join(translated_titles[:15])}",
     ]
+    details.append(
+        "竖排列: "
+        + ", ".join(
+            f"{''.join(char.char for char in column)}"
+            f"(x={statistics.median([_center(char.bbox).x for char in column]):.1f}, "
+            f"{len(column)} 字)"
+            for column in columns[:15]
+        )
+    )
     if status == "FAIL":
-        details.append("表2 旋转列标题仍为英文，未翻译")
+        details.append("表2 旋转列标题仍为英文，或中文不是正立竖排")
     return {
         "id": "table2",
         "name": "表2 旋转列标题",
@@ -830,9 +898,13 @@ def check_table2(ctx: Context) -> dict[str, object]:
             "page": PAGE_TABLE2 + 1,
             "source_titles": source_titles,
             "translated_titles": translated_titles,
-            "cjk_title_count": len(cjk_texts),
-            "cjk_titles": cjk_texts,
+            "cjk_title_count": len(cjk_lines),
+            "cjk_titles": [run.text.strip() for run in cjk_lines],
             "cjk_char_count": cjk_chars,
+            "upright": upright_ok,
+            "vertical_columns": [
+                "".join(char.char for char in column) for column in columns
+            ],
         },
         "details": details,
     }
