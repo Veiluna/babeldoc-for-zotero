@@ -108,6 +108,28 @@ class LinkAnchorTest(unittest.TestCase):
         )
         self.assertEqual(section["text"], "3.1")
 
+    def test_chapter_guide_word_prefers_section_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "参见图4 与第4 节的内容。",
+                fontname="china-s", fontsize=11,
+            )
+            page.insert_text(
+                (60, 300), "图4 展示结果。", fontname="china-s", fontsize=11
+            )
+            anchor = {"type": "number", "text": "4", "number": "4", "label": ""}
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertEqual(reason, "")
+            chapter = page.search_for("第4")[0]
+            self.assertAlmostEqual(rect.y0, chapter.y0, delta=3)
+            self.assertGreater(rect.x0, chapter.x0)
+        finally:
+            doc.close()
+
     def test_clipped_superscript_keeps_the_digit_run(self) -> None:
         anchor = links._anchor_from_text(
             "t10",

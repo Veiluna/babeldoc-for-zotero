@@ -81,17 +81,35 @@ class AnchorSpec:
     pattern: str
     target: str
     cluster: bool = False
+    # Equivalent anchor in the source PDF; used to read the link's real target
+    # page instead of guessing it from the numbering scheme.
+    source_pattern: str = ""
+    # Only citations that point somewhere other than their apparent numbering
+    # scheme need the source annotation; section/appendix anchors are located
+    # reliably by their heading text.
+    prefer_source_link: bool = False
 
 
 ANCHORS: tuple[AnchorSpec, ...] = (
-    AnchorSpec("3.1", r"第\s*3\.1\s*节", "3.1"),
-    AnchorSpec("3.2", r"第\s*3\.2\s*节", "3.2"),
-    AnchorSpec("3.4", r"第\s*3\.4\s*节", "3.4"),
-    AnchorSpec("[4, 7, 18]", r"\[\s*4\s*,\s*7\s*,\s*18\s*\]", "refs", cluster=True),
-    AnchorSpec("策略10", r"策略\s*10", "ref10"),
-    AnchorSpec("公式1", r"公式\s*1", "eq1"),
-    AnchorSpec("第4节", r"第\s*4\s*节", "4"),
-    AnchorSpec("附录B", r"附录\s*B", "B"),
+    AnchorSpec("3.1", r"第\s*3\.1\s*节", "3.1",
+               source_pattern=r"Sect(?:ion)?\.?\s*3\.1(?!\d)"),
+    AnchorSpec("3.2", r"第\s*3\.2\s*节", "3.2",
+               source_pattern=r"Sect(?:ion)?\.?\s*3\.2(?!\d)"),
+    AnchorSpec("3.4", r"第\s*3\.4\s*节", "3.4",
+               source_pattern=r"Sect(?:ion)?\.?\s*3\.4(?!\d)"),
+    AnchorSpec("[4, 7, 18]", r"\[\s*4\s*,\s*7\s*,\s*18\s*\]", "refs",
+               cluster=True,
+               source_pattern=r"\[\s*4\s*,\s*7\s*,\s*18\s*\]"),
+    AnchorSpec("策略10", r"策略\s*10", "ref10",
+               source_pattern=r"(?:project|strategy)\s*10(?!\d)",
+               prefer_source_link=True),
+    AnchorSpec("公式1", r"公式\s*1", "eq1",
+               source_pattern=r"(?:Eq(?:uation)?\.?\s*\(?\s*1\s*\)?)(?!\d)",
+               prefer_source_link=True),
+    AnchorSpec("第4节", r"第\s*4\s*节", "4",
+               source_pattern=r"Sect(?:ion)?\.?\s*4(?![\d.])"),
+    AnchorSpec("附录B", r"附录\s*B", "B",
+               source_pattern=r"Appendix\s*B"),
 )
 
 
@@ -407,12 +425,72 @@ def _inspect_chars(
     }
 
 
+def _source_anchor_rects(
+    ctx: Context, pattern: str
+) -> list[tuple[int, pymupdf.Rect]]:
+    """Character-precise rectangles of *pattern* in the source PDF."""
+    regex = re.compile(pattern, re.I)
+    found: list[tuple[int, pymupdf.Rect]] = []
+    for page_index in range(ctx.source.page_count):
+        page = ctx.source[page_index]
+        for block in page.get_text("rawdict")["blocks"]:
+            if block.get("type") != 0:
+                continue
+            # Match inside one text line only: concatenating lines would join
+            # unrelated fragments and produce a rectangle spanning the page.
+            for line in block.get("lines", []):
+                chars: list[tuple[str, pymupdf.Rect]] = []
+                for span in line.get("spans", []):
+                    for char in span.get("chars", []):
+                        chars.append((char["c"], pymupdf.Rect(char["bbox"])))
+                if not chars:
+                    continue
+                text = "".join(value for value, _ in chars)
+                for match in regex.finditer(text):
+                    boxes = [
+                        chars[index][1] for index in range(match.start(), match.end())
+                    ]
+                    if not boxes:
+                        continue
+                    rect = pymupdf.Rect(boxes[0])
+                    for box in boxes[1:]:
+                        rect |= box
+                    found.append((page_index, rect))
+    return found
+
+
+def _source_link_target_page(ctx: Context, spec: AnchorSpec) -> int | None:
+    """Target page of the source link that carries *spec*'s anchor text.
+
+    Guessing the page from the numbering scheme ("[10] is in REFERENCES") can
+    disagree with the actual link (the superscript 10 points at footnote 10);
+    the source annotation that covers the anchor text is authoritative.
+    """
+    if not spec.source_pattern:
+        return None
+    for page_index, anchor_rect in _source_anchor_rects(ctx, spec.source_pattern):
+        page = ctx.source[page_index]
+        for link in page.get_links():
+            target = link.get("page")
+            if target is None:
+                continue
+            link_rect = pymupdf.Rect(link["from"])
+            near = pymupdf.Rect(
+                link_rect.x0 - 4.0, link_rect.y0 - 1.0,
+                link_rect.x1 + 4.0, link_rect.y1 + 1.0,
+            )
+            if near.intersects(anchor_rect):
+                return int(target)
+    return None
+
+
 def inspect_occurrence(
     ctx: Context,
     run: TextRun,
     match: re.Match[str],
     spec: AnchorSpec,
     targets: dict[str, SourceRow | None],
+    expected_page_override: int | None = None,
 ) -> dict[str, object]:
     anchor_chars = run.chars[match.start() : match.end()]
     context_text = run.text[max(0, match.start() - 35) : match.end() + 35]
@@ -449,7 +527,11 @@ def inspect_occurrence(
 
     effective = [char for char in anchor_chars if EFFECTIVE_RE.fullmatch(char.char)]
     expected_row = targets.get(spec.target)
-    expected_page = expected_row.page if expected_row is not None else None
+    expected_page = (
+        expected_page_override
+        if expected_page_override is not None
+        else (expected_row.page if expected_row is not None else None)
+    )
     group = _inspect_chars(ctx, run.page_index, effective, expected_page, spec.key)
     result["groups"] = [group]
     result["ok"] = group["ok"]
@@ -475,12 +557,19 @@ def check_links(
     passed_anchors = 0
     skipped_anchors = 0
     for spec in ANCHORS:
+        expected_override = (
+            _source_link_target_page(ctx, spec)
+            if spec.prefer_source_link
+            else None
+        )
         occurrences = []
         for page_index in range(ctx.translated.page_count):
             for run in ctx.side_blocks(page_index):
                 for match in re.finditer(spec.pattern, run.text):
                     occurrences.append(
-                        inspect_occurrence(ctx, run, match, spec, targets)
+                        inspect_occurrence(
+                            ctx, run, match, spec, targets, expected_override
+                        )
                     )
         # A retranslation may word the anchor differently ("策略10" became
         # "项目10"); an anchor text absent from the translation is not a link
@@ -494,6 +583,11 @@ def check_links(
         anchor_evidence: dict[str, object] = {
             "anchor": spec.key,
             "target": target_rows.get(spec.target),
+            "source_link_target_page": (
+                expected_override + 1
+                if expected_override is not None
+                else None
+            ),
             "occurrences": occurrences,
             "applicable": applicable,
             "ok": ok,
@@ -515,6 +609,9 @@ def check_links(
         else:
             status = "PASS" if anchor["ok"] else "FAIL"
         details.append(f"{anchor['anchor']}: {len(anchor['occurrences'])} 处 -> {status}")
+        source_target = anchor.get("source_link_target_page")
+        if source_target:
+            details.append(f"  源链接目标页: p{source_target}")
         target = anchor.get("target") or {}
         if target and target.get("page"):
             details.append(

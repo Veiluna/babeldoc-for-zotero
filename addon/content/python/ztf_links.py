@@ -609,8 +609,13 @@ def _anchor_guide_score(text: str, start: int) -> int:
     if _GUIDE_EN_RE.search(prefix):
         return 2
     stripped = prefix.rstrip()
-    if stripped and stripped[-1] in _GUIDE_CJK_SUFFIX:
-        return 2
+    if stripped:
+        # "第4 节" is a chapter/section number and outranks a bare "图4"/"表4"
+        # when both appear in the same paragraph.
+        if stripped[-1] == "第":
+            return 3
+        if stripped[-1] in _GUIDE_CJK_SUFFIX:
+            return 2
     return 0
 
 
