@@ -207,6 +207,7 @@ var ZoteroTranslateFilesRunner = (function () {
         ["ztf_figure_text.py", "图内文字恢复辅助模块"],
         ["ztf_table_text.py", "表格内容规则辅助模块"],
         ["ztf_table2.py", "旋转表头翻译辅助模块"],
+        ["ztf_punctuation_cleanup.py", "重复标点清理辅助模块"],
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
         var helperName = pythonHelpers[helperIndex][0];

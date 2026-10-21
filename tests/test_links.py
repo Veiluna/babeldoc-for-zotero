@@ -96,6 +96,48 @@ class LinkAnchorTest(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_bare_number_does_not_match_inside_section_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "See Section 3.1 for the protocol details.",
+                fontname="tiro", fontsize=11,
+            )
+            anchor = {"type": "number", "text": "1", "number": "1", "label": ""}
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertIsNone(rect)
+            self.assertEqual(reason, "anchor_not_found_region")
+        finally:
+            doc.close()
+
+    def test_guide_word_selects_equation_number_over_table_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "该分数的计算方式，公式 1 描述了该分数的计算方式。",
+                fontname="china-s", fontsize=11,
+            )
+            page.insert_text(
+                (60, 300), "1 · 2 12018", fontname="china-s", fontsize=11
+            )
+            equation = page.search_for("公式 1")[0]
+            anchor = {
+                "type": "number", "text": "1", "number": "1",
+                "label": "equation",
+            }
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertEqual(reason, "")
+            self.assertAlmostEqual(rect.y0, equation.y0, delta=3)
+            self.assertGreater(rect.x0, equation.x0)
+        finally:
+            doc.close()
+
     def test_rotated_cropped_page_annotation_round_trips_to_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             doc = pymupdf.open()

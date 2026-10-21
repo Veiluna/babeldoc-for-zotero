@@ -43,6 +43,23 @@ class TableCellContentTest(unittest.TestCase):
             table_text.classify_table_cell(sentence, "body")["action"], "translate"
         )
 
+    def test_long_sentence_with_identifier_token_is_translated(self) -> None:
+        for sentence in (
+            "New cred_disp parameter combination in Audit logs.",
+            "New apparmor parameter combination in Audit logs.",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertEqual(
+                    table_text.classify_table_cell(sentence, "body")["action"],
+                    "translate",
+                )
+        for value in ("Apache Spark 3.5", "A-Acc-Chr1", "F1 score"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    table_text.classify_table_cell(value, "body")["action"],
+                    "keep",
+                )
+
     def test_meaningful_chinese_rejects_echo_noise_and_numbers(self) -> None:
         self.assertTrue(
             table_text.meaningful_chinese(

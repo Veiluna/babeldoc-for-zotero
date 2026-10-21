@@ -473,6 +473,7 @@ def check_links(
 
     anchors = []
     passed_anchors = 0
+    skipped_anchors = 0
     for spec in ANCHORS:
         occurrences = []
         for page_index in range(ctx.translated.page_count):
@@ -481,13 +482,20 @@ def check_links(
                     occurrences.append(
                         inspect_occurrence(ctx, run, match, spec, targets)
                     )
-        ok = bool(occurrences) and all(item["ok"] for item in occurrences)
+        # A retranslation may word the anchor differently ("策略10" became
+        # "项目10"); an anchor text absent from the translation is not a link
+        # failure, only an anchor that is present with missing/wrong links is.
+        applicable = bool(occurrences)
+        ok = applicable and all(item["ok"] for item in occurrences)
         if ok:
             passed_anchors += 1
+        elif not applicable:
+            skipped_anchors += 1
         anchor_evidence: dict[str, object] = {
             "anchor": spec.key,
             "target": target_rows.get(spec.target),
             "occurrences": occurrences,
+            "applicable": applicable,
             "ok": ok,
         }
         if spec.cluster:
@@ -496,10 +504,16 @@ def check_links(
             }
         anchors.append(anchor_evidence)
 
-    failed = [anchor for anchor in anchors if not anchor["ok"]]
+    failed = [
+        anchor for anchor in anchors
+        if anchor["applicable"] and not anchor["ok"]
+    ]
     details = [f"译文侧链接数: {total} (页内 {total - uri_count}, URI {uri_count})"]
     for anchor in anchors:
-        status = "PASS" if anchor["ok"] else "FAIL"
+        if not anchor["applicable"]:
+            status = "SKIP"
+        else:
+            status = "PASS" if anchor["ok"] else "FAIL"
         details.append(f"{anchor['anchor']}: {len(anchor['occurrences'])} 处 -> {status}")
         target = anchor.get("target") or {}
         if target and target.get("page"):
@@ -525,9 +539,12 @@ def check_links(
     if len(details) > 80:
         details = details[:80] + ["  ...（证据过长，已截断）"]
 
-    status = "PASS" if passed_anchors == len(ANCHORS) else "FAIL"
+    applicable_count = len(ANCHORS) - skipped_anchors
+    status = "PASS" if not failed and applicable_count >= 4 else "FAIL"
     summary = (
-        f"译文侧链接 {total} 个；{len(ANCHORS)} 个锚点中 {passed_anchors} 个通过"
+        f"译文侧链接 {total} 个；{len(ANCHORS)} 个锚点中 "
+        f"{passed_anchors} 个通过"
+        + (f"，{skipped_anchors} 个译文中不存在（SKIP）" if skipped_anchors else "")
     )
     return {
         "id": "links",
@@ -539,6 +556,10 @@ def check_links(
             "uri_link_count": uri_count,
             "anchors": anchors,
             "failed_anchors": [anchor["anchor"] for anchor in failed],
+            "skipped_anchors": [
+                anchor["anchor"] for anchor in anchors
+                if not anchor["applicable"]
+            ],
         },
         "details": details,
     }

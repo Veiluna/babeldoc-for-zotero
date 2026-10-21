@@ -211,6 +211,25 @@ def _table2_helper() -> Any:
     return _TABLE2_MODULE
 
 
+_PUNCTUATION_MODULE: Any = None
+
+
+def _punctuation_helper() -> Any:
+    """Load the sibling helper that removes duplicate punctuation glyphs."""
+    global _PUNCTUATION_MODULE
+    if _PUNCTUATION_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_punctuation_cleanup",
+            os.path.join(os.path.dirname(__file__), "ztf_punctuation_cleanup.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_punctuation_cleanup.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PUNCTUATION_MODULE = module
+    return _PUNCTUATION_MODULE
+
+
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
     global _LINKS_MODULE
@@ -6424,6 +6443,31 @@ def _restore_figure_and_table_text(
             request_state,
             {
                 "event": "table2_restore_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+    try:
+        punctuation_helper = _punctuation_helper()
+        punctuation_stats = punctuation_helper.clean_duplicate_punctuation(
+            output_pdf, source_pdf
+        )
+        _write_job_log(
+            request_state,
+            {
+                "event": "punctuation_cleanup",
+                "file": os.path.basename(output_pdf),
+                **punctuation_stats,
+            },
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "punctuation_cleanup_error",
                 "file": os.path.basename(output_pdf),
                 "error": log_safe_error(error, api_key),
             },

@@ -425,7 +425,9 @@ def _token_pattern(token: str) -> re.Pattern[str]:
     if not body:
         return re.compile(r"(?!x)x")
     if _is_citation_number(token) and not token.startswith(("[", "(")):
-        return re.compile(r"(?<![0-9A-Za-z])" + body + r"(?![0-9A-Za-z])")
+        # A leading dot is part of a longer number ("3.1"); matching its tail
+        # would let a citation for "1" steal the "1" of "3.1".
+        return re.compile(r"(?<![0-9A-Za-z.])" + body + r"(?![0-9A-Za-z])")
     return re.compile(body, re.I)
 
 
@@ -568,6 +570,53 @@ def _fallback_anchor_rect(
     return None, "anchor_not_found"
 
 
+_GUIDE_EN_RE = re.compile(
+    r"(?:Equation|Eq\.?|Figure|Fig\.?|Table|Section|Sect\.?|Appendix)\s*$",
+    re.I,
+)
+_GUIDE_CJK_SUFFIX = ("式", "图", "表", "节", "录")
+
+
+def _anchor_guide_score(text: str, start: int) -> int:
+    """Prefer a number that follows its "Eq./Fig./表/公式" guide word.
+
+    The source anchor line is not always mapped to the right output paragraph,
+    so a bare number such as the "1" of "Eq. 1" competes with numbers elsewhere
+    on the page.  The guide word directly before the number is a strong signal.
+    """
+    prefix = text[max(0, start - 16):start]
+    if _GUIDE_EN_RE.search(prefix):
+        return 2
+    stripped = prefix.rstrip()
+    if stripped and stripped[-1] in _GUIDE_CJK_SUFFIX:
+        return 2
+    return 0
+
+
+def _guided_candidate_rect(
+    page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
+    candidates: list[dict[str, Any]],
+) -> pymupdf.Rect | None:
+    """Return the uniquely guided number candidate; never guess between ties."""
+    if anchor.get("type") != "number" or len(candidates) < 2:
+        return None
+    chars = _text_chars(page, region)
+    if not chars:
+        return None
+    text = "".join(value for value, _ in chars)
+    scored = [
+        (_anchor_guide_score(text, candidate["start"]), candidate)
+        for candidate in candidates
+    ]
+    best = max(score for score, _ in scored)
+    if best <= 0:
+        return None
+    winners = [candidate for score, candidate in scored if score == best]
+    if len(winners) != 1:
+        return None
+    return winners[0]["rect"]
+
+
 def _find_anchor_rect(page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
                       expected: pymupdf.Point | None, ordinal: int | None,
                       group_size: int | None) -> tuple[pymupdf.Rect | None, str]:
@@ -576,6 +625,9 @@ def _find_anchor_rect(page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
         return None, "anchor_not_found_region"
     if ordinal is not None and group_size is not None and len(candidates) == group_size:
         return candidates[ordinal]["rect"], ""
+    guided = _guided_candidate_rect(page, anchor, region, candidates)
+    if guided is not None:
+        return guided, ""
     if expected is not None:
         ranked = sorted(candidates, key=lambda item: _distance(expected, item["rect"]))
         if len(ranked) == 1:
@@ -965,7 +1017,7 @@ def _restore_one(record: dict[str, Any], output_doc: Any, source_doc: Any,
         rect, reason = _find_anchor_rect(
             output_page, anchor, region, expected, ordinal, group_size)
         if rect is None and region != _page_text_rect(output_page):
-            if anchor.get("type") in ("bracket", "paren", "roman") or (
+            if anchor.get("type") in ("bracket", "paren", "roman", "number") or (
                     anchor.get("type") == "text" and
                     len(str(anchor.get("text", ""))) >= 6):
                 rect, reason = _find_anchor_rect(

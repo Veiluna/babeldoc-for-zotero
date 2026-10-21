@@ -25,6 +25,12 @@ def is_identifier(text: str) -> bool:
         return True
     if _NUMBER_RE.fullmatch(value):
         return True
+    words = _WORD_RE.findall(value)
+    # A full sentence is prose even when a token inside it looks like an
+    # identifier ("New cred_disp parameter combination in Audit logs.").
+    # Only short cells can be identifiers as a whole.
+    if len(words) >= 4:
+        return False
     if _CODE_RE.search(value):
         return True
     if " " not in value and re.search(r"[_\-]", value):
