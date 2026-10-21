@@ -258,26 +258,40 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
             if source:
                 self.assertNotIn(source, compact_pdf_text)
 
-    def test_malformed_repair_response_fails_the_document_without_result(self) -> None:
+    def test_malformed_repair_response_still_exports_the_pdf_with_a_warning(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
             repair_enabled=True, bad_fragment_repairs=True,
         )
-        self.assertNotEqual(completed.returncode, 0, completed.stdout[-5000:])
-        self.assertIsNone(result, completed.stdout[-5000:])
-        self.assertFalse(text_blocks)
+        # 补译仍失败的两段保留原文，但 BabelDOC 已产出 PDF：降级导入并警告。
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        self.assertTrue(text_blocks)
         repair_items = [record for record in records if record.get("event") == "item_outcome"
                         and record.get("phase") == "repair" and record.get("fragment_id") == selected_group]
         self.assertEqual(len(repair_items), 2, repair_items)
         self.assertTrue(all(item.get("outcome") == "retained_source" for item in repair_items))
-        error_match = re.search(r"(?m)^ZTF_ERROR (\{.*\})\s*$", completed.stdout)
-        self.assertIsNotNone(error_match, completed.stdout[-5000:])
-        error = json.loads(error_match.group(1))
-        self.assertEqual(error["kind"], "translation_failed")
-        self.assertGreaterEqual(error["failed_paragraphs"], 2)
-        self.assertTrue(all(item.get("page") and item.get("paragraph") and item.get("reason") for item in error["failures"]))
-        self.assertEqual(request_count, error["requests"])
+        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
+        self.assertIsNotNone(warning_match, completed.stdout[-5000:])
+        warning = json.loads(warning_match.group(1))
+        self.assertIs(warning.get("degraded"), True, warning)
+        self.assertGreaterEqual(warning["failed_paragraphs"], 2)
+        self.assertTrue(all(item.get("page") and item.get("paragraph") and item.get("reason") for item in warning["failures"]))
+        self.assertEqual(request_count, warning["requests"])
+        self.assertEqual(result["requests"], request_count)
         summary = next(record for record in records if record.get("event") == "repair_summary")
         self.assertEqual(summary["repair_request_count"], 1)
+        finished = next(record for record in records if record.get("event") == "job_finished")
+        self.assertEqual(finished["outcome"], "warning")
+        self.assertIs(finished.get("degraded"), True)
+        self.assertEqual(warning["failed_paragraphs"], 2)
+        self.assertEqual(len(finished["failures"]), 2, finished["failures"])
+        self.assertTrue(
+            all(item.get("page") and item.get("paragraph") for item in finished["failures"])
+        )
+        self.assertTrue(
+            any(re.search(r"[\u4e00-\u9fff]", block) for block in text_blocks),
+            "degraded PDF must still contain translated text",
+        )
 
     def test_legacy_repair_disabled_still_repairs_the_group(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
@@ -304,19 +318,26 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
             repair_enabled=True, bad_fragment_repairs=True, echo_first_fragment=True,
         )
-        self.assertNotEqual(completed.returncode, 0, completed.stdout[-5000:])
-        self.assertIsNone(result)
-        self.assertFalse(text_blocks)
+        # 未翻译的正文片段仍被判失败并保留原文，但 PDF 降级导入。
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        self.assertTrue(text_blocks)
         main_items = [record for record in records if record.get("event") == "item_outcome"
                       and record.get("phase") == "main" and record.get("fragment_id") == selected_group]
         self.assertFalse(any(item.get("outcome") == "kept_verbatim" for item in main_items), main_items)
         summary = next(record for record in records if record.get("event") == "repair_summary")
         self.assertGreaterEqual(summary["failed_items"], 2, summary)
         self.assertEqual(summary["repair_request_count"], 1)
-        error = json.loads(re.search(r"(?m)^ZTF_ERROR (\{.*\})\s*$", completed.stdout).group(1))
-        self.assertEqual(error["kind"], "translation_failed")
-        self.assertGreaterEqual(error["failed_paragraphs"], 2)
-        self.assertEqual(request_count, error["requests"])
+        warning = json.loads(
+            re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout).group(1)
+        )
+        self.assertIs(warning.get("degraded"), True, warning)
+        self.assertEqual(warning["failed_paragraphs"], 2)
+        self.assertEqual(request_count, warning["requests"])
+        self.assertTrue(
+            any(re.search(r"[\u4e00-\u9fff]", block) for block in text_blocks),
+            "degraded PDF must still contain translated text",
+        )
 
 
 if __name__ == "__main__":

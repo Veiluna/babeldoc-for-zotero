@@ -845,6 +845,35 @@ async function partialFailureWarningShowsInCompletionProgress() {
   );
 }
 
+async function degradedCompletionProgressIsMarked() {
+  const harness = makeHarness({
+    runner: {
+      async translate() {
+        return {
+          outputPath: "degraded.pdf",
+          warning: {
+            failed_paragraphs: 7,
+            translated_paragraphs: 595,
+            degraded: true,
+            message: "翻译完成（已翻译 595 段），但有 7 段未能安全翻译，已保留原文后导出 PDF。详见诊断日志。",
+            tables: [],
+          },
+        };
+      },
+    },
+  });
+  harness.items.set(46, { id: 46 });
+  harness.queue.enqueue([46]);
+  await harness.queue.onIdle();
+
+  assert.ok(
+    harness.progressWindows[0].texts.some(text =>
+      text.includes("已完成（降级导出）：PDF（中文译本）（有 7 段翻译失败，保留原文）")
+    ),
+    "degraded completion should be marked explicitly",
+  );
+}
+
 async function uncertainTableWarningShowsInCompletionProgress() {
   const harness = makeHarness({
     runner: {
@@ -1006,6 +1035,7 @@ async function importsBilingualArtifactsInOrder() {
   await failureLogsOmitRunnerAndHandlerErrors();
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
+  await degradedCompletionProgressIsMarked();
   await uncertainTableWarningShowsInCompletionProgress();
   await cleanupRunsWhenImportFails();
   await maintenanceLockRefusesActiveWorkAndPausesNewJobs();

@@ -483,7 +483,9 @@ var ZoteroTranslateFilesQueue = (function () {
       if (succeeded) {
         entry.itemProgress.setProgress(100);
         var failedParagraphs = Number(warning && warning.failed_paragraphs);
-        var completionText = "已完成：" + String(completedTitle || "中文译本");
+        var degraded = warning && warning.degraded === true;
+        var completionText = (degraded ? "已完成（降级导出）：" : "已完成：")
+          + String(completedTitle || "中文译本");
         if (Number.isFinite(failedParagraphs) && failedParagraphs > 0) {
           completionText += "（有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文）";
         }

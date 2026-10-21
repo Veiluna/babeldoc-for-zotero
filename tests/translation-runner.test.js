@@ -359,12 +359,16 @@ async function parsesAndRedactsPartialFailureWarning() {
   const harness = makeHarness({
     warning: {
       failed_paragraphs: 3,
+      translated_paragraphs: 595,
+      degraded: true,
       message: "Connection error with RUNNER_SECRET_KEY_789",
       tables: [{ table: "表 4", page: 4, reason: "no data rows" }],
     },
   });
   const result = await harness.runner.translate(harness.item, {});
   assert.equal(result.warning.failed_paragraphs, 3);
+  assert.equal(result.warning.translated_paragraphs, 595);
+  assert.equal(result.warning.degraded, true);
   assert.ok(result.warning.message.includes("Connection error"));
   assert.ok(!result.warning.message.includes(harness.apiKey));
   assert.equal(result.warning.tables.length, 1);
@@ -464,10 +468,22 @@ async function supportsBilingualOutputs() {
   }
 }
 
-async function missingSelectedOutputFails() {
+async function fallsBackToAvailableOutputMode() {
+  // 请求双语但只生成单语：降级导入单语并标注 degraded。
   const dualHarness = makeHarness({ omitDualOutput: true });
+  const dualResult = await dualHarness.runner.translate(
+    dualHarness.item, { outputMode: "dual" },
+  );
+  assert.equal(dualResult.outputPaths.map(entry => entry.kind).join(","), "mono");
+  assert.match(dualResult.outputPath, /\.zh\.mono\.pdf$/);
+  assert.equal(dualResult.warning.degraded, true);
+  assert.ok(dualResult.warning.message.includes("降级"));
+  await dualResult.cleanup();
+
+  // 两种模式都没有有效 PDF 时仍然失败。
+  const missingHarness = makeHarness({ omitDualOutput: true, outputSize: 0 });
   await assert.rejects(
-    dualHarness.runner.translate(dualHarness.item, { outputMode: "dual" }),
+    missingHarness.runner.translate(missingHarness.item, { outputMode: "dual" }),
     /未生成有效的双语对照 PDF/,
   );
 
@@ -481,7 +497,7 @@ async function missingSelectedOutputFails() {
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
   await supportsBilingualOutputs();
-  await missingSelectedOutputFails();
+  await fallsBackToAvailableOutputMode();
   await reportsRequestCountsInProgressAndResult();
   await exposesLinkRestorationStatsAndMappingPath();
   await rejectsQueryURLsBeforeStartingBabelDOC();

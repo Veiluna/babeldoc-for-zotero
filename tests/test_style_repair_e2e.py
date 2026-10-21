@@ -371,22 +371,30 @@ class StyleRepairIntegrationTest(unittest.TestCase):
         self.assertIn("6", compact_text)
         self.assertIn("40", compact_text)
 
-    def test_citation_boundary_still_broken_after_repair_fails_the_document(self) -> None:
+    def test_citation_boundary_still_broken_after_repair_is_exported_with_warning(self) -> None:
         completed, result, error, _inputs, records = self.run_job(citation_repair_broken=True)
-        self.assertIsNone(result, "引用边界仍损坏时不得返回 ZTF_RESULT")
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIsNotNone(error, completed.stdout[-5000:])
-        self.assertIn("引用", error.get("message", ""))
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        self.assertIsNone(error, error)
+        warning = json.loads(
+            re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout).group(1)
+        )
+        self.assertIs(warning.get("degraded"), True, warning)
+        self.assertIn("引用", warning.get("message", ""))
         failures = [record for record in records if record.get("event") == "quality_failure"]
         self.assertTrue(failures, records)
         self.assertIn("页", failures[0].get("location", ""))
 
-    def test_formula_placeholder_still_broken_after_repair_fails_the_document(self) -> None:
+    def test_formula_placeholder_still_broken_after_repair_is_exported_with_warning(self) -> None:
         completed, result, error, _inputs, records = self.run_job(formula_repair_broken=True)
-        self.assertIsNone(result, "公式占位符仍损坏时不得返回 ZTF_RESULT")
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIsNotNone(error, completed.stdout[-5000:])
-        self.assertIn("占位符", error.get("message", ""))
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        self.assertIsNone(error, error)
+        warning = json.loads(
+            re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout).group(1)
+        )
+        self.assertIs(warning.get("degraded"), True, warning)
+        self.assertIn("占位符", warning.get("message", ""))
         failures = [record for record in records if record.get("event") == "quality_failure"]
         self.assertTrue(failures, records)
 

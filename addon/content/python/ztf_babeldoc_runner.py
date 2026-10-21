@@ -1364,6 +1364,25 @@ _TRANSLATABLE_TABLE_HEADERS = {
     "chapter", "chapters", "section", "sections", "figure", "figures", "note",
     "notes", "network traffic", "machine learning", "attack type", "day",
     "days", "hour", "hours", "percentage", "percent",
+    # 单令牌的常见通用表头/数值词；模型原样返回时必须继续翻译，
+    # 不能被后面的单令牌专名回退当成姓名或标识符放过。
+    "average", "avg", "mean", "median", "std", "deviation", "minimum",
+    "maximum", "min", "max", "sum", "filtered", "unfiltered", "scenario",
+    "scenarios", "detector", "detectors", "alert", "alerts", "phase",
+    "phases", "reduction", "increase", "decrease", "ratio", "proportion",
+    "total", "totals", "count", "counts", "group", "groups", "class",
+    "classes", "category", "categories", "value", "values", "type", "types",
+    "name", "names", "source", "target", "result", "results", "score",
+    "scores", "description", "status", "analysis", "evaluation",
+    "experiment", "experiments", "training", "testing", "threshold",
+    # 常见通用表头/网络与指标词：避免全小写专名回退把它们静默保留。
+    "sensor", "sensors", "device", "devices", "protocol", "protocols",
+    "latency", "host", "hosts", "user", "users", "event", "events", "flow",
+    "flows", "packet", "packets", "port", "ports", "node", "nodes", "client",
+    "server", "request", "requests", "response", "responses", "message",
+    "messages", "session", "sessions", "connection", "connections",
+    "bandwidth", "throughput", "timestamp", "input", "output", "process",
+    "layer", "layers", "application", "parameter", "parameters",
 }
 # 句子标点与中文标点：出现任一字符就按句子/标题处理，不按术语保留。
 _SENTENCE_PUNCTUATION_RE = re.compile(
@@ -1386,6 +1405,62 @@ def _strip_trailing_markers(text: str) -> str:
     return str(text or "").rstrip(_TRAILING_MARKER_CHARS).strip()
 
 
+# 表头单元格经常直接放人名、检测器名或作者姓（harrison、russellmitchell、
+# wardbeck）。这些单令牌不是普通英文单词，模型原样返回时不应判为未翻译。
+# 由于没有词典，这里用“功能词黑名单 + 英文构词后缀”做保守回退；真正的
+# 兜底仍是 runner 收尾的降级输出（保留原文 + 警告），不会整篇失败。
+_COMMON_ENGLISH_FUNCTION_WORDS = {
+    "a", "an", "the", "and", "or", "nor", "but", "if", "then", "than",
+    "as", "at", "by", "for", "from", "in", "into", "of", "on", "onto",
+    "to", "with", "without", "via", "per", "vs", "versus", "about",
+    "above", "below", "between", "during", "after", "before", "under",
+    "over", "through", "within", "across", "against", "among", "around",
+    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does",
+    "did", "has", "have", "had", "can", "could", "may", "might", "must",
+    "shall", "should", "will", "would", "it", "its", "this", "that",
+    "these", "those", "we", "our", "us", "they", "their", "them", "he",
+    "she", "his", "her", "you", "your", "i", "not", "no", "all", "any",
+    "each", "every", "both", "few", "more", "most", "other", "some",
+    "such", "only", "own", "same", "so", "too", "very", "just", "also",
+}
+# 英文构词后缀：命中即视为普通英文词，不按专名保留。
+_PROPER_NAME_SUFFIX_RE = re.compile(
+    r"(?:tion|sion|ing|ed|ly|ment|ness|ity|ies|ive|ous|able|ible|al|ic|"
+    r"age|ance|ence|ate|ise|ize|ary|ory)$",
+    re.IGNORECASE,
+)
+
+
+def _proper_noun_like_token(token: str) -> bool:
+    """Whether a lone *all-lowercase* table token is plausibly a proper name.
+
+    Deliberately conservative: only all-lowercase tokens are eligible (capitalized
+    short words already have their own older fallback; longer capitalized words
+    must translate). The token must be a short Latin token, not a known
+    translatable header/title word, not an abbreviation, not a common English
+    function word, and neither the token nor its naive singular may carry a
+    common English derivational suffix. Genuine misses only cost a warning
+    because the runner now degrades instead of failing the whole document.
+    """
+    if not re.fullmatch(r"[A-Za-z][A-Za-z'’-]{2,29}", token):
+        return False
+    if not token.islower():
+        return False
+    folded = token.casefold()
+    if folded in _TERM_ABBREVIATIONS:
+        return False
+    if folded in _COMMON_ENGLISH_FUNCTION_WORDS:
+        return False
+    singular = folded[:-1] if folded.endswith("s") and len(folded) > 3 else folded
+    candidates = {folded, singular}
+    if candidates & (_TRANSLATABLE_TITLE_WORDS | _TRANSLATABLE_TABLE_HEADERS):
+        return False
+    for candidate in candidates:
+        if _PROPER_NAME_SUFFIX_RE.search(candidate):
+            return False
+    return True
+
+
 def _term_like_source(source: Any, layout_label: str = "") -> bool:
     """术语、缩写、标识符或编号：模型原样返回时无需翻译。
 
@@ -1402,8 +1477,10 @@ def _term_like_source(source: Any, layout_label: str = "") -> bool:
        在 _TERM_ABBREVIATIONS 中（http、https、auc 等），或 2–6 个
        全大写字母（SECOND、SVM、CNN）；
     4. 第二层（宽松回退，仅 table_header / table_body）：未命中黑名单的
-       单个首字母大写短词（Adaboost、Swin）放行。标题、正文等其它角色
-       只保留第一层，避免 Security、Overview、Method 等被误放行。
+       单个首字母大写短词（Adaboost、Swin）放行；全小写单令牌（harrison、
+       russellmitchell 这类人名/检测器名）走 _proper_noun_like_token 的
+       保守回退，且不影响标题、正文角色。误判的代价只是保留原文并给出
+       降级警告（见 ADR 0004），不再整篇失败。
     """
     text = _PLACEHOLDER_TOKEN_RE.sub(" ", str(source or "")).strip()
     if not text or len(text) > 40:
@@ -1453,7 +1530,13 @@ def _term_like_source(source: Any, layout_label: str = "") -> bool:
         return False
     if len(unmarked_words) == 1:
         word = unmarked_words[0]
-        return word[:1].isupper() and len(word) <= 8
+        if word[:1].isupper() and len(word) <= 8:
+            return True
+        # 仅全小写单令牌尝试专名回退（harrison、russellmitchell）；较长的
+        # 大写普通词（Bandwidth、Throughput）仍必须翻译。
+        if word.islower():
+            return _proper_noun_like_token(word)
+        return False
     return False
 
 
@@ -1794,7 +1877,11 @@ def _paragraph_location(request_state: dict[str, Any], paragraph: Any) -> str:
 def _record_table_header_layout_failure(
     request_state: dict[str, Any], paragraph: Any, api_key: str
 ) -> None:
-    """An identified header whose translation cannot fit its cell fails the job."""
+    """An identified header whose translation cannot fit its cell is a structural failure.
+
+    It is recorded as a quality failure and, since 0.5.2, degrades the result
+    (import with a warning) instead of discarding an already produced PDF.
+    """
     failed_ids = request_state.setdefault("table_header_layout_failed_ids", set())
     if id(paragraph) in failed_ids:
         return
@@ -1824,7 +1911,7 @@ def _record_quality_failure(
     api_key: str,
     phase: str = "repair",
 ) -> None:
-    """Remember a structural failure; main() turns any of them into no result."""
+    """Remember a structural failure; main() imports the PDF with a warning when possible."""
     location = _paragraph_location(request_state, paragraph)
     key: Any = id(paragraph) if paragraph is not None else f"unbound:{location}:{reason}"
     positions = request_state.get("paragraph_positions") or {}
@@ -6259,6 +6346,290 @@ def _link_warning_message(stats: dict[str, Any]) -> str:
             % (source, "，".join(details)))
 
 
+def _requested_output_mode(arguments: list[str]) -> str:
+    """Which output the caller asked BabelDOC for (mirrors the JS --no-dual flag)."""
+    return "mono" if "--no-dual" in arguments else "dual"
+
+
+def _output_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def _discover_output_files(output_directory: str) -> dict[str, str]:
+    """Find BabelDOC's mono/dual PDFs when the finish event or exit code is unusable."""
+    found: dict[str, str] = {"mono": "", "dual": ""}
+    if not output_directory:
+        return found
+    try:
+        names = os.listdir(output_directory)
+    except OSError:
+        return found
+    for name in names:
+        lowered = name.lower()
+        if lowered.endswith(".zh.mono.pdf"):
+            kind = "mono"
+        elif lowered.endswith(".zh.dual.pdf"):
+            kind = "dual"
+        else:
+            continue
+        path = os.path.join(output_directory, name)
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) <= 0:
+                continue
+        except OSError:
+            continue
+        if not found[kind] or _output_mtime(path) >= _output_mtime(found[kind]):
+            found[kind] = path
+    return found
+
+
+def _can_degrade_output(state: dict[str, Any], translated_paragraphs: int) -> bool:
+    """Hard gate for degraded output: a PDF exists and at least one paragraph was translated."""
+    return bool(state.get("result") or state.get("dual_result")) and translated_paragraphs > 0
+
+
+def _degraded_output_failures(
+    request_state: dict[str, Any],
+    decision: dict[str, Any] | None,
+    state: dict[str, Any],
+    exit_code: int,
+    api_key: str,
+    requested_mode: str | None = None,
+) -> list[dict[str, Any]]:
+    """Collect bounded failure details for a degraded result.
+
+    Paragraph failures are de-duplicated by (page, paragraph) and counted once.
+    Errors that cannot be mapped to a paragraph (provider/auth/BabelDOC/mode
+    downgrade) are returned with page=None so they are shown to the user without
+    inflating the "N 段失败" count. Provider free text is reduced with
+    log_safe_error() before it can reach the diagnostics log.
+    """
+    paragraph_failures: dict[tuple[int, int], str] = {}
+    document_errors: list[str] = []
+
+    def add_paragraph(page: Any, paragraph: Any, reason: Any) -> None:
+        try:
+            key = (int(page), int(paragraph))
+        except (TypeError, ValueError):
+            return
+        text = _bounded_log_reason(reason, api_key)
+        if text and key not in paragraph_failures:
+            paragraph_failures[key] = text
+
+    def add_document_error(text: str) -> None:
+        if text and text not in document_errors:
+            document_errors.append(text)
+
+    def add_provider_error(value: Any) -> None:
+        summary = log_safe_error(value, api_key)
+        if not summary or summary == "unclassified":
+            summary = "翻译服务返回错误（详见诊断日志）。"
+        add_document_error(summary)
+
+    if decision and decision.get("kind") == "translation_failed":
+        for item in decision.get("failures") or []:
+            if isinstance(item, dict):
+                add_paragraph(
+                    item.get("page"), item.get("paragraph"), item.get("reason", "")
+                )
+        if int(decision.get("failed_paragraphs") or 0) > len(paragraph_failures):
+            add_document_error("应译段落未能完成（详见诊断日志）。")
+    for failure in (request_state.get("quality_failures") or {}).values():
+        if isinstance(failure, dict):
+            add_paragraph(
+                failure.get("page"),
+                failure.get("paragraph"),
+                failure.get("reason", ""),
+            )
+    if request_state.get("fatal_error"):
+        add_provider_error(
+            request_state.get("fatal_error_log") or request_state["fatal_error"]
+        )
+    if state.get("error"):
+        add_provider_error(state["error"])
+    if exit_code:
+        add_document_error(f"BabelDOC 退出码 {exit_code}")
+    if requested_mode == "dual" and state.get("result") and not state.get("dual_result"):
+        add_document_error("未生成双语对照 PDF，已降级导出单语中文译本。")
+    elif requested_mode == "mono" and state.get("dual_result") and not state.get("result"):
+        add_document_error("未生成单语中文 PDF，已降级导出双语对照译本。")
+    failures: list[dict[str, Any]] = [
+        {"page": page, "paragraph": paragraph, "reason": reason}
+        for (page, paragraph), reason in sorted(paragraph_failures.items())
+    ]
+    failures.extend(
+        {"page": None, "paragraph": None, "reason": reason}
+        for reason in document_errors
+    )
+    return failures
+
+
+def _degraded_output_failed_count(failures: list[dict[str, Any]]) -> int:
+    """Number of distinct paragraphs that kept their source text."""
+    return sum(1 for item in failures if item.get("page") is not None)
+
+
+def _degraded_output_message(
+    failures: list[dict[str, Any]],
+    translated_paragraphs: int,
+    count_summary: str,
+) -> str:
+    """User-facing message for a PDF that is imported despite section failures."""
+    located = [item for item in failures if item.get("page") is not None]
+    unlocated = [item for item in failures if item.get("page") is None]
+    count = len(located)
+    if count:
+        parts = [
+            f"翻译完成（已翻译 {translated_paragraphs} 段），但有 {count} 段未能安全翻译，"
+            "已保留原文后导出 PDF"
+        ]
+        parts.append(
+            "；".join(
+                f"第 {item['page']} 页段落 {item['paragraph']}：{item['reason']}"
+                for item in located[:5]
+            )
+        )
+    elif unlocated:
+        parts = [
+            f"翻译完成（已翻译 {translated_paragraphs} 段），但翻译过程中发生错误，"
+            "已保留可恢复内容并导出 PDF"
+        ]
+    else:
+        parts = ["翻译完成，已导出 PDF"]
+    if unlocated:
+        parts.append("；".join(item["reason"] for item in unlocated[:2]))
+    if count and count_summary:
+        parts.append(count_summary)
+    return "；".join(part for part in parts if part) + "。详见诊断日志。"
+
+
+def _result_payload(
+    state: dict[str, Any],
+    request_state: dict[str, Any],
+    request_budget: Any,
+    job_log_path: str,
+    link_stats: dict[str, Any] | None,
+    table_warnings: list[dict[str, Any]],
+    dual_link_stats: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build the ZTF_RESULT payload shared by success and degraded exports."""
+    return {
+        "mono": state.get("result") or "",
+        "dual": state.get("dual_result") or None,
+        # Lets the plugin remember the provider's token-limit parameter.
+        "token_param": request_state.get("token_param"),
+        "requests": request_budget.requests,
+        "main_minimum_requests": request_state.get(
+            "main_minimum_requests", request_budget.requests
+        ),
+        "planned": request_budget.planned,
+        "log_path": job_log_path or None,
+        "repair_request_count": request_state.get("repair_request_count", 0),
+        "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+        "links": {
+            key: link_stats.get(key)
+            for key in ("source", "restored", "unresolved", "unsupported",
+                        "mapping_path", "error", "split_layout", "paragraphs")
+        } if link_stats else None,
+        "table_warnings": table_warnings,
+        "dual_links": dual_link_stats,
+    }
+
+
+def _finish_degraded_output(
+    request_state: dict[str, Any],
+    state: dict[str, Any],
+    request_budget: Any,
+    failures: list[dict[str, Any]],
+    translated_paragraphs: int,
+    count_summary: str,
+    job_log_path: str,
+    api_key: str,
+) -> None:
+    """Import the produced PDF even though some paragraphs kept the source text."""
+    table_warnings = list(request_state.get("table_warnings") or [])
+    link_stats: dict[str, Any] = {}
+    dual_link_stats: dict[str, Any] = {}
+    try:
+        link_stats = _restore_links_after_layout(state, request_state, api_key)
+        request_state["link_stats"] = link_stats
+        dual_link_stats = _restore_dual_links_after_layout(
+            state, request_state, link_stats, api_key
+        )
+    except Exception as error:  # noqa: BLE001 - links are best effort in degraded mode
+        _write_job_log(
+            request_state,
+            {
+                "event": "degraded_link_restore_error",
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+    failed_paragraphs = _degraded_output_failed_count(failures)
+    warning_message = _degraded_output_message(
+        failures, translated_paragraphs, count_summary
+    )
+    _write_job_log(
+        request_state,
+        {
+            "event": "job_finished",
+            "outcome": "warning",
+            "degraded": True,
+            "kind": "degraded_output",
+            "requests": request_budget.requests,
+            "planned_requests": request_budget.planned,
+            "fragment_item_count": len(
+                request_state.get("fragment_paragraph_ids", set())
+            ),
+            "repair_request_count": request_state.get("repair_request_count", 0),
+            "translated_paragraphs": translated_paragraphs,
+            "failed_paragraphs": failed_paragraphs,
+            "count_summary": count_summary,
+            "failures": failures[:20],
+            "document_errors": [
+                item["reason"] for item in failures if item.get("page") is None
+            ],
+            "table_warnings": table_warnings,
+            "log_path": job_log_path or None,
+        },
+        api_key,
+    )
+    _emit(
+        "ZTF_WARNING ",
+        {
+            "message": warning_message,
+            "degraded": True,
+            "failed_paragraphs": failed_paragraphs,
+            "translated_paragraphs": translated_paragraphs,
+            "failures": failures[:20],
+            "document_errors": [
+                item["reason"] for item in failures if item.get("page") is None
+            ],
+            "tables": table_warnings,
+            "requests": request_budget.requests,
+            "planned": request_budget.planned,
+            "log_path": job_log_path or None,
+        },
+        api_key,
+    )
+    _emit(
+        "ZTF_RESULT ",
+        _result_payload(
+            state,
+            request_state,
+            request_budget,
+            job_log_path,
+            link_stats,
+            table_warnings,
+            dual_link_stats,
+        ),
+        api_key,
+    )
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -6474,7 +6845,21 @@ def main() -> int:
         print(_redact(formatted_traceback, api_key), file=sys.stderr, flush=True)
         exit_code = 1
 
+    output_directory = ""
+    arguments = sys.argv[1:]
+    if "--output" in arguments:
+        output_index = arguments.index("--output")
+        if output_index + 1 < len(arguments):
+            output_directory = arguments[output_index + 1]
+    requested_mode = _requested_output_mode(arguments)
+    discovered_output = _discover_output_files(output_directory)
+    if not state.get("result") and discovered_output["mono"]:
+        state["result"] = discovered_output["mono"]
+    if not state.get("dual_result") and discovered_output["dual"]:
+        state["dual_result"] = discovered_output["dual"]
+
     policy_instance = locals().get("policy")
+    decision = policy_instance.decision() if policy_instance else None
     translation_count_summary = (
         policy_instance.count_summary() if policy_instance else ""
     )
@@ -6484,10 +6869,34 @@ def main() -> int:
             return message + "；" + translation_count_summary
         return message
 
+    # 降级输出：BabelDOC 已经产出 PDF 且至少有一段真正翻译成功时，任何
+    # 段落级/结构性失败都不再丢弃 PDF；原段落保留原文并给完成警告。
+    # 只有“没有产物”或“0 段成功”才继续走下面的硬失败分支。
+    kept_verbatim = request_state.get("kept_verbatim_paragraph_ids") or set()
+    translated_paragraphs = len(
+        set(request_state.get("translated_paragraph_ids") or ()) - set(kept_verbatim)
+    )
+    if _can_degrade_output(state, translated_paragraphs):
+        degraded_failures = _degraded_output_failures(
+            request_state, decision, state, exit_code, api_key, requested_mode
+        )
+        if degraded_failures:
+            _finish_degraded_output(
+                request_state,
+                state,
+                request_budget,
+                degraded_failures,
+                translated_paragraphs,
+                translation_count_summary,
+                job_log_path,
+                api_key,
+            )
+            return 0
+
     if request_state.get("fatal_error"):
         # 补译批次因鉴权/重试耗尽而失败时，policy 已记录每个受影响段落的
         # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
-        fatal_decision = policy_instance.decision() if policy_instance else None
+        fatal_decision = decision
         fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
         # reasons 可能带服务商/文档回显；日志与协议只保留有界摘要。
         fatal_failures = [
@@ -6583,7 +6992,6 @@ def main() -> int:
         return 1
 
     # BabelDOC can swallow paragraph API errors and still emit a PDF and exit 0.
-    decision = policy.decision() if "policy" in locals() else None
     if decision and decision["kind"] == "translation_failed":
         _write_job_log(
             request_state,
@@ -6638,7 +7046,7 @@ def main() -> int:
         )
         return exit_code or 1
 
-    if exit_code != 0 or not state["result"]:
+    if exit_code != 0 or not (state.get("result") or state.get("dual_result")):
         _write_job_log(
             request_state,
             {
@@ -6722,27 +7130,15 @@ def main() -> int:
     )
     _emit(
         "ZTF_RESULT ",
-        {
-            "mono": state["result"],
-            "dual": state.get("dual_result") or None,
-            # Lets the plugin remember the provider's token-limit parameter.
-            "token_param": request_state.get("token_param"),
-            "requests": request_budget.requests,
-            "main_minimum_requests": request_state.get(
-                "main_minimum_requests", request_budget.requests
-            ),
-            "planned": request_budget.planned,
-            "log_path": job_log_path or None,
-            "repair_request_count": request_state.get("repair_request_count", 0),
-            "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-            "links": {
-                key: link_stats.get(key)
-                for key in ("source", "restored", "unresolved", "unsupported",
-                            "mapping_path", "error", "split_layout", "paragraphs")
-            } if link_stats else None,
-            "table_warnings": table_warnings,
-            "dual_links": dual_link_stats,
-        },
+        _result_payload(
+            state,
+            request_state,
+            request_budget,
+            job_log_path,
+            link_stats,
+            table_warnings,
+            dual_link_stats,
+        ),
         api_key,
     )
     return exit_code

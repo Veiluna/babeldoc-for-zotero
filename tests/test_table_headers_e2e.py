@@ -437,16 +437,20 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         self.assertTrue(CJK_RE.search(pages[1]))
         self.assertTrue(CJK_RE.search(pages[2]))
 
-    def test_clear_header_failure_is_not_imported(self) -> None:
+    def test_clear_header_failure_is_imported_with_a_warning(self) -> None:
         completed, result, error, inputs, records, request_count = self.run_job(
             header_echo=True
         )
-        self.assertIsNone(result, "已识别表头仍失败时不得返回 ZTF_RESULT")
-        self.assertNotEqual(completed.returncode, 0)
-        self.assertIsNotNone(error, completed.stdout[-5000:])
-        self.assertEqual(error.get("kind"), "translation_failed")
-        self.assertTrue(error.get("failed_paragraphs", 0) > 0)
-        self.assertIn("页", error.get("message", ""))
+        # 已识别表头原样返回仍算失败，但 BabelDOC 已产出 PDF：降级导入。
+        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
+        self.assertIsNotNone(result, completed.stdout[-5000:])
+        self.assertIsNone(error, error)
+        warning = json.loads(
+            re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout).group(1)
+        )
+        self.assertIs(warning.get("degraded"), True, warning)
+        self.assertTrue(warning.get("failed_paragraphs", 0) > 0)
+        self.assertIn("页", warning.get("message", ""))
         header_items = [
             item for item in inputs if item.get("layout_label") == "table_header"
         ]
@@ -464,14 +468,10 @@ class TableHeaderIntegrationTest(unittest.TestCase):
             ),
             failures,
         )
-        self.assertFalse(
-            any(
-                record.get("event") == "job_finished"
-                and record.get("outcome") == "success"
-                for record in records
-            ),
-            records,
-        )
+        finished = next(record for record in records if record.get("event") == "job_finished")
+        self.assertEqual(finished["outcome"], "warning")
+        self.assertIs(finished.get("degraded"), True)
+        self.assertEqual(finished["failed_paragraphs"], warning["failed_paragraphs"])
 
 
 if __name__ == "__main__":

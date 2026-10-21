@@ -48,10 +48,13 @@ class PolicyHandler(MockOpenAIHandler):
             time.sleep(1)
             self.close_connection = True
             return
-        outputs = [
-            {"id": item["id"], "output": "" if action == "bad" and i == 0 else item["input"] if action == "echo" and i == 0 else _synthetic_translation(item["input"], i)}
-            for i, item in enumerate(items)
-        ]
+        if action == "bad_all":
+            outputs = [{"id": item["id"], "output": ""} for item in items]
+        else:
+            outputs = [
+                {"id": item["id"], "output": "" if action == "bad" and i == 0 else item["input"] if action == "echo" and i == 0 else _synthetic_translation(item["input"], i)}
+                for i, item in enumerate(items)
+            ]
         # 每次只确认一个段落，迫使后续请求超过旧的 20 次上限。
         if action == "prefix" and len(outputs) > 1:
             outputs = outputs[:2]
@@ -156,17 +159,28 @@ class RequestPolicyE2E(unittest.TestCase):
         self.assertEqual([event["request_index"] for event in requests], [1, 2, 3])
         self.assertEqual([event["actual_output_tokens"] for event in requests], [None, None, 30])
 
-    def test_partial_translation_still_failing_after_repair_has_no_result(self):
+    def test_partial_translation_after_repair_is_imported_with_warning(self):
         job = self.run_job(["bad"])
-        self.assertNotEqual(job[0], 0)
-        self.assertEqual([kind for kind, _ in job[1]], ["ZTF_ERROR"], job[1])
+        # 补译后仍有一段保留原文；PDF 已产出，因此降级导入而不是丢弃。
+        self.assertEqual(job[0], 0, job[5])
+        self.assertTrue(any(kind == "ZTF_RESULT" for kind, _ in job[1]), job[1])
+        warning = next(value for kind, value in job[1] if kind == "ZTF_WARNING")
+        self.assertIs(warning.get("degraded"), True, warning)
         self.assertEqual(len(job[3]), 2, "即使旧偏好关闭补译也必须执行一轮")
-        failure = job[1][0][1]
-        self.assertEqual(failure["kind"], "translation_failed")
-        self.assertTrue(failure["failures"])
-        self.assertEqual(failure["failures"][0]["page"], 1)
-        self.assertGreaterEqual(failure["failures"][0]["paragraph"], 1)
-        self.assertTrue(failure["failures"][0]["reason"])
+        self.assertTrue(warning["failures"])
+        self.assertEqual(warning["failures"][0]["page"], 1)
+        self.assertGreaterEqual(warning["failures"][0]["paragraph"], 1)
+        self.assertTrue(warning["failures"][0]["reason"])
+        self.assertTrue(any("\u4e00" <= char <= "\u9fff" for char in job[4]))
+
+    def test_no_translated_paragraph_fails_even_when_babeldoc_emits_a_pdf(self):
+        # 全部段落都保留原文时，即便 BabelDOC 仍写出了 PDF，也不得导入：
+        # 0 段真正翻译成功属于硬失败边界。
+        job = self.run_job(["bad_all", "bad_all"])
+        self.assertNotEqual(job[0], 0, job[5])
+        self.assertFalse(any(kind == "ZTF_RESULT" for kind, _ in job[1]), job[1])
+        if job[1]:
+            self.assertEqual(job[1][0][0], "ZTF_ERROR", job[1])
 
     def test_prose_echo_requires_repair_even_when_other_paragraphs_succeed(self):
         job = self.run_job(["echo", "ok"])
@@ -239,17 +253,19 @@ class RequestPolicyE2E(unittest.TestCase):
         self.assertEqual(job[3][1][2], job[3][2][2])
 
     def test_repair_api_failure_reports_paragraph_locations(self):
-        # 主批次有一项不可用、补译请求返回 401：最终错误仍须给出页码和段落，
-        # 不能只剩服务商异常。
+        # 主批次有一项不可用、补译请求返回 401：降级警告仍须给出页码和
+        # 段落，不能只剩服务商异常；已有译文的 PDF 照常导入。
         job = self.run_job(["bad", 401])
-        self.assertNotEqual(job[0], 0, job[5])
-        self.assertEqual([kind for kind, _ in job[1]], ["ZTF_ERROR"], job[1])
-        error = job[1][0][1]
-        failures = error.get("failures") or []
-        self.assertTrue(failures, error)
-        self.assertEqual(failures[0]["page"], 1)
-        self.assertGreaterEqual(failures[0]["paragraph"], 1)
-        self.assertTrue(failures[0]["reason"])
+        self.assertEqual(job[0], 0, job[5])
+        self.assertTrue(any(kind == "ZTF_RESULT" for kind, _ in job[1]), job[1])
+        warning = next(value for kind, value in job[1] if kind == "ZTF_WARNING")
+        self.assertIs(warning.get("degraded"), True, warning)
+        failures = warning.get("failures") or []
+        located = [item for item in failures if item.get("page") is not None]
+        self.assertTrue(located, warning)
+        self.assertEqual(located[0]["page"], 1)
+        self.assertGreaterEqual(located[0]["paragraph"], 1)
+        self.assertTrue(located[0]["reason"])
 
     def test_cancel_interrupts_retry_wait_without_another_attempt(self):
         job = self.run_job([503], cancel=True)

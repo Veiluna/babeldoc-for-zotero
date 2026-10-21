@@ -380,10 +380,15 @@ var ZoteroTranslateFilesRunner = (function () {
               });
             });
           }
+          var translatedParagraphs = Number(event.translated_paragraphs);
           warning = {
             failed_paragraphs: Number.isFinite(failedParagraphs)
               ? Math.max(0, Math.floor(failedParagraphs))
               : 0,
+            translated_paragraphs: Number.isFinite(translatedParagraphs)
+              ? Math.max(0, Math.floor(translatedParagraphs))
+              : 0,
+            degraded: event.degraded === true,
             message: redact(event.message || "部分段落翻译失败。", apiKey),
             tables: warningTables,
           };
@@ -435,9 +440,33 @@ var ZoteroTranslateFilesRunner = (function () {
         throw new Error(formatFailure(exitCode, eventError, stderrLines, stderrStreamError, apiKey));
       }
 
+      // 请求的输出模式缺失时，只要 BabelDOC 产出了另一种有效 PDF，
+      // 就降级导入已有产物并警告，而不是丢掉整篇结果。
+      function withDegradedWarning(currentWarning, message) {
+        var base = currentWarning || { failed_paragraphs: 0, message: "", tables: [] };
+        var mergedMessage = base.message ? base.message + "；" + message : message;
+        return {
+          failed_paragraphs: base.failed_paragraphs,
+          translated_paragraphs: base.translated_paragraphs || 0,
+          degraded: true,
+          message: redact(mergedMessage, apiKey),
+          tables: base.tables || [],
+        };
+      }
+
+      var artifacts = [];
       if (outputMode === "dual") {
         if (!resultDualPath) resultDualPath = await findDualOutput(workDir);
-        if (!isValidOutput(resultDualPath)) {
+        if (!resultPath) resultPath = await findMonolingualOutput(workDir);
+        if (isValidOutput(resultDualPath)) {
+          artifacts = [{ kind: "dual", path: resultDualPath }];
+        } else if (isValidOutput(resultPath)) {
+          artifacts = [{ kind: "mono", path: resultPath }];
+          warning = withDegradedWarning(
+            warning,
+            "未生成有效的双语对照 PDF，已自动降级导出单语中文译本。",
+          );
+        } else {
           throw new Error(formatFailure(
             exitCode,
             eventError,
@@ -449,7 +478,17 @@ var ZoteroTranslateFilesRunner = (function () {
         }
       } else {
         if (!resultPath) resultPath = await findMonolingualOutput(workDir);
-        if (!isValidOutput(resultPath)) {
+        if (isValidOutput(resultPath)) {
+          artifacts = [{ kind: "mono", path: resultPath }];
+        } else if (isValidOutput(resultDualPath)) {
+          // mono 模式传了 --no-dual，正常不会出现双语产物；这是防御
+          // BabelDOC 异常写盘顺序的兜底，避免丢弃已生成的有效 PDF。
+          artifacts = [{ kind: "dual", path: resultDualPath }];
+          warning = withDegradedWarning(
+            warning,
+            "未生成有效的中文 PDF，已自动降级导出双语对照译本。",
+          );
+        } else {
           throw new Error(formatFailure(
             exitCode,
             eventError,
@@ -460,11 +499,6 @@ var ZoteroTranslateFilesRunner = (function () {
           ));
         }
       }
-
-      var artifacts = [{
-        kind: outputMode,
-        path: outputMode === "dual" ? resultDualPath : resultPath,
-      }];
 
       return {
         outputPath: artifacts[0].path,
