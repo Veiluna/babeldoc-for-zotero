@@ -1,14 +1,14 @@
 # BabelDOC for Zotero
 
-当前版本：**0.5.0**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机自动安装的 BabelDOC 环境和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
+当前版本：**0.5.1**。主要支持 **Zotero 10.0.6（64 位）**，兼容 Zotero 7–10。这是一个 Windows 插件。它调用本机自动安装的 BabelDOC 环境和用户配置的 OpenAI 兼容接口，生成保持版式的简体中文 PDF，并把译本作为新的文件附件导入 Zotero。
 
 Zotero 会把新 ID 识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 
 ## 功能简介
 
-- 只在用户从条目或 PDF 附件的右键菜单选择“翻译成中文 PDF”后运行，不会自动翻译。
+- 只在用户从 PDF 附件的右键菜单选择 **BabelDOC for Zotero → 翻译成中文 PDF / 生成双语对照 PDF** 后运行，不会自动翻译。
 - 按 PDF 的文字层进行翻译，包括可编辑的矢量图表文字和题注；v1 不对图片中的文字做 OCR。
-- 输出格式可选单语中文译本、左右双语对照（左原文、右译文，引用在各侧跳转），或两种同时生成；默认单语。原 PDF 保持不变。
+- 右键菜单提供两种输出：**翻译成中文 PDF** 生成单语中文译本，**生成双语对照 PDF** 生成左右双语对照（左原文、右译文，引用在各侧跳转）。两种模式都只执行一次翻译；原 PDF 保持不变。
 - 结果作为新的已存储文件附件加入 Zotero。单语译本标题为“原标题（中文译本）”，双语对照为“原标题（中英对照）”。
 - 插件没有设置页数或单篇请求次数上限。多个任务按 FIFO 顺序排队，同一时间处理一个；单次请求遇到短暂故障最多重试两次，任务最终失败后提示错误并继续下一个任务。
 - 所有已识别的应译内容必须完成。主翻译后始终执行一轮合并补译；补译后仍失败则整篇失败，不导入任何译本，并报告页码、段落及原因。按保护规则保留的内容不计为失败。
@@ -46,17 +46,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-xpi.ps1
 1. **接口地址**：例如 `https://api.example.com/v1`。插件会把根地址归一化为 Chat Completions endpoint，例如 `https://api.example.com/v1/chat/completions`。主机根地址会补成 `/v1/chat/completions`；版本路径（如 `/v1`）和 `/v1beta/openai` 会补上 `/chat/completions`；已填写完整的 `/chat/completions` endpoint 保持不变。
 2. **API key**：接口服务提供的密钥。
 3. **模型名**：接口服务支持的模型名称。
-4. **输出格式**：默认“单语中文译本”；可选“左右双语对照”或“同时生成两种”。三种模式都只执行一次翻译，不会增加模型请求。
-5. **翻译参考文献**：默认关闭，按原有规则保留参考文献。
-6. **下载源**：默认使用国内镜像，也可切换到官方源。插件装好后，Zotero 启动时会自动在后台下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型；若未装完，翻译时会从中断处继续（通常需要数分钟并下载数百 MB）。设置页的“修复环境”会完整删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 后从头安装；已有环境会先询问确认，正在翻译时不能开始修复。清理不会删除 `%USERPROFILE%\.cache\babeldoc` 或 Zotero 数据目录中的日志。
+4. **翻译参考文献**：默认关闭，按原有规则保留参考文献。
+5. **下载源**：默认使用国内镜像，也可切换到官方源。插件装好后，Zotero 启动时会自动在后台下载并安装 uv、Python 3.12、BabelDOC 0.6.4 及字体和模型；若未装完，翻译时会从中断处继续（通常需要数分钟并下载数百 MB）。设置页的“修复环境”会完整删除 `%LOCALAPPDATA%\babeldoc-for-zotero` 后从头安装；已有环境会先询问确认，正在翻译时不能开始修复。清理不会删除 `%USERPROFILE%\.cache\babeldoc` 或 Zotero 数据目录中的日志。
 
-这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.translateReferences`、`extensions.babeldoc-for-zotero.outputMode` 和 `extensions.babeldoc-for-zotero.downloadSource`。最大输出固定 `50000`、单篇请求不限次数、合并补译始终开启；对应的三项控件已移除，历史偏好及旧版插件传入的环境变量不再影响这些规则。
+这些设置分别使用 Zotero 偏好键 `extensions.babeldoc-for-zotero.baseURL`、`extensions.babeldoc-for-zotero.apiKey`、`extensions.babeldoc-for-zotero.model`、`extensions.babeldoc-for-zotero.translateReferences` 和 `extensions.babeldoc-for-zotero.downloadSource`。最大输出固定 `50000`、单篇请求不限次数、合并补译始终开启；对应的三项控件已移除，历史偏好及旧版插件传入的环境变量不再影响这些规则。
 
 点击 **测试连接** 后，插件会向接口发送一次简短的 `ping` 请求。它不会运行一次完整的 PDF 翻译。
 
 ## 使用
 
-1. 在 Zotero 中右键点击普通条目或 PDF 附件，选择 **翻译成中文 PDF**。
+1. 在 Zotero 中右键点击 PDF 附件（或包含 PDF 附件的普通条目），指向 **BabelDOC for Zotero** 子菜单，选择 **翻译成中文 PDF** 或 **生成双语对照 PDF**。
 2. 插件会显示入队提示。队列按顺序逐个处理，当前任务会打开进度窗口，显示阶段、进度和排队数量。
 3. 成功后，所选产物会作为新附件导入对应的父条目：单语标题为“原标题（中文译本）”，双语为“原标题（中英对照）”；原始 PDF 文件不变。
 4. 如果合并补译后仍有应译段落失败，任务会显示页码、段落及原因，不导入译本。按选项保留的参考文献，以及专名、缩写、数字、公式等保护内容不计为失败。
@@ -139,6 +138,12 @@ python tests/test_request_policy_e2e.py
 - 每个任务会在 Zotero 数据目录的 `babeldoc-for-zotero/logs/<时间>-<附件 key>.jsonl` 写入脱敏日志，保留最近 20 个任务日志。日志只含请求和段落摘要、最多 80 字的输入预览、检查结果、补译状态及字号统计，不含 API key 或完整正文。失败提示和完成消息会显示日志路径。
 
 设置页新增两项：**失败段落合并补译（单轮；超出单次预算时可用多个请求，均计入请求上限）**（默认开启）和**翻译参考文献**（默认关闭）。补译最多执行一个合并轮次；当失败段落超过单次输出预算时，该轮会拆成多次请求，且每次都计入请求上限。
+
+## 0.5.1 改进
+
+- 删除设置页的“输出格式”：右键 PDF 附件后，在 **BabelDOC for Zotero** 子菜单直接选择 **翻译成中文 PDF** 或 **生成双语对照 PDF**。
+- 修复术语与标识符被误判为“未翻译英文”：F1、Adaboost、http、https 等短术语原样返回时按保留原文处理，不再进入无意义的合并补译或导致整篇失败。
+- 每个翻译任务在入队时固定输出类型；同一 PDF 仍只排一个任务，不会重复入队。
 
 ## 0.5.0 改进
 

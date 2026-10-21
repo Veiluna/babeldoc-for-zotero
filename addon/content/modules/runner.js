@@ -121,6 +121,7 @@ var ZoteroTranslateFilesRunner = (function () {
     options = options || {};
     var signal = options.signal;
     var onProgress = typeof options.onProgress === "function" ? options.onProgress : function () {};
+    var outputMode = options.outputMode === "dual" ? "dual" : "mono";
     var settings = ZoteroTranslateFilesConfig.getSettings();
     var apiKey = settings.apiKey;
     var workDir = null;
@@ -241,10 +242,8 @@ var ZoteroTranslateFilesRunner = (function () {
         "--report-interval", "0.5",
       ];
 
-      // mono: no dual PDF; dual/both: BabelDOC writes the side-by-side dual.
-      // The mono file is still produced for dual-only mode because the link
-      // mapping is built from it; it is simply not imported.
-      if (settings.outputMode === "mono") args.push("--no-dual");
+      // mono: no dual PDF; dual: BabelDOC writes the side-by-side dual.
+      if (outputMode === "mono") args.push("--no-dual");
 
       // The API key is supplied only through the child environment, never the OS command line.
       if (args.some(function (argument) { return argument === apiKey; })) {
@@ -436,11 +435,7 @@ var ZoteroTranslateFilesRunner = (function () {
         throw new Error(formatFailure(exitCode, eventError, stderrLines, stderrStreamError, apiKey));
       }
 
-      if (!resultPath) resultPath = await findMonolingualOutput(workDir);
-      var outputMode = settings.outputMode === "dual" || settings.outputMode === "both"
-        ? settings.outputMode
-        : "mono";
-      if (outputMode !== "mono") {
+      if (outputMode === "dual") {
         if (!resultDualPath) resultDualPath = await findDualOutput(workDir);
         if (!isValidOutput(resultDualPath)) {
           throw new Error(formatFailure(
@@ -452,28 +447,27 @@ var ZoteroTranslateFilesRunner = (function () {
             "未生成有效的双语对照 PDF。",
           ));
         }
-      }
-      if ((outputMode === "mono" || outputMode === "both") && !isValidOutput(resultPath)) {
-        throw new Error(formatFailure(
-          exitCode,
-          eventError,
-          stderrLines,
-          stderrStreamError,
-          apiKey,
-          "未生成有效的中文 PDF。",
-        ));
+      } else {
+        if (!resultPath) resultPath = await findMonolingualOutput(workDir);
+        if (!isValidOutput(resultPath)) {
+          throw new Error(formatFailure(
+            exitCode,
+            eventError,
+            stderrLines,
+            stderrStreamError,
+            apiKey,
+            "未生成有效的中文 PDF。",
+          ));
+        }
       }
 
-      var artifacts = [];
-      if (outputMode !== "dual" && isValidOutput(resultPath)) {
-        artifacts.push({ kind: "mono", path: resultPath });
-      }
-      if (outputMode !== "mono" && isValidOutput(resultDualPath)) {
-        artifacts.push({ kind: "dual", path: resultDualPath });
-      }
+      var artifacts = [{
+        kind: outputMode,
+        path: outputMode === "dual" ? resultDualPath : resultPath,
+      }];
 
       return {
-        outputPath: artifacts.length ? artifacts[0].path : resultPath,
+        outputPath: artifacts[0].path,
         outputPaths: artifacts,
         warning: warning,
         requestCount: requestCount,

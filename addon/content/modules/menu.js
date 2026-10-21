@@ -1,8 +1,22 @@
 /* global Zotero, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesQueue */
 
 var ZoteroTranslateFilesMenu = (function () {
-  var MENU_ID = "babeldoc-for-zotero-translate-pdf";
-  var FTL_ID = "babeldoc-for-zotero-menu-label";
+  var MENU_ID = "babeldoc-for-zotero-menu";
+  var ROOT_FTL_ID = "babeldoc-for-zotero-menu-root";
+  var ITEMS = [
+    {
+      id: "babeldoc-for-zotero-translate-pdf",
+      ftlID: "babeldoc-for-zotero-menu-mono",
+      fallbackLabel: "翻译成中文 PDF",
+      outputMode: "mono",
+    },
+    {
+      id: "babeldoc-for-zotero-translate-pdf-dual",
+      ftlID: "babeldoc-for-zotero-menu-dual",
+      fallbackLabel: "生成双语对照 PDF",
+      outputMode: "dual",
+    },
+  ];
   var windows = new Map();
 
   function selectedItemsForWindow(window) {
@@ -21,46 +35,65 @@ var ZoteroTranslateFilesMenu = (function () {
     });
   }
 
-  function commandForItems(items) {
-    ZoteroTranslateFilesQueue.enqueue(resolveIDs(items));
+  function setLabel(document, element, ftlID, fallbackLabel) {
+    if (document.l10n && typeof document.l10n.setAttributes === "function") {
+      document.l10n.setAttributes(element, ftlID);
+    } else {
+      element.setAttribute("label", fallbackLabel);
+    }
+  }
+
+  function commandForItem(window, outputMode) {
+    ZoteroTranslateFilesQueue.enqueue(resolveIDs(selectedItemsForWindow(window)), outputMode);
   }
 
   function addDOMMenu(window) {
-    var popup = window.document && window.document.querySelector("#zotero-itemmenu");
-    if (!popup || typeof window.document.createXULElement !== "function") return null;
+    var document = window.document;
+    var popup = document && document.querySelector("#zotero-itemmenu");
+    if (!popup || typeof document.createXULElement !== "function") return null;
 
-    var menuItem = window.document.createXULElement("menuitem");
-    menuItem.id = MENU_ID;
-    if (window.document.l10n && typeof window.document.l10n.setAttributes === "function") {
-      window.document.l10n.setAttributes(menuItem, FTL_ID);
-    } else {
-      menuItem.setAttribute("label", "翻译成中文 PDF");
-    }
-    menuItem.hidden = true;
+    var menu = document.createXULElement("menu");
+    menu.id = MENU_ID;
+    menu.setAttribute("class", "menu-iconic");
+    setLabel(document, menu, ROOT_FTL_ID, "BabelDOC for Zotero");
+    menu.hidden = true;
+
+    var submenu = document.createXULElement("menupopup");
+    menu.appendChild(submenu);
+
+    var items = ITEMS.map(function (definition) {
+      var menuItem = document.createXULElement("menuitem");
+      menuItem.id = definition.id;
+      setLabel(document, menuItem, definition.ftlID, definition.fallbackLabel);
+      var onCommand = function () {
+        commandForItem(window, definition.outputMode);
+      };
+      menuItem.addEventListener("command", onCommand);
+      submenu.appendChild(menuItem);
+      return { menuItem: menuItem, onCommand: onCommand };
+    });
 
     var onPopupShowing = function () {
-      menuItem.hidden = resolveIDs(selectedItemsForWindow(window)).length === 0;
-    };
-    var onCommand = function () {
-      commandForItems(selectedItemsForWindow(window));
+      menu.hidden = resolveIDs(selectedItemsForWindow(window)).length === 0;
     };
 
     popup.addEventListener("popupshowing", onPopupShowing);
-    menuItem.addEventListener("command", onCommand);
-    popup.appendChild(menuItem);
+    popup.appendChild(menu);
     return {
       popup: popup,
-      menuItem: menuItem,
+      menu: menu,
+      items: items,
       onPopupShowing: onPopupShowing,
-      onCommand: onCommand,
     };
   }
 
   function removeDOMMenu(entry) {
     if (!entry) return;
     entry.popup.removeEventListener("popupshowing", entry.onPopupShowing);
-    entry.menuItem.removeEventListener("command", entry.onCommand);
-    if (entry.menuItem.parentNode) entry.menuItem.parentNode.removeChild(entry.menuItem);
+    for (var item of entry.items) {
+      item.menuItem.removeEventListener("command", item.onCommand);
+    }
+    if (entry.menu.parentNode) entry.menu.parentNode.removeChild(entry.menu);
   }
 
   return {

@@ -939,6 +939,34 @@ async function maintenanceLockRefusesActiveWorkAndPausesNewJobs() {
   assert.deepEqual(started, [1, 2], "queued work should resume when maintenance releases the lock");
 }
 
+async function outputModeIsPassedPerJobAndDefaultsToMono() {
+  const calls = [];
+  const harness = makeHarness({
+    runner: {
+      async translate(item, options) {
+        calls.push({ id: item.id, outputMode: options.outputMode });
+        return "output.pdf";
+      },
+    },
+  });
+  for (const id of [1, 2, 3]) harness.items.set(id, { id });
+
+  const first = harness.queue.enqueue([1], "dual");
+  assert.equal(first.addedCount, 1);
+  const duplicate = harness.queue.enqueue([1], "mono");
+  assert.equal(duplicate.addedCount, 0, "the same PDF cannot be queued twice with another output mode");
+  assert.equal(duplicate.duplicateCount, 1);
+  harness.queue.enqueue([2]);
+  harness.queue.enqueue([3], "both");
+
+  await harness.queue.onIdle();
+  assert.deepEqual(calls, [
+    { id: 1, outputMode: "dual" },
+    { id: 2, outputMode: "mono" },
+    { id: 3, outputMode: "mono" },
+  ], "each job keeps its output mode; missing or unknown modes fall back to mono");
+}
+
 async function importsBilingualArtifactsInOrder() {
   const harness = makeHarness({ runner: { translate: async () => ({
     outputPath: "mono.pdf",
@@ -961,6 +989,7 @@ async function importsBilingualArtifactsInOrder() {
 
 (async () => {
   await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
+  await outputModeIsPassedPerJobAndDefaultsToMono();
   await importsBilingualArtifactsInOrder();
   await failedShowRestoresRegistrationAndRemovesUnloadListener();
   await silentStagesKeepShowingRealElapsedTime();
