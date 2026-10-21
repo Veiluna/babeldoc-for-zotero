@@ -183,6 +183,21 @@ def _anchor_from_text(under: str, line: str) -> dict[str, Any]:
     line = _normalized_text(line)
     bare = under.strip(_SENTENCE_PUNCTUATION).strip()
 
+    # "Figure 3" names the same number as its clickable text even when the
+    # same line band also mentions "Sect. 3.1"; it must not become "3.1".
+    labelled_near = _LABELLED_NUMBER_RE.search(line)
+    bare_number = re.fullmatch(r"(\d{1,4})", bare or "")
+    if (
+        labelled_near
+        and bare_number
+        and labelled_near.group(2).split("(")[0] == bare_number.group(1)
+        # "Section 3.1" keeps its compound tail right after the captured "3".
+        and line[labelled_near.end():labelled_near.end() + 1] != "."
+    ):
+        number = labelled_near.group(2)
+        return {"type": "number", "text": number, "number": number,
+                "label": _label_from_line(line), "context": line[:160]}
+
     compound = _compound_from_under_or_line(under, line)
     if compound and not _english_prose_around(under, compound):
         return {"type": "number", "text": compound, "number": compound,
@@ -219,6 +234,12 @@ def _anchor_from_text(under: str, line: str) -> dict[str, Any]:
                 "label": "section"}
 
     number = _NUMBER_RE.search(under)
+    if not number:
+        # A superscript citation rect can clip the preceding letter, so the
+        # extracted text reads "t10" for "strategy 10".  Accept a trailing
+        # digit run in that case, but only for short clickable text.
+        if len(under) <= 12:
+            number = re.search(r"(?<![0-9])(\d{1,4})\s*$", under)
     if number:
         return {"type": "number", "text": number.group(1), "number": number.group(1),
                 "label": ""}

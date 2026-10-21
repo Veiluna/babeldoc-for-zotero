@@ -96,6 +96,26 @@ class LinkAnchorTest(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_labelled_number_wins_over_compound_in_same_line_band(self) -> None:
+        anchor = links._anchor_from_text(
+            "3",
+            "Figure 3 displays the resulting attack graph. See also Sect. 3.1",
+        )
+        self.assertEqual(anchor["text"], "3")
+        self.assertEqual(anchor["label"], "figure")
+        section = links._anchor_from_text(
+            "3", "reported in Sect. 3.1, enabling aggregation"
+        )
+        self.assertEqual(section["text"], "3.1")
+
+    def test_clipped_superscript_keeps_the_digit_run(self) -> None:
+        anchor = links._anchor_from_text(
+            "t10",
+            "the Community ID matching strategy 10, which compares protocols",
+        )
+        self.assertEqual(anchor["type"], "number")
+        self.assertEqual(anchor["text"], "10")
+
     def test_bare_number_does_not_match_inside_section_number(self) -> None:
         doc = pymupdf.open()
         try:
