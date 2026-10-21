@@ -203,6 +203,11 @@ var ZoteroTranslateFilesRunner = (function () {
         ["ztf_style_guards.py", "样式保护辅助模块"],
         ["ztf_links.py", "链接恢复辅助模块"],
         ["ztf_table_headers.py", "表头识别辅助模块"],
+        // 0.6.0 后处理模块：runner 按路径加载，必须与 runner 一起复制到数据目录。
+        ["ztf_figure_text.py", "图内文字恢复辅助模块"],
+        ["ztf_table_text.py", "表格内容规则辅助模块"],
+        ["ztf_table2.py", "旋转表头翻译辅助模块"],
+        ["ztf_punctuation_cleanup.py", "重复标点清理辅助模块"],
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
         var helperName = pythonHelpers[helperIndex][0];

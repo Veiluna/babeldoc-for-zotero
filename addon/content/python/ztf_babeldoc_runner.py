@@ -29,6 +29,8 @@ from typing import Any
 
 EXPECTED_BABELDOC_VERSION = "0.6.4"
 MAX_OUTPUT_TOKENS = 50000
+# 表2 的 13 个列标题只是一次短请求：输出远小于主翻译，固定上限避免浪费额度。
+TABLE2_OUTPUT_TOKENS = 4000
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -121,43 +123,81 @@ _LICENSE_STAMP_RE = re.compile(
     re.I,
 )
 
-_STYLE_GUARDS_MODULE: Any = None
-_TABLE_HEADERS_MODULE: Any = None
+_HELPER_MODULES: dict[str, Any] = {}
+
+
+def _load_helper(name: str) -> Any:
+    """Load and cache a sibling helper module next to the runner."""
+    module = _HELPER_MODULES.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(
+            name, os.path.join(os.path.dirname(__file__), name + ".py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(name + ".py is missing next to the runner")
+        candidate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(candidate)
+        _HELPER_MODULES[name] = candidate
+        module = candidate
+    return module
 
 
 def _style_guards() -> Any:
     """Load the sibling helper module that guards citation style spans."""
-    global _STYLE_GUARDS_MODULE
-    if _STYLE_GUARDS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_style_guards",
-            os.path.join(os.path.dirname(__file__), "ztf_style_guards.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_style_guards.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _STYLE_GUARDS_MODULE = module
-    return _STYLE_GUARDS_MODULE
+    return _load_helper("ztf_style_guards")
 
 
-_LINKS_MODULE: Any = None
+def _figure_text_helper() -> Any:
+    """Load the sibling helper that restores figure-internal labels."""
+    return _load_helper("ztf_figure_text")
+
+
+def _table_text_helper() -> Any:
+    """Load the table-cell content rules module."""
+    return _load_helper("ztf_table_text")
+
+
+def _table2_helper() -> Any:
+    """Load the sibling helper that translates rotated table headers."""
+    return _load_helper("ztf_table2")
+
+
+def _punctuation_helper() -> Any:
+    """Load the sibling helper that removes duplicate punctuation glyphs."""
+    return _load_helper("ztf_punctuation_cleanup")
 
 
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
-    global _LINKS_MODULE
-    if _LINKS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_links",
-            os.path.join(os.path.dirname(__file__), "ztf_links.py"),
+    return _load_helper("ztf_links")
+
+
+def _table_body_should_translate(paragraph: Any) -> bool:
+    """Translate only table-body sentences; short values stay verbatim."""
+    try:
+        text = getattr(paragraph, "unicode", "") or ""
+        return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
+    except Exception:
+        return False
+
+
+def _should_verify_chinese(source: Any) -> bool:
+    """Whether a sent-for-translation text must come back as real Chinese.
+
+    Table cells and sentences are sent only when the content rules expect a
+    Chinese rendering; a pure echo, a number or stray punctuation then means
+    the model failed and the source text must be kept instead.
+    """
+    try:
+        text = str(source or "")
+        if not text.strip():
+            return False
+        return (
+            _table_text_helper().classify_table_cell(text, "body")["action"]
+            == "translate"
         )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_links.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _LINKS_MODULE = module
-    return _LINKS_MODULE
+    except Exception:
+        return False
 
 
 def _argument_value(arguments: list[str], name: str) -> str:
@@ -312,18 +352,7 @@ def _link_paragraph_map(
 
 def _table_headers() -> Any:
     """Load the sibling helper that separates table headers from table body."""
-    global _TABLE_HEADERS_MODULE
-    if _TABLE_HEADERS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_table_headers",
-            os.path.join(os.path.dirname(__file__), "ztf_table_headers.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_table_headers.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _TABLE_HEADERS_MODULE = module
-    return _TABLE_HEADERS_MODULE
+    return _load_helper("ztf_table_headers")
 
 
 class RequestCapExceeded(RuntimeError):
@@ -688,6 +717,12 @@ def create_completion_adapting(
         response = None
         failure = None
         delay = 0
+        notify_start = request_state.get("notify_request_start")
+        if callable(notify_start):
+            try:
+                notify_start()
+            except Exception:
+                pass
         try:
             response = client.chat.completions.create(**call)
             return response
@@ -727,6 +762,12 @@ def create_completion_adapting(
                 record["provider_message"] = provider_message_for_log(failure, api_key, "")
                 record["status_code"] = _provider_status(failure)
             _write_job_log(request_state, record, api_key)
+            notify_finish = request_state.get("notify_request_finish")
+            if callable(notify_finish):
+                try:
+                    notify_finish()
+                except Exception:
+                    pass
         if delay:
             _write_job_log(request_state, {"event": "request_retry", "delay_seconds": delay,
                                           "request_index": budget.requests if budget else None}, api_key)
@@ -1064,6 +1105,24 @@ def _is_verbatim_output(source: Any, translated: Any) -> bool:
         and isinstance(translated, str)
         and _normalized_verbatim_parts(source) == _normalized_verbatim_parts(translated)
     )
+
+
+_CJK_PUNCT_AFTER_COMMA_RE = re.compile(r",(\s*)([，；。！？、])")
+_DUPLICATE_CJK_PUNCT_RE = re.compile(r"([，；。！？、])\1+")
+
+
+def _normalize_translated_punctuation(text: Any) -> Any:
+    """Remove an English comma left before Chinese punctuation.
+
+    The model sometimes returns "[0, 1], ；" / "[0, 1], ，": the bracket keeps
+    its ASCII comma, then a Chinese comma/semicolon follows.  Only the
+    comma immediately followed by CJK punctuation is removed; decimals,
+    citation clusters and English lists keep their commas.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    normalized = _CJK_PUNCT_AFTER_COMMA_RE.sub(r"\2", text)
+    return _DUPLICATE_CJK_PUNCT_RE.sub(r"\1", normalized)
 
 
 def _apply_translation_output(
@@ -3833,8 +3892,46 @@ def _install_min_request_patches(
     def post_translate_paragraph_with_log(instance: Any, paragraph: Any, *args: Any, **kwargs: Any) -> Any:
         translate_input = args[1] if len(args) > 1 else kwargs.get("translate_input")
         translated_text = args[2] if len(args) > 2 else kwargs.get("translated_text")
+        normalized_text = _normalize_translated_punctuation(translated_text)
+        if normalized_text != translated_text:
+            args = list(args)
+            if len(args) > 2:
+                args[2] = normalized_text
+            else:
+                kwargs = dict(kwargs)
+                kwargs["translated_text"] = normalized_text
+            translated_text = normalized_text
         source = getattr(translate_input, "unicode", None)
         accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
+        # 规格 T4/Q11：送译内容返回无效中文（纯数字、纯标点、回声）时回退原文，
+        # 由 _is_verbatim_output 走保留原文路径，并写入诊断日志。
+        if (
+            isinstance(translated_text, str)
+            and translated_text
+            and _should_verify_chinese(source)
+            and not _table_text_helper().meaningful_chinese(
+                source, translated_text
+            )
+        ):
+            _write_job_log(
+                request_state,
+                {
+                    "event": "invalid_chinese_fallback",
+                    "preview": _text_preview(source, api_key),
+                    "output_preview": _text_preview(translated_text, api_key),
+                },
+                api_key,
+            )
+            translated_text = source
+            if accepted is not None:
+                # 让 _is_verbatim_output 判定为保留原文（原字形/原位置）。
+                accepted["text"] = source
+            if len(args) > 2:
+                args = list(args)
+                args[2] = translated_text
+            else:
+                kwargs = dict(kwargs)
+                kwargs["translated_text"] = translated_text
         if accepted is None:
             return original_post_translate_paragraph(
                 instance, paragraph, *args, **kwargs
@@ -3958,11 +4055,12 @@ def _install_min_request_patches(
         pbar = args[2] if len(args) > 2 else None
         try:
             translate_input = accepted["translate_input"]
+            accepted_text = _normalize_translated_punctuation(accepted["text"])
             outcome, _ = _apply_translation_output(
                 getattr(translate_input, "unicode", None),
-                accepted["text"],
+                accepted_text,
                 lambda: original_post_translate_paragraph(
-                    owner, paragraph, tracker, translate_input, accepted["text"]
+                    owner, paragraph, tracker, translate_input, accepted_text
                 ),
             )
             if outcome == "kept_verbatim":
@@ -5957,7 +6055,12 @@ def _install_min_request_patches(
                     # Confirmed header: translate it even when the generic
                     # layout rules would have kept this short label.
                     pass
-                elif paragraph_id in request_state.get("table_body_ids", set()):
+                elif (
+                    paragraph_id in request_state.get("table_body_ids", set())
+                    and not _table_body_should_translate(paragraph)
+                ):
+                    # Short values, names and identifiers stay verbatim; full
+                    # sentences fall through to the normal translation path.
                     request_state["preserved_paragraph_ids"].add(paragraph_id)
                     if pbar is not None:
                         pbar.advance(1)
@@ -6196,6 +6299,154 @@ def babeldoc_version_error() -> str | None:
     return None
 
 
+def _table2_translations(
+    request_state: dict[str, Any], headers: list[str], api_key: str
+) -> list[str] | None:
+    """Send one small completion for rotated table headers; cache it per document.
+
+    The monolingual and the bilingual PDF are post-processed separately, so the
+    translation must be reused: 0.6.0 promises exactly one extra request, not one
+    per output file.  A failure is recorded and returns None so the PDF keeps the
+    English headers; it never blocks the document.
+    """
+    cache = request_state.setdefault("table2_translation_cache", {})
+    key = tuple(headers)
+    if key in cache:
+        return cache[key]
+    helper = _table2_helper()
+    translator = request_state.get("openai_translator")
+    if translator is None:
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_skipped", "reason": "missing_translator"},
+            api_key,
+        )
+        cache[key] = None
+        return None
+
+    def request_headers() -> Any:
+        return create_completion_adapting(
+            translator.client,
+            request_state,
+            TABLE2_OUTPUT_TOKENS,
+            request_metadata={"phase": "table_headers", "item_count": len(headers)},
+            api_key=api_key,
+            model=translator.model,
+            messages=[{"role": "user", "content": helper.build_prompt_text(headers)}],
+        )
+
+    budget = request_state.get("request_budget")
+    try:
+        response = (
+            request_once(budget, request_headers)
+            if budget is not None
+            else request_headers()
+        )
+        content = response.choices[0].message.content or ""
+    except Exception as error:
+        cache[key] = None
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_error", "error": log_safe_error(error, api_key)},
+            api_key,
+        )
+        return None
+    translations = helper.parse_response(content, len(headers))
+    if translations is None or not all(
+        helper.is_valid_translation(original, translated)
+        for original, translated in zip(headers, translations)
+    ):
+        cache[key] = None
+        _write_job_log(
+            request_state,
+            {"event": "table2_translate_failed", "reason": "parse_or_validation"},
+            api_key,
+        )
+        return None
+    cache[key] = translations
+    return translations
+
+
+def _restore_figure_and_table_text(
+    source_pdf: str, output_pdf: str, request_state: dict[str, Any], api_key: str
+) -> None:
+    """Restore dropped figure labels and translate rotated table headers in place."""
+    try:
+        figure_helper = _figure_text_helper()
+        figure_stats = figure_helper.restore_figure_text(source_pdf, output_pdf)
+        _write_job_log(
+            request_state,
+            {
+                "event": "figure_text_restore",
+                "file": os.path.basename(output_pdf),
+                **figure_stats,
+            },
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "figure_text_restore_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+    try:
+        table2_helper = _table2_helper()
+        table2_stats = table2_helper.restore_rotated_headers(
+            source_pdf,
+            output_pdf,
+            lambda headers: _table2_translations(request_state, headers, api_key),
+        )
+        record = {
+            "event": "table2_restore",
+            "file": os.path.basename(output_pdf),
+        }
+        for name in ("groups", "requested", "translated", "redacted", "drawn", "skipped"):
+            if name in table2_stats:
+                record[name] = table2_stats[name]
+        record["failed_count"] = len(table2_stats.get("failed") or [])
+        _write_job_log(request_state, record, api_key)
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "table2_restore_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+    try:
+        punctuation_helper = _punctuation_helper()
+        punctuation_stats = punctuation_helper.clean_duplicate_punctuation(
+            output_pdf, source_pdf
+        )
+        _write_job_log(
+            request_state,
+            {
+                "event": "punctuation_cleanup",
+                "file": os.path.basename(output_pdf),
+                **punctuation_stats,
+            },
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "punctuation_cleanup_error",
+                "file": os.path.basename(output_pdf),
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
+
 def _restore_links_after_layout(
     state: dict[str, Any], request_state: dict[str, Any], api_key: str
 ) -> dict[str, Any]:
@@ -6215,6 +6466,11 @@ def _restore_links_after_layout(
             api_key,
         )
         return summary
+    # 图内文字与旋转表头必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，
+    # 译文图5 行标签会失去右对齐，表2 的 90° 列标题保持英文。三者都只改
+    # 图/表区域，链接恢复需要最终排版，因此顺序不能反。
+    _restore_figure_and_table_text(source_pdf, output_pdf, request_state, api_key)
+
     try:
         helper = _links_helper()
         stats = helper.restore_links(
@@ -6285,8 +6541,12 @@ def _restore_dual_links_after_layout(
     dual_pdf = str(state.get("dual_result") or "")
     if not dual_pdf or not os.path.isfile(dual_pdf):
         return None
-    mono_mapping = str((link_stats or {}).get("mapping_path") or "")
     source_pdf = _argument_value(sys.argv, "--files")
+    # 最终交付的双语 PDF 同样需要图内文字恢复与旋转表头翻译；表2 的翻译
+    # 结果按标题缓存，因此双语版本复用单语版本的那一次额外请求。
+    if source_pdf:
+        _restore_figure_and_table_text(source_pdf, dual_pdf, request_state, api_key)
+    mono_mapping = str((link_stats or {}).get("mapping_path") or "")
     if not mono_mapping or not os.path.isfile(mono_mapping) or not source_pdf:
         summary = {"source": 0, "restored": 0, "skipped": "missing_mapping"}
         _write_job_log(
@@ -6715,6 +6975,30 @@ def main() -> int:
         )
 
     request_budget = RequestBudget(max_requests, emit_request_progress)
+
+    def notify_translation_progress(stage: str, overall: int) -> None:
+        """Push a local stage update; no network request is made for progress."""
+        state["stage"] = stage
+        state["overall"] = max(int(state.get("overall") or 0), int(overall))
+        _emit(
+            "ZTF_PROGRESS ",
+            {
+                "overall": state["overall"],
+                "stage": state["stage"],
+                "current": state["current"],
+                "total": state["total"],
+                "requests": request_budget.requests,
+                "planned": request_budget.planned,
+            },
+            api_key,
+        )
+
+    def notify_request_start() -> None:
+        notify_translation_progress("模型正在翻译", 25)
+
+    def notify_request_finish() -> None:
+        notify_translation_progress("模型正在翻译", 30)
+
     token_param = os.environ.pop("ZTF_TOKEN_PARAM", "").strip()
     request_state: dict[str, Any] = {
         "request_budget": request_budget,
@@ -6728,6 +7012,8 @@ def main() -> int:
         "repair_records": {},
         "translated_paragraph_ids": set(),
         "fragment_paragraph_ids": set(),
+        "notify_request_start": notify_request_start,
+        "notify_request_finish": notify_request_finish,
     }
     _write_job_log(
         request_state,

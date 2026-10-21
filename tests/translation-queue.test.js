@@ -35,10 +35,14 @@ function makeHarness(options = {}) {
   let now = 0;
   const mainWindow = { name: "most-recent-zotero-window" };
   const progressWindowSet = { add() {} };
-  if (options.formatValue) {
-    mainWindow.document = { l10n: { formatValue: options.formatValue } };
-    mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
-  }
+  const formatValue = options.formatValue || function (key, args) {
+    if (key === "babeldoc-for-zotero-progress-elapsed") {
+      return Promise.resolve("（已用时 " + ((args && args.elapsed) || "") + "）");
+    }
+    return Promise.resolve("");
+  };
+  mainWindow.document = { l10n: { formatValue } };
+  mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
   const items = new Map();
   const settings = options.settings || {
     baseURL: "https://example.test/v1",
@@ -253,7 +257,7 @@ async function silentStagesKeepShowingRealElapsedTime() {
     assert.ok(window.texts.some(text => text.includes(elapsed)), "show real elapsed time " + elapsed);
   }
   assert.equal(window.progress, 39, "the timer must not advance real percentage");
-  assert.match(window.text, /Translate Paragraphs · 39% · 请求 1\/1/);
+  assert.match(window.text, /Translate Paragraphs（已用时 0:0[1-3]） · 39% · 请求 1\/1/);
   assert.equal(progressEvents, 1, "UI ticks must not fabricate public progress events");
 
   reportProgress({ overall: 40, stage: "Translate Paragraphs", requests: 2, planned: 3 });
@@ -269,7 +273,7 @@ async function silentStagesKeepShowingRealElapsedTime() {
   await settleLocalization();
   assert.match(window.text, /0:00/, "a new stage resets elapsed time");
   await harness.advanceTime(1000);
-  assert.match(window.text, /Generate PDF · 80%/);
+  assert.match(window.text, /Generate PDF（已用时 0:0[01]） · 80%/);
   assert.match(window.text, /0:01/);
   finish.resolve("translated.pdf");
   await harness.queue.onIdle();
@@ -335,57 +339,51 @@ async function stageTimersStayWithTheirJobAndStopOnTerminalPaths() {
   }
 }
 
-async function elapsedLocalizationCannotOverwriteNewerOrFinishedProgress() {
-  const pendingLabels = [];
+async function modelTranslatingStageShowsLocalElapsed() {
+  const finish = deferred();
+  const harness = makeHarness({ runner: { translate(_item, { onProgress }) {
+    onProgress({ overall: 25, stage: "模型正在翻译", requests: 1, planned: 1 });
+    return finish.promise;
+  } } });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await harness.advanceTime(2000);
+  assert.match(
+    harness.progressWindows[0].text,
+    /模型正在翻译（已用时 0:02） · 25% · 请求 1\/1/,
+    "long model requests must show the requested local stage text",
+  );
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+}
+
+async function elapsedTextStaysCurrentAndStopsOnCompletion() {
   const finish = deferred();
   const nextFinish = deferred();
   const nextStarted = deferred();
   let reportProgress;
-  const harness = makeHarness({
-    formatValue(id, args) {
-      assert.equal(id, "babeldoc-for-zotero-progress-stage-elapsed");
-      const label = deferred();
-      pendingLabels.push({ ...label, args });
-      return label.promise;
-    },
-    runner: { translate(item, { onProgress }) {
-      if (item.id === 2) { nextStarted.resolve(); return nextFinish.promise; }
-      reportProgress = onProgress;
-      return finish.promise;
-    } },
-  });
+  const harness = makeHarness({ runner: { translate(item, { onProgress }) {
+    if (item.id === 2) { nextStarted.resolve(); return nextFinish.promise; }
+    reportProgress = onProgress;
+    return finish.promise;
+  } } });
   harness.items.set(1, { id: 1 });
   harness.items.set(2, { id: 2 });
   harness.queue.enqueue([1, 2]);
-  await harness.advanceTime(1000);
-  const oldLabels = pendingLabels.splice(0);
-  reportProgress({ stage: "Generate PDF", overall: 80 });
-  const current = pendingLabels.pop();
-  assert.equal(current.args.elapsed, "0:00");
-  current.resolve("本阶段已用时 0:00");
-  await settleLocalization();
+  await harness.advanceTime(2000);
   const window = harness.progressWindows[0];
-  assert.match(window.text, /Generate PDF · 80%.*本阶段已用时 0:00/);
-  oldLabels.forEach(label => label.resolve("STALE"));
+  assert.match(window.text, /（已用时 0:02）/, "silent request must keep the local timer moving");
+  reportProgress({ stage: "Generate PDF", overall: 80 });
   await settleLocalization();
-  assert.doesNotMatch(window.text, /STALE/);
-  await harness.advanceTime(1000);
-  const lateLabels = pendingLabels.splice(0);
+  assert.match(window.text, /Generate PDF（已用时 0:00） · 80%/,
+    "a new stage restarts the local timer");
   finish.resolve("translated.pdf");
   await nextStarted.promise;
   await settleLocalization();
   const completedText = window.text;
-  const nextWindow = harness.progressWindows[1];
-  const nextText = nextWindow.text;
-  lateLabels.forEach(label => label.resolve("LATE"));
-  await settleLocalization();
-  assert.equal(window.text, completedText, "late localization must not replace completion");
-  assert.equal(nextWindow.text, nextText, "old-job localization must not write to the next window");
+  assert.equal(window.text, completedText, "completion text must stay stable");
   nextFinish.resolve("next.pdf");
   await harness.queue.onIdle();
-  pendingLabels.forEach(label => label.resolve("AFTER COMPLETION"));
-  await settleLocalization();
-  assert.match(nextWindow.text, /^已完成/);
   assert.equal(harness.activeTimers, 0);
 }
 
@@ -415,7 +413,12 @@ async function localizationErrorsFallBackWithoutStoppingTheQueue() {
     harness.items.set(1, { id: 1 });
     harness.queue.enqueue([1]);
     await harness.advanceTime(1000);
-    assert.match(harness.progressWindows[0].text, /Stage elapsed: 0:01/);
+    await settleLocalization();
+    assert.match(
+      harness.progressWindows[0].text,
+      /0:01/,
+      "the local timer must keep running when localization fails"
+    );
     assert.ok(!harness.logs.join("\n").includes("private diagnostic"));
     finish.resolve("translated.pdf");
     await harness.queue.onIdle();
@@ -1016,14 +1019,40 @@ async function importsBilingualArtifactsInOrder() {
   );
 }
 
+async function elapsedFormatComesFromFluent() {
+  const finish = deferred();
+  const harness = makeHarness({
+    formatValue(key, args) {
+      if (key === "babeldoc-for-zotero-progress-elapsed") {
+        return Promise.resolve("stage time: " + ((args && args.elapsed) || ""));
+      }
+      return Promise.resolve("");
+    },
+    runner: { translate: () => finish.promise },
+  });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await settleLocalization();
+  await harness.advanceTime(1000);
+  assert.match(
+    harness.progressWindows[0].text,
+    /stage time: 0:0[12]/,
+    "the elapsed label must come from the Fluent template, not hardcoded text"
+  );
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+}
+
 (async () => {
   await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
+  await elapsedFormatComesFromFluent();
   await outputModeIsPassedPerJobAndDefaultsToMono();
   await importsBilingualArtifactsInOrder();
   await failedShowRestoresRegistrationAndRemovesUnloadListener();
   await silentStagesKeepShowingRealElapsedTime();
   await stageTimersStayWithTheirJobAndStopOnTerminalPaths();
-  await elapsedLocalizationCannotOverwriteNewerOrFinishedProgress();
+  await modelTranslatingStageShowsLocalElapsed();
+  await elapsedTextStaysCurrentAndStopsOnCompletion();
   await localizationErrorsFallBackWithoutStoppingTheQueue();
   await timersStopBeforeAsyncResultCleanupCompletes();
   await fifoDedupeAndContinueAfterFailure();

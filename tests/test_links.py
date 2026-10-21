@@ -96,6 +96,90 @@ class LinkAnchorTest(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_labelled_number_wins_over_compound_in_same_line_band(self) -> None:
+        anchor = links._anchor_from_text(
+            "3",
+            "Figure 3 displays the resulting attack graph. See also Sect. 3.1",
+        )
+        self.assertEqual(anchor["text"], "3")
+        self.assertEqual(anchor["label"], "figure")
+        section = links._anchor_from_text(
+            "3", "reported in Sect. 3.1, enabling aggregation"
+        )
+        self.assertEqual(section["text"], "3.1")
+
+    def test_chapter_guide_word_prefers_section_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "参见图4 与第4 节的内容。",
+                fontname="china-s", fontsize=11,
+            )
+            page.insert_text(
+                (60, 300), "图4 展示结果。", fontname="china-s", fontsize=11
+            )
+            anchor = {"type": "number", "text": "4", "number": "4", "label": ""}
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertEqual(reason, "")
+            chapter = page.search_for("第4")[0]
+            self.assertAlmostEqual(rect.y0, chapter.y0, delta=3)
+            self.assertGreater(rect.x0, chapter.x0)
+        finally:
+            doc.close()
+
+    def test_clipped_superscript_keeps_the_digit_run(self) -> None:
+        anchor = links._anchor_from_text(
+            "t10",
+            "the Community ID matching strategy 10, which compares protocols",
+        )
+        self.assertEqual(anchor["type"], "number")
+        self.assertEqual(anchor["text"], "10")
+
+    def test_bare_number_does_not_match_inside_section_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "See Section 3.1 for the protocol details.",
+                fontname="tiro", fontsize=11,
+            )
+            anchor = {"type": "number", "text": "1", "number": "1", "label": ""}
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertIsNone(rect)
+            self.assertEqual(reason, "anchor_not_found_region")
+        finally:
+            doc.close()
+
+    def test_guide_word_selects_equation_number_over_table_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=500, height=700)
+            page.insert_text(
+                (60, 100), "该分数的计算方式，公式 1 描述了该分数的计算方式。",
+                fontname="china-s", fontsize=11,
+            )
+            page.insert_text(
+                (60, 300), "1 · 2 12018", fontname="china-s", fontsize=11
+            )
+            equation = page.search_for("公式 1")[0]
+            anchor = {
+                "type": "number", "text": "1", "number": "1",
+                "label": "equation",
+            }
+            rect, reason = links._find_anchor_rect(
+                page, anchor, pymupdf.Rect(0, 0, 500, 700), None, None, None
+            )
+            self.assertEqual(reason, "")
+            self.assertAlmostEqual(rect.y0, equation.y0, delta=3)
+            self.assertGreater(rect.x0, equation.x0)
+        finally:
+            doc.close()
+
     def test_rotated_cropped_page_annotation_round_trips_to_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             doc = pymupdf.open()
@@ -268,6 +352,97 @@ class LinkDestinationTest(unittest.TestCase):
             )
             with pymupdf.open(output) as doc:
                 self.assertEqual(doc[0].get_links(), [])
+
+
+class TargetPointSearchTest(unittest.TestCase):
+    def test_section_number_prefers_heading_near_approximate_point(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=400, height=600)
+            page.insert_text((50, 100), "3.4 Method", fontname="tiro", fontsize=12)
+            page.insert_text((50, 320), "see 3.4 and 3.41", fontname="tiro", fontsize=10)
+            page.insert_text((50, 520), "3.4 again", fontname="tiro", fontsize=10)
+            destination = {"type": "goto", "page": 0, "point": [50.0, 100.0]}
+            target_page, target_point, reason = links._target_point_for_link(
+                destination, [], doc, {0: 0}, doc, anchor_text="3.4"
+            )
+            self.assertEqual(target_page, 0)
+            self.assertEqual(reason, "target_anchor_search")
+            self.assertGreaterEqual(target_point[1], 70.0)
+            self.assertLessEqual(target_point[1], 130.0)
+        finally:
+            doc.close()
+
+    def test_approximate_point_is_used_when_no_anchor_is_found(self) -> None:
+        doc = pymupdf.open()
+        try:
+            doc.new_page(width=400, height=600)
+            destination = {"type": "goto", "page": 0, "point": [100.0, 300.0]}
+            target_page, target_point, reason = links._target_point_for_link(
+                destination, [], doc, {0: 0}, doc, anchor_text="9.9"
+            )
+            self.assertEqual(target_page, 0)
+            self.assertEqual(reason, "target_point_approximate")
+            self.assertAlmostEqual(target_point[0], 100.0, delta=1.0)
+            self.assertAlmostEqual(target_point[1], 300.0, delta=1.0)
+        finally:
+            doc.close()
+
+
+class CompoundAnchorAndClusterTest(unittest.TestCase):
+    def test_clipped_compound_number_is_recovered_from_line(self) -> None:
+        for under in (".1", "3", "3.1"):
+            with self.subTest(under=under):
+                anchor = links._anchor_from_text(
+                    under, "See Section 3.1 for details."
+                )
+                self.assertEqual(anchor["text"], "3.1", anchor)
+                self.assertEqual(anchor["label"], "section")
+
+    def test_superscript_and_equation_numbers_keep_full_text(self) -> None:
+        self.assertEqual(
+            links._anchor_from_text("10", "策略 10 展示了结果。")["text"], "10"
+        )
+        self.assertEqual(
+            links._anchor_from_text("1", "见公式 1。")["text"], "1"
+        )
+        self.assertEqual(
+            links._anchor_from_text("1(d)", "见 Fig. 1(d)。")["text"], "1(d)"
+        )
+
+    def test_citation_cluster_assigns_source_order(self) -> None:
+        records = []
+        for number in (4, 7, 18):
+            records.append(
+                {
+                    "source_paragraph": {"id": 1},
+                    "anchor": {"type": "number", "text": str(number)},
+                    "source_line": "Earlier work [4, 7, 18] showed",
+                    "source_from_unrotated": [number, 100, number + 3, 110],
+                }
+            )
+        ordinals = links._assign_group_ordinals(records)
+        self.assertEqual(
+            [ordinals[index] for index in range(3)],
+            [(0, 3), (1, 3), (2, 3)],
+        )
+        self.assertEqual(
+            [record["_cluster"]["index"] for record in records], [0, 1, 2]
+        )
+
+    def test_cluster_rect_targets_the_nth_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=400, height=200)
+            page.insert_text((50, 100), "[4, 7, 18]", fontname="tiro", fontsize=12)
+            region = pymupdf.Rect(0, 0, 400, 200)
+            for index, number in enumerate((4, 7, 18)):
+                cluster = {"numbers": [4, 7, 18], "index": index}
+                rect = links._find_cluster_rect(page, region, cluster)
+                self.assertIsNotNone(rect, cluster)
+                self.assertEqual(page.get_textbox(rect).strip(), str(number))
+        finally:
+            doc.close()
 
 
 if __name__ == "__main__":

@@ -38,6 +38,10 @@ _LABELLED_NUMBER_RE = re.compile(
     r"\(?(\d{1,4}[a-zA-Z]?(?:\([a-zA-Z0-9]+\))?)\)?"
 )
 _NUMBER_RE = re.compile(r"(?<![\w.])(\d{1,4}(?:\([a-zA-Z0-9]+\))?[a-zA-Z]?)(?![\w])")
+# 复合编号（3.1、3.4.2、12.1）；链接矩形有时只覆盖其中一段（".1" 或 "3"）。
+_COMPOUND_NUMBER_RE = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){1,3})(?![\w.])")
+# 引用簇（[4, 7, 18] / (4, 7, 18)），用于按同段顺序配对数字引用。
+_CITATION_GROUP_RE = re.compile(r"[\[［(（]\s*\d{1,4}(?:\s*[,;，；]\s*\d{1,4})+\s*[\]］)）]")
 _ROMAN_RE = re.compile(r"(?<![\w.])([IVXLCDM]{1,7})(?![\w])")
 _ORCID_RE = re.compile(r"^https?://orcid\.org/", re.I)
 _MEANINGFUL_TEXT_RE = re.compile(r"[0-9A-Za-z\u00C0-\u024F]")
@@ -137,41 +141,92 @@ def _is_citation_number(text: str) -> bool:
     return bool(re.fullmatch(r"\d{1,4}(?:\([a-zA-Z0-9]+\))?[a-zA-Z]?", text or ""))
 
 
+def _label_from_line(line: str) -> str:
+    labelled = _LABELLED_NUMBER_RE.search(line or "")
+    if not labelled:
+        return ""
+    label = labelled.group(1).lower()
+    if label.startswith("fig"):
+        return "figure"
+    if label.startswith("tab"):
+        return "table"
+    if label.startswith("eq"):
+        return "equation"
+    if label.startswith("sec"):
+        return "section"
+    return ""
+
+
+def _compound_from_under_or_line(under: str, line: str) -> str:
+    """Recover a full compound number (3.1) even when the link rect clips it ('.1')."""
+    match = _COMPOUND_NUMBER_RE.search(under or "")
+    if match:
+        return match.group(1)
+    fragment = re.sub(r"\D", "", under or "")
+    if not fragment:
+        return ""
+    for candidate in _COMPOUND_NUMBER_RE.finditer(line or ""):
+        digits = candidate.group(1).replace(".", "")
+        if fragment in digits and len(digits) <= len(fragment) + 2:
+            return candidate.group(1)
+    return ""
+
+
 def _anchor_from_text(under: str, line: str) -> dict[str, Any]:
-    """Describe the source clickable anchor from the text under/around it."""
+    """Describe the source clickable anchor from the text under/around it.
+
+    The complete text under the link rect wins.  Compound numbers are recovered
+    from the surrounding line when the rectangle only covers a fragment
+    ( ".1" or "3" of "3.1"), and citation groups keep the number order.
+    """
     under = _normalized_text(under)
     line = _normalized_text(line)
+    bare = under.strip(_SENTENCE_PUNCTUATION).strip()
+
+    # "Figure 3" names the same number as its clickable text even when the
+    # same line band also mentions "Sect. 3.1"; it must not become "3.1".
+    labelled_near = _LABELLED_NUMBER_RE.search(line)
+    bare_number = re.fullmatch(r"(\d{1,4})", bare or "")
+    if (
+        labelled_near
+        and bare_number
+        and labelled_near.group(2).split("(")[0] == bare_number.group(1)
+        # "Section 3.1" keeps its compound tail right after the captured "3".
+        and line[labelled_near.end():labelled_near.end() + 1] != "."
+    ):
+        number = labelled_near.group(2)
+        return {"type": "number", "text": number, "number": number,
+                "label": _label_from_line(line), "context": line[:160]}
+
+    compound = _compound_from_under_or_line(under, line)
+    if compound and not _english_prose_around(under, compound):
+        return {"type": "number", "text": compound, "number": compound,
+                "label": _label_from_line(line), "context": line[:160]}
 
     bracket = _BRACKET_RE.search(under)
-    if bracket:
+    if bracket and not _MEANINGFUL_TEXT_RE.search(
+            under.replace(bracket.group(0), "").strip(_SENTENCE_PUNCTUATION)):
         return {"type": "bracket", "text": "[%s]" % bracket.group(1),
                 "number": bracket.group(1), "label": "reference"}
-    bracketed_line = _BRACKET_RE.search(line)
-    if bracketed_line and not _MEANINGFUL_TEXT_RE.search(under):
-        return {"type": "bracket", "text": "[%s]" % bracketed_line.group(1),
-                "number": bracketed_line.group(1), "label": "reference"}
 
     paren = _PAREN_RE.search(under)
-    if paren:
+    if paren and not _MEANINGFUL_TEXT_RE.search(
+            under.replace(paren.group(0), "").strip(_SENTENCE_PUNCTUATION)):
         return {"type": "paren", "text": "(%s)" % paren.group(1),
                 "number": paren.group(1), "label": "equation"}
 
+    if bare and _is_citation_number(bare):
+        return {"type": "number", "text": bare, "number": bare,
+                "label": _label_from_line(line)}
+
     labelled = _LABELLED_NUMBER_RE.search(line)
     if labelled:
-        label = labelled.group(1).lower()
-        if label.startswith("fig"):
-            label = "figure"
-        elif label.startswith("tab"):
-            label = "table"
-        elif label.startswith("eq"):
-            label = "equation"
-        elif label.startswith("sec"):
-            label = "section"
         token = labelled.group(2)
         number = _NUMBER_RE.search(under)
         if number and _is_citation_number(number.group(1)):
             token = number.group(1)
-        return {"type": "number", "text": token, "number": token, "label": label}
+        return {"type": "number", "text": token, "number": token,
+                "label": _label_from_line(line)}
 
     roman = _ROMAN_RE.search(under)
     if roman:
@@ -179,14 +234,32 @@ def _anchor_from_text(under: str, line: str) -> dict[str, Any]:
                 "label": "section"}
 
     number = _NUMBER_RE.search(under)
+    if not number:
+        # A superscript citation rect can clip the preceding letter, so the
+        # extracted text reads "t10" for "strategy 10".  Accept a trailing
+        # digit run in that case, but only for short clickable text.
+        if len(under) <= 12:
+            number = re.search(r"(?<![0-9])(\d{1,4})\s*$", under)
     if number:
         return {"type": "number", "text": number.group(1), "number": number.group(1),
                 "label": ""}
 
-    text = under.strip()
+    text = bare or under.strip()
     if text:
-        return {"type": "text", "text": text, "number": "", "label": ""}
+        return {"type": "text", "text": text, "number": "", "label": "",
+                "context": line[:160]}
     return {"type": "graphics", "text": "", "number": "", "label": ""}
+
+
+def _english_prose_around(under: str, compound: str) -> bool:
+    """Whether the link rect holds English prose besides the compound number.
+
+    A clipped fragment such as ".1" or a Chinese prefix such as "第3.1节" is
+    not prose; it still belongs to the compound number anchor.
+    """
+    remainder = under.replace(compound, " ", 1)
+    remainder = re.sub(r"[\d\s.]+", " ", remainder).strip(_SENTENCE_PUNCTUATION).strip()
+    return bool(re.search(r"[A-Za-z]{2,}", remainder))
 
 
 def _anchor_from_uri(under: str, uri: str) -> dict[str, Any]:
@@ -373,7 +446,9 @@ def _token_pattern(token: str) -> re.Pattern[str]:
     if not body:
         return re.compile(r"(?!x)x")
     if _is_citation_number(token) and not token.startswith(("[", "(")):
-        return re.compile(r"(?<![0-9A-Za-z])" + body + r"(?![0-9A-Za-z])")
+        # A leading dot is part of a longer number ("3.1"); matching its tail
+        # would let a citation for "1" steal the "1" of "3.1".
+        return re.compile(r"(?<![0-9A-Za-z.])" + body + r"(?![0-9A-Za-z])")
     return re.compile(body, re.I)
 
 
@@ -400,6 +475,38 @@ def _match_rects(chars: list[tuple[str, pymupdf.Rect]], pattern: re.Pattern[str]
 
 def _reading_order(matches: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(matches, key=lambda item: (round(item["rect"].y0, 1), item["rect"].x0))
+
+
+def _find_cluster_rect(page: Any, region: pymupdf.Rect,
+                       cluster: dict[str, Any]) -> pymupdf.Rect | None:
+    """Locate the Nth number inside a citation cluster such as [4, 7, 18]."""
+    numbers = [int(value) for value in (cluster.get("numbers") or [])]
+    index = int(cluster.get("index") or 0)
+    if not numbers or index >= len(numbers):
+        return None
+    chars = _text_chars(page, region)
+    if not chars:
+        return None
+    text = "".join(value for value, _ in chars)
+    for match in _CITATION_GROUP_RE.finditer(text):
+        group_numbers = [int(value) for value in re.findall(r"\d{1,4}", match.group(0))]
+        if group_numbers != numbers:
+            continue
+        digits = list(re.finditer(r"\d{1,4}", text[match.start():match.end()]))
+        if index >= len(digits):
+            continue
+        number_match = digits[index]
+        start = match.start() + number_match.start()
+        end = match.start() + number_match.end()
+        boxes = [chars[i][1] for i in range(start, min(end, len(chars)))]
+        if not boxes:
+            continue
+        rect = pymupdf.Rect(boxes[0])
+        for box in boxes[1:]:
+            rect |= box
+        if rect.width > 0.2 and rect.height > 0.2:
+            return rect
+    return None
 
 
 def _anchor_match_candidates(page: Any, anchor: dict[str, Any],
@@ -484,6 +591,58 @@ def _fallback_anchor_rect(
     return None, "anchor_not_found"
 
 
+_GUIDE_EN_RE = re.compile(
+    r"(?:Equation|Eq\.?|Figure|Fig\.?|Table|Section|Sect\.?|Appendix)\s*$",
+    re.I,
+)
+_GUIDE_CJK_SUFFIX = ("式", "图", "表", "节", "录")
+
+
+def _anchor_guide_score(text: str, start: int) -> int:
+    """Prefer a number that follows its "Eq./Fig./表/公式" guide word.
+
+    The source anchor line is not always mapped to the right output paragraph,
+    so a bare number such as the "1" of "Eq. 1" competes with numbers elsewhere
+    on the page.  The guide word directly before the number is a strong signal.
+    """
+    prefix = text[max(0, start - 16):start]
+    if _GUIDE_EN_RE.search(prefix):
+        return 2
+    stripped = prefix.rstrip()
+    if stripped:
+        # "第4 节" is a chapter/section number and outranks a bare "图4"/"表4"
+        # when both appear in the same paragraph.
+        if stripped[-1] == "第":
+            return 3
+        if stripped[-1] in _GUIDE_CJK_SUFFIX:
+            return 2
+    return 0
+
+
+def _guided_candidate_rect(
+    page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
+    candidates: list[dict[str, Any]],
+) -> pymupdf.Rect | None:
+    """Return the uniquely guided number candidate; never guess between ties."""
+    if anchor.get("type") != "number" or len(candidates) < 2:
+        return None
+    chars = _text_chars(page, region)
+    if not chars:
+        return None
+    text = "".join(value for value, _ in chars)
+    scored = [
+        (_anchor_guide_score(text, candidate["start"]), candidate)
+        for candidate in candidates
+    ]
+    best = max(score for score, _ in scored)
+    if best <= 0:
+        return None
+    winners = [candidate for score, candidate in scored if score == best]
+    if len(winners) != 1:
+        return None
+    return winners[0]["rect"]
+
+
 def _find_anchor_rect(page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
                       expected: pymupdf.Point | None, ordinal: int | None,
                       group_size: int | None) -> tuple[pymupdf.Rect | None, str]:
@@ -492,6 +651,9 @@ def _find_anchor_rect(page: Any, anchor: dict[str, Any], region: pymupdf.Rect,
         return None, "anchor_not_found_region"
     if ordinal is not None and group_size is not None and len(candidates) == group_size:
         return candidates[ordinal]["rect"], ""
+    guided = _guided_candidate_rect(page, anchor, region, candidates)
+    if guided is not None:
+        return guided, ""
     if expected is not None:
         ranked = sorted(candidates, key=lambda item: _distance(expected, item["rect"]))
         if len(ranked) == 1:
@@ -612,9 +774,21 @@ def _target_anchor_point(output_page: Any, target_paragraph: dict[str, Any] | No
     return [candidates[0]["rect"].x0, candidates[0]["rect"].y0]
 
 
+def _target_text_candidates(output_page: Any, text: str,
+                            region: pymupdf.Rect, limit: int = 20) -> list[dict[str, Any]]:
+    token = str(text or "").strip()
+    if not token:
+        return []
+    chars = _text_chars(output_page, region)
+    if not chars:
+        return []
+    return _reading_order(_match_rects(chars, _token_pattern(token), limit=limit))
+
+
 def _target_point_for_link(destination: dict[str, Any],
                            paragraphs: list[dict[str, Any]], output_doc: Any,
-                           page_mapping: dict[int, int], source_doc: Any
+                           page_mapping: dict[int, int], source_doc: Any,
+                           anchor_text: str = ""
                            ) -> tuple[int | None, list[float] | None, str]:
     if destination.get("type") != "goto":
         return None, None, ""
@@ -622,9 +796,41 @@ def _target_point_for_link(destination: dict[str, Any],
     output_target_page = page_mapping.get(source_target_page)
     if output_target_page is None:
         return None, None, "target_page_missing"
-    target_paragraph = _find_target_paragraph(
-        destination.get("point"), source_target_page, paragraphs)
     output_target_page_obj = output_doc[output_target_page]
+    point = destination.get("point")
+
+    # 目标页上的近似位置：源/输出页面的相对坐标。用于在重排后的页面里
+    # 选最近的编号候选，也用于没有可用锚文本时的兜底。
+    approx = None
+    if point:
+        source_page = source_doc[source_target_page]
+        output_page = output_doc[output_target_page]
+        sx = float(point[0]) / max(1e-6, source_page.cropbox.width)
+        sy = float(point[1]) / max(1e-6, source_page.cropbox.height)
+        approx = pymupdf.Point(
+            max(0.0, min(output_page.cropbox.width, sx * output_page.cropbox.width)),
+            max(0.0, min(output_page.cropbox.height, sy * output_page.cropbox.height)),
+        )
+
+    token = str(anchor_text or "").strip()
+    numbered = bool(token) and (
+        bool(_COMPOUND_NUMBER_RE.fullmatch(token)) or _is_citation_number(token)
+    )
+    if numbered:
+        candidates = _target_text_candidates(
+            output_target_page_obj, token, _page_text_rect(output_target_page_obj))
+        if candidates:
+            if approx is not None:
+                nearest = min(candidates, key=lambda item: _distance(approx, item["rect"]))
+                if _distance(approx, nearest["rect"]) <= max(
+                        72.0, output_target_page_obj.rect.height * 0.35):
+                    return output_target_page, [nearest["rect"].x0, nearest["rect"].y0], "target_anchor_search"
+            elif len(candidates) == 1:
+                return output_target_page, [
+                    candidates[0]["rect"].x0, candidates[0]["rect"].y0
+                ], "target_anchor_search"
+
+    target_paragraph = _find_target_paragraph(point, source_target_page, paragraphs)
     target_anchor = _target_anchor_text(source_doc, destination)
     anchor_point = _target_anchor_point(
         output_target_page_obj, target_paragraph, target_anchor, destination)
@@ -638,16 +844,8 @@ def _target_point_for_link(destination: dict[str, Any],
                 return output_target_page, [out_rect.x0, out_rect.y0], ""
             except (TypeError, ValueError):
                 pass
-    point = destination.get("point")
-    if point:
-        source_page = source_doc[source_target_page]
-        output_page = output_doc[output_target_page]
-        sx = float(point[0]) / max(1e-6, source_page.cropbox.width)
-        sy = float(point[1]) / max(1e-6, source_page.cropbox.height)
-        return output_target_page, [
-            max(0.0, min(output_page.cropbox.width, sx * output_page.cropbox.width)),
-            max(0.0, min(output_page.cropbox.height, sy * output_page.cropbox.height)),
-        ], "target_point_approximate"
+    if approx is not None:
+        return output_target_page, [approx.x, approx.y], "target_point_approximate"
     return output_target_page, [0.0, 0.0], "target_point_missing"
 
 
@@ -734,14 +932,35 @@ def _source_links(source_doc: Any, paragraphs: list[dict[str, Any]]) -> list[dic
     return records
 
 
+def _citation_numbers(line: str) -> tuple[str, list[int]]:
+    for match in _CITATION_GROUP_RE.finditer(line or ""):
+        numbers = [int(value) for value in re.findall(r"\d{1,4}", match.group(0))]
+        if len(numbers) >= 2:
+            return match.group(0), numbers
+    return "", []
+
+
 def _assign_group_ordinals(records: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
+    """Assign source-order ordinals for duplicate anchors and citation clusters."""
     groups: dict[tuple[int, str], list[int]] = {}
     for index, record in enumerate(records):
         paragraph = record.get("source_paragraph")
         anchor = record.get("anchor") or {}
-        if paragraph is None or not anchor.get("text"):
+        text = str(anchor.get("text") or "")
+        if paragraph is None or not text:
             continue
-        key = (int(paragraph["id"]), str(anchor.get("text")))
+        key = (int(paragraph["id"]), text)
+        # [4, 7, 18] 里的每个数字链接属于同一个簇：按括号列表分组、
+        # 按源阅读顺序配对译文中的数字，避免 4 被 7/18 挤掉或错位。
+        if anchor.get("type") == "number" and text.isdigit():
+            group_text, numbers = _citation_numbers(record.get("source_line", ""))
+            if numbers and int(text) in numbers:
+                key = (int(paragraph["id"]), "cluster:" + group_text)
+                record["_cluster"] = {
+                    "text": group_text,
+                    "numbers": numbers,
+                    "index": numbers.index(int(text)),
+                }
         groups.setdefault(key, []).append(index)
     result: dict[int, tuple[int, int]] = {}
     for indexes in groups.values():
@@ -800,6 +1019,11 @@ def _restore_one(record: dict[str, Any], output_doc: Any, source_doc: Any,
         _paragraph_box(paragraph) if paragraph else None,
         _paragraph_text_bbox(output_paragraph) if output_paragraph else None)
 
+    cluster_rect = None
+    cluster = record.get("_cluster")
+    if cluster and anchor.get("type") == "number":
+        cluster_rect = _find_cluster_rect(output_page, region, cluster)
+
     if anchor.get("type") == "graphics" and (
             destination.get("type") == "uri"
             or (destination.get("type") == "goto"
@@ -811,11 +1035,15 @@ def _restore_one(record: dict[str, Any], output_doc: Any, source_doc: Any,
             record["reason"] = reason
             return record
         record["anchor"]["mapped"] = "graphics_geometry"
+    elif cluster_rect is not None:
+        rect, reason = cluster_rect, ""
+        record["mapped_by"] = "citation_cluster"
+        record["anchor"]["mapped"] = "citation_cluster"
     else:
         rect, reason = _find_anchor_rect(
             output_page, anchor, region, expected, ordinal, group_size)
         if rect is None and region != _page_text_rect(output_page):
-            if anchor.get("type") in ("bracket", "paren", "roman") or (
+            if anchor.get("type") in ("bracket", "paren", "roman", "number") or (
                     anchor.get("type") == "text" and
                     len(str(anchor.get("text", ""))) >= 6):
                 rect, reason = _find_anchor_rect(
@@ -847,7 +1075,8 @@ def _restore_one(record: dict[str, Any], output_doc: Any, source_doc: Any,
                             "uri": destination["uri"], "xref": xref}
     else:
         target_page, target_point, target_reason = _target_point_for_link(
-            destination, paragraphs, output_doc, page_mapping, source_doc)
+            destination, paragraphs, output_doc, page_mapping, source_doc,
+            anchor_text=str((record.get("anchor") or {}).get("text") or ""))
         if target_page is None or target_point is None:
             record["status"] = "unresolved"
             record["reason"] = target_reason or "target_missing"
@@ -934,6 +1163,16 @@ def restore_links(source_path: str, output_path: str,
                          "reason": restored.get("reason", "")})
                 except Exception:
                     pass
+
+        # 规格 T1：每个链接都记录 mapped_by（text / citation_cluster /
+        # formula_box / geometry / unresolved）；前几类已在恢复过程中写入。
+        for restored in restored_records:
+            if restored.get("mapped_by"):
+                continue
+            if restored.get("status") == "restored":
+                restored["mapped_by"] = "text"
+            elif restored.get("status") == "unresolved":
+                restored["mapped_by"] = "unresolved"
 
         if restored_records:
             output_doc.saveIncr()
