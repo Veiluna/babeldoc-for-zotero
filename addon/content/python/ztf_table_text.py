@@ -9,7 +9,6 @@ _ABBREVIATION_RE = re.compile(r"^(?:[A-Z]{2,}[0-9]*|[A-Z][a-z]*[A-Z][A-Za-z0-9]*
 _CODE_RE = re.compile(r"(?:https?://|www\.|[_/\\@#$%^&*+=<>{}|~]|\b\d)")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 _NUMBER_RE = re.compile(r"^[\d\s.,%+\-–—/()]+$")
-_SENTENCE_END_RE = re.compile(r"[.!?;:。！？；：]\s*$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _CJK_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
@@ -64,9 +63,7 @@ def classify_table_cell(text: object, role: str = "body") -> dict[str, str]:
         return {"action": "translate", "reason": "header"}
     if len(words) <= 3:
         return {"action": "keep", "reason": "short_value"}
-    if len(words) >= 4 or _SENTENCE_END_RE.search(value):
-        return {"action": "translate", "reason": "sentence"}
-    return {"action": "translate", "reason": "descriptive"}
+    return {"action": "translate", "reason": "sentence"}
 
 
 def meaningful_chinese(source: object, translated: object, min_cjk: int = 2) -> bool:

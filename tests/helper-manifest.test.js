@@ -41,16 +41,11 @@ const runnerPythonSource = fs.readFileSync(
   path.join(pythonDirectory, runnerFile),
   "utf8"
 );
-const loadedModules = [];
-const marker = "spec_from_file_location";
-let markerIndex = runnerPythonSource.indexOf(marker);
-while (markerIndex !== -1) {
-  const window = runnerPythonSource.slice(markerIndex, markerIndex + 400);
-  const match = window.match(/"([a-z0-9_]+\.py)"/);
-  if (match) loadedModules.push(match[1]);
-  markerIndex = runnerPythonSource.indexOf(marker, markerIndex + 1);
-}
-assert.ok(loadedModules.length >= 6, "runner should load the helper modules by path");
+const loadedModules = Array.from(
+  runnerPythonSource.matchAll(/_load_helper\("([a-z0-9_]+)"\)/g),
+  match => match[1] + ".py"
+);
+assert.ok(loadedModules.length >= 6, "runner should load the helper modules by name");
 for (const name of loadedModules) {
   assert.ok(
     helperFiles.includes(name),

@@ -123,64 +123,53 @@ _LICENSE_STAMP_RE = re.compile(
     re.I,
 )
 
-_STYLE_GUARDS_MODULE: Any = None
-_TABLE_HEADERS_MODULE: Any = None
+_HELPER_MODULES: dict[str, Any] = {}
+
+
+def _load_helper(name: str) -> Any:
+    """Load and cache a sibling helper module next to the runner."""
+    module = _HELPER_MODULES.get(name)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(
+            name, os.path.join(os.path.dirname(__file__), name + ".py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError(name + ".py is missing next to the runner")
+        candidate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(candidate)
+        _HELPER_MODULES[name] = candidate
+        module = candidate
+    return module
 
 
 def _style_guards() -> Any:
     """Load the sibling helper module that guards citation style spans."""
-    global _STYLE_GUARDS_MODULE
-    if _STYLE_GUARDS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_style_guards",
-            os.path.join(os.path.dirname(__file__), "ztf_style_guards.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_style_guards.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _STYLE_GUARDS_MODULE = module
-    return _STYLE_GUARDS_MODULE
-
-
-_LINKS_MODULE: Any = None
+    return _load_helper("ztf_style_guards")
 
 
 def _figure_text_helper() -> Any:
     """Load the sibling helper that restores figure-internal labels."""
-    global _FIGURE_TEXT_MODULE
-    if _FIGURE_TEXT_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_figure_text",
-            os.path.join(os.path.dirname(__file__), "ztf_figure_text.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_figure_text.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _FIGURE_TEXT_MODULE = module
-    return _FIGURE_TEXT_MODULE
-
-
-_FIGURE_TEXT_MODULE: Any = None
-
-_TABLE_TEXT_MODULE: Any = None
+    return _load_helper("ztf_figure_text")
 
 
 def _table_text_helper() -> Any:
     """Load the table-cell content rules module."""
-    global _TABLE_TEXT_MODULE
-    if _TABLE_TEXT_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_table_text",
-            os.path.join(os.path.dirname(__file__), "ztf_table_text.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_table_text.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _TABLE_TEXT_MODULE = module
-    return _TABLE_TEXT_MODULE
+    return _load_helper("ztf_table_text")
+
+
+def _table2_helper() -> Any:
+    """Load the sibling helper that translates rotated table headers."""
+    return _load_helper("ztf_table2")
+
+
+def _punctuation_helper() -> Any:
+    """Load the sibling helper that removes duplicate punctuation glyphs."""
+    return _load_helper("ztf_punctuation_cleanup")
+
+
+def _links_helper() -> Any:
+    """Load the sibling helper module that restores PDF links after layout."""
+    return _load_helper("ztf_links")
 
 
 def _table_body_should_translate(paragraph: Any) -> bool:
@@ -190,60 +179,6 @@ def _table_body_should_translate(paragraph: Any) -> bool:
         return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
     except Exception:
         return False
-
-
-_TABLE2_MODULE: Any = None
-
-
-def _table2_helper() -> Any:
-    """Load the sibling helper that translates rotated table headers."""
-    global _TABLE2_MODULE
-    if _TABLE2_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_table2",
-            os.path.join(os.path.dirname(__file__), "ztf_table2.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_table2.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _TABLE2_MODULE = module
-    return _TABLE2_MODULE
-
-
-_PUNCTUATION_MODULE: Any = None
-
-
-def _punctuation_helper() -> Any:
-    """Load the sibling helper that removes duplicate punctuation glyphs."""
-    global _PUNCTUATION_MODULE
-    if _PUNCTUATION_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_punctuation_cleanup",
-            os.path.join(os.path.dirname(__file__), "ztf_punctuation_cleanup.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_punctuation_cleanup.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _PUNCTUATION_MODULE = module
-    return _PUNCTUATION_MODULE
-
-
-def _links_helper() -> Any:
-    """Load the sibling helper module that restores PDF links after layout."""
-    global _LINKS_MODULE
-    if _LINKS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_links",
-            os.path.join(os.path.dirname(__file__), "ztf_links.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_links.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _LINKS_MODULE = module
-    return _LINKS_MODULE
 
 
 def _argument_value(arguments: list[str], name: str) -> str:
@@ -398,18 +333,7 @@ def _link_paragraph_map(
 
 def _table_headers() -> Any:
     """Load the sibling helper that separates table headers from table body."""
-    global _TABLE_HEADERS_MODULE
-    if _TABLE_HEADERS_MODULE is None:
-        spec = importlib.util.spec_from_file_location(
-            "ztf_table_headers",
-            os.path.join(os.path.dirname(__file__), "ztf_table_headers.py"),
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("ztf_table_headers.py is missing next to the runner")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        _TABLE_HEADERS_MODULE = module
-    return _TABLE_HEADERS_MODULE
+    return _load_helper("ztf_table_headers")
 
 
 class RequestCapExceeded(RuntimeError):
