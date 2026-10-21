@@ -181,6 +181,25 @@ def _table_body_should_translate(paragraph: Any) -> bool:
         return False
 
 
+def _should_verify_chinese(source: Any) -> bool:
+    """Whether a sent-for-translation text must come back as real Chinese.
+
+    Table cells and sentences are sent only when the content rules expect a
+    Chinese rendering; a pure echo, a number or stray punctuation then means
+    the model failed and the source text must be kept instead.
+    """
+    try:
+        text = str(source or "")
+        if not text.strip():
+            return False
+        return (
+            _table_text_helper().classify_table_cell(text, "body")["action"]
+            == "translate"
+        )
+    except Exception:
+        return False
+
+
 def _argument_value(arguments: list[str], name: str) -> str:
     """Read a single-valued BabelDOC CLI option."""
     for index, argument in enumerate(arguments):
@@ -3884,6 +3903,35 @@ def _install_min_request_patches(
             translated_text = normalized_text
         source = getattr(translate_input, "unicode", None)
         accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
+        # 规格 T4/Q11：送译内容返回无效中文（纯数字、纯标点、回声）时回退原文，
+        # 由 _is_verbatim_output 走保留原文路径，并写入诊断日志。
+        if (
+            isinstance(translated_text, str)
+            and translated_text
+            and _should_verify_chinese(source)
+            and not _table_text_helper().meaningful_chinese(
+                source, translated_text
+            )
+        ):
+            _write_job_log(
+                request_state,
+                {
+                    "event": "invalid_chinese_fallback",
+                    "preview": _text_preview(source, api_key),
+                    "output_preview": _text_preview(translated_text, api_key),
+                },
+                api_key,
+            )
+            translated_text = source
+            if accepted is not None:
+                # 让 _is_verbatim_output 判定为保留原文（原字形/原位置）。
+                accepted["text"] = source
+            if len(args) > 2:
+                args = list(args)
+                args[2] = translated_text
+            else:
+                kwargs = dict(kwargs)
+                kwargs["translated_text"] = translated_text
         if accepted is None:
             return original_post_translate_paragraph(
                 instance, paragraph, *args, **kwargs

@@ -1164,6 +1164,16 @@ def restore_links(source_path: str, output_path: str,
                 except Exception:
                     pass
 
+        # 规格 T1：每个链接都记录 mapped_by（text / citation_cluster /
+        # formula_box / geometry / unresolved）；前几类已在恢复过程中写入。
+        for restored in restored_records:
+            if restored.get("mapped_by"):
+                continue
+            if restored.get("status") == "restored":
+                restored["mapped_by"] = "text"
+            elif restored.get("status") == "unresolved":
+                restored["mapped_by"] = "unresolved"
+
         if restored_records:
             output_doc.saveIncr()
         stats = {

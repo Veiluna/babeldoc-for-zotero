@@ -84,10 +84,6 @@ class AnchorSpec:
     # Equivalent anchor in the source PDF; used to read the link's real target
     # page instead of guessing it from the numbering scheme.
     source_pattern: str = ""
-    # Only citations that point somewhere other than their apparent numbering
-    # scheme need the source annotation; section/appendix anchors are located
-    # reliably by their heading text.
-    prefer_source_link: bool = False
 
 
 ANCHORS: tuple[AnchorSpec, ...] = (
@@ -101,11 +97,9 @@ ANCHORS: tuple[AnchorSpec, ...] = (
                cluster=True,
                source_pattern=r"\[\s*4\s*,\s*7\s*,\s*18\s*\]"),
     AnchorSpec("策略10", r"策略\s*10", "ref10",
-               source_pattern=r"(?:project|strategy)\s*10(?!\d)",
-               prefer_source_link=True),
+               source_pattern=r"(?:project|strategy)\s*10(?!\d)"),
     AnchorSpec("公式1", r"公式\s*1", "eq1",
-               source_pattern=r"(?:Eq(?:uation)?\.?\s*\(?\s*1\s*\)?)(?!\d)",
-               prefer_source_link=True),
+               source_pattern=r"(?:Eq(?:uation)?\.?\s*\(?\s*1\s*\)?)(?!\d)"),
     AnchorSpec("第4节", r"第\s*4\s*节", "4",
                source_pattern=r"Sect(?:ion)?\.?\s*4(?![\d.])"),
     AnchorSpec("附录B", r"附录\s*B", "B",
@@ -459,29 +453,33 @@ def _source_anchor_rects(
     return found
 
 
-def _source_link_target_page(ctx: Context, spec: AnchorSpec) -> int | None:
-    """Target page of the source link that carries *spec*'s anchor text.
+def _source_link_targets(ctx: Context, spec: AnchorSpec) -> list[int]:
+    """Per-occurrence target pages of the source links carrying the anchor.
 
-    Guessing the page from the numbering scheme ("[10] is in REFERENCES") can
-    disagree with the actual link (the superscript 10 points at footnote 10);
-    the source annotation that covers the anchor text is authoritative.
+    Each occurrence is paired with the annotation that overlaps it most, in
+    source reading order.  One anchor can point at different pages ("Sect. 4"
+    appears in the analysis section and in the SAGE description), and guessing
+    from the numbering scheme can disagree with the actual annotation.
     """
     if not spec.source_pattern:
-        return None
+        return []
+    targets: list[int] = []
     for page_index, anchor_rect in _source_anchor_rects(ctx, spec.source_pattern):
         page = ctx.source[page_index]
+        best_area = 0.0
+        best_target: int | None = None
         for link in page.get_links():
             target = link.get("page")
             if target is None:
                 continue
-            link_rect = pymupdf.Rect(link["from"])
-            near = pymupdf.Rect(
-                link_rect.x0 - 4.0, link_rect.y0 - 1.0,
-                link_rect.x1 + 4.0, link_rect.y1 + 1.0,
-            )
-            if near.intersects(anchor_rect):
-                return int(target)
-    return None
+            overlap = pymupdf.Rect(link["from"]) & anchor_rect
+            area = 0.0 if overlap.is_empty else float(overlap.get_area())
+            if area > best_area:
+                best_area = area
+                best_target = int(target)
+        if best_target is not None:
+            targets.append(best_target)
+    return targets
 
 
 def inspect_occurrence(
@@ -557,20 +555,33 @@ def check_links(
     passed_anchors = 0
     skipped_anchors = 0
     for spec in ANCHORS:
-        expected_override = (
-            _source_link_target_page(ctx, spec)
-            if spec.prefer_source_link
-            else None
-        )
-        occurrences = []
+        source_targets = _source_link_targets(ctx, spec)
+        matched: list[tuple[TextRun, re.Match[str]]] = []
         for page_index in range(ctx.translated.page_count):
             for run in ctx.side_blocks(page_index):
                 for match in re.finditer(spec.pattern, run.text):
-                    occurrences.append(
-                        inspect_occurrence(
-                            ctx, run, match, spec, targets, expected_override
-                        )
-                    )
+                    matched.append((run, match))
+        # Pair each translated occurrence with the source annotation in
+        # reading order: one anchor text can point at different pages.
+        matched.sort(
+            key=lambda item: (
+                item[0].page_index, item[0].bbox.y0, item[0].bbox.x0
+            )
+        )
+        occurrences = []
+        for index, (run, match) in enumerate(matched):
+            expected_override = None
+            if source_targets:
+                expected_override = (
+                    source_targets[index]
+                    if index < len(source_targets)
+                    else source_targets[-1]
+                )
+            occurrences.append(
+                inspect_occurrence(
+                    ctx, run, match, spec, targets, expected_override
+                )
+            )
         # A retranslation may word the anchor differently ("策略10" became
         # "项目10"); an anchor text absent from the translation is not a link
         # failure, only an anchor that is present with missing/wrong links is.
@@ -583,11 +594,7 @@ def check_links(
         anchor_evidence: dict[str, object] = {
             "anchor": spec.key,
             "target": target_rows.get(spec.target),
-            "source_link_target_page": (
-                expected_override + 1
-                if expected_override is not None
-                else None
-            ),
+            "source_link_targets": [page + 1 for page in source_targets],
             "occurrences": occurrences,
             "applicable": applicable,
             "ok": ok,
@@ -609,9 +616,12 @@ def check_links(
         else:
             status = "PASS" if anchor["ok"] else "FAIL"
         details.append(f"{anchor['anchor']}: {len(anchor['occurrences'])} 处 -> {status}")
-        source_target = anchor.get("source_link_target_page")
-        if source_target:
-            details.append(f"  源链接目标页: p{source_target}")
+        source_targets = anchor.get("source_link_targets")
+        if source_targets:
+            details.append(
+                "  源链接目标页: "
+                + ", ".join(f"p{page}" for page in source_targets)
+            )
         target = anchor.get("target") or {}
         if target and target.get("page"):
             details.append(
@@ -784,7 +794,7 @@ def check_figure5(ctx: Context) -> dict[str, object]:
         else []
     )
     max_deviation = max(deviations) if deviations else None
-    count_ok = len(translated_labels) >= 3
+    count_ok = len(translated_labels) >= max(3, len(source_labels))
     spread_ok = spread is not None and spread <= ALIGN_TOLERANCE
     target_ok = (
         bool(deviations) and max_deviation is not None
@@ -981,9 +991,10 @@ def check_table2(ctx: Context) -> dict[str, object]:
     cjk_chars = sum(
         1 for text in translated_titles for char in text if CJK_RE.match(char)
     )
+    expected_columns = max(2, len(source_titles))
     status = (
         "PASS"
-        if len(cjk_lines) >= 2 and upright_ok and len(columns) >= 2
+        if len(cjk_lines) >= 2 and upright_ok and len(columns) >= expected_columns
         else "FAIL"
     )
     summary = (
