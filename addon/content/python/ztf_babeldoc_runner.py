@@ -162,6 +162,33 @@ def _figure_text_helper() -> Any:
 
 _FIGURE_TEXT_MODULE: Any = None
 
+_TABLE_TEXT_MODULE: Any = None
+
+
+def _table_text_helper() -> Any:
+    """Load the table-cell content rules module."""
+    global _TABLE_TEXT_MODULE
+    if _TABLE_TEXT_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_table_text",
+            os.path.join(os.path.dirname(__file__), "ztf_table_text.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_table_text.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _TABLE_TEXT_MODULE = module
+    return _TABLE_TEXT_MODULE
+
+
+def _table_body_should_translate(paragraph: Any) -> bool:
+    """Translate only table-body sentences; short values stay verbatim."""
+    try:
+        text = getattr(paragraph, "unicode", "") or ""
+        return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
+    except Exception:
+        return False
+
 
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
@@ -6016,7 +6043,12 @@ def _install_min_request_patches(
                     # Confirmed header: translate it even when the generic
                     # layout rules would have kept this short label.
                     pass
-                elif paragraph_id in request_state.get("table_body_ids", set()):
+                elif (
+                    paragraph_id in request_state.get("table_body_ids", set())
+                    and not _table_body_should_translate(paragraph)
+                ):
+                    # Short values, names and identifiers stay verbatim; full
+                    # sentences fall through to the normal translation path.
                     request_state["preserved_paragraph_ids"].add(paragraph_id)
                     if pbar is not None:
                         pbar.advance(1)
