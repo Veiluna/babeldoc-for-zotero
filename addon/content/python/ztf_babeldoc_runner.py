@@ -144,6 +144,25 @@ def _style_guards() -> Any:
 _LINKS_MODULE: Any = None
 
 
+def _figure_text_helper() -> Any:
+    """Load the sibling helper that restores figure-internal labels."""
+    global _FIGURE_TEXT_MODULE
+    if _FIGURE_TEXT_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "ztf_figure_text",
+            os.path.join(os.path.dirname(__file__), "ztf_figure_text.py"),
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("ztf_figure_text.py is missing next to the runner")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _FIGURE_TEXT_MODULE = module
+    return _FIGURE_TEXT_MODULE
+
+
+_FIGURE_TEXT_MODULE: Any = None
+
+
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
     global _LINKS_MODULE
@@ -6255,6 +6274,26 @@ def _restore_links_after_layout(
             api_key,
         )
         return summary
+    # 图内文字必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，
+    # 且译文图5 行标签会失去右对齐；这两个修复只改图区域。
+    try:
+        figure_helper = _figure_text_helper()
+        figure_stats = figure_helper.restore_figure_text(source_pdf, output_pdf)
+        _write_job_log(
+            request_state,
+            {"event": "figure_text_restore", **figure_stats},
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {
+                "event": "figure_text_restore_error",
+                "error": log_safe_error(error, api_key),
+            },
+            api_key,
+        )
+
     try:
         helper = _links_helper()
         stats = helper.restore_links(
