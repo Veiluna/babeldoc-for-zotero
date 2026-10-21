@@ -91,7 +91,8 @@ function makeHarness(options = {}) {
       const outputPath = outputDirectory + "\\paper.zh.mono.pdf";
       if (options.outputSize !== 0) files.set(outputPath, { exists: true, isFile: true, fileSize: 800 });
       const dualPath = outputDirectory + "\\paper.zh.dual.pdf";
-      if (options.outputMode === "dual" || options.outputMode === "both") {
+      const wantsDual = !callOptions.arguments.includes("--no-dual");
+      if (wantsDual && !options.omitDualOutput) {
         files.set(dualPath, { exists: true, isFile: true, fileSize: 900 });
       }
 
@@ -109,9 +110,7 @@ function makeHarness(options = {}) {
           ? ""
           : "ZTF_RESULT " + JSON.stringify(Object.assign(
             { mono: outputPath },
-            options.outputMode === "dual" || options.outputMode === "both"
-              ? { dual: dualPath }
-              : {},
+            wantsDual && !options.omitDualOutput ? { dual: dualPath } : {},
             options.requestCount == null ? {} : { requests: options.requestCount },
             options.repairRequestCount == null ? {} : { repair_request_count: options.repairRequestCount },
             options.fragmentItemCount == null ? {} : { fragment_item_count: options.fragmentItemCount },
@@ -173,7 +172,6 @@ function makeHarness(options = {}) {
             baseURL: options.baseURL || "https://api.example.test/v1/chat/completions",
             apiKey,
             model: "test-model",
-            outputMode: options.outputMode || "mono",
           };
           return values[name.slice(prefix.length)];
         },
@@ -448,28 +446,42 @@ async function abortKillsTheChildAndCleansUp() {
 }
 
 async function supportsBilingualOutputs() {
-  for (const mode of ["mono", "dual", "both"]) {
-    const harness = makeHarness({ outputMode: mode });
-    const result = await harness.runner.translate(harness.item, {});
+  for (const mode of ["mono", "dual"]) {
+    const harness = makeHarness();
+    const result = await harness.runner.translate(harness.item, { outputMode: mode });
     const args = harness.calls[0].arguments;
     if (mode === "mono") {
       assert.ok(args.includes("--no-dual"), "mono keeps a single output");
       assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "mono");
+      assert.match(result.outputPath, /\.zh\.mono\.pdf$/);
     } else {
-      assert.ok(!args.includes("--no-dual"), mode + " requests the dual PDF");
-      assert.equal(
-        result.outputPaths.map(entry => entry.kind).join(","),
-        mode === "both" ? "mono,dual" : "dual",
-      );
-      assert.equal(result.outputPath, result.outputPaths[0].path);
+      assert.ok(!args.includes("--no-dual"), "dual requests the dual PDF");
+      assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "dual");
+      assert.match(result.outputPath, /\.zh\.dual\.pdf$/);
     }
+    assert.equal(result.outputPath, result.outputPaths[0].path);
     await result.cleanup();
   }
+}
+
+async function missingSelectedOutputFails() {
+  const dualHarness = makeHarness({ omitDualOutput: true });
+  await assert.rejects(
+    dualHarness.runner.translate(dualHarness.item, { outputMode: "dual" }),
+    /未生成有效的双语对照 PDF/,
+  );
+
+  const monoHarness = makeHarness({ outputSize: 0 });
+  await assert.rejects(
+    monoHarness.runner.translate(monoHarness.item, { outputMode: "mono" }),
+    /未生成有效的中文 PDF/,
+  );
 }
 
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
   await supportsBilingualOutputs();
+  await missingSelectedOutputFails();
   await reportsRequestCountsInProgressAndResult();
   await exposesLinkRestorationStatsAndMappingPath();
   await rejectsQueryURLsBeforeStartingBabelDOC();

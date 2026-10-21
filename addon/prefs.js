@@ -3,5 +3,4 @@ pref("extensions.babeldoc-for-zotero.apiKey", "");
 pref("extensions.babeldoc-for-zotero.model", "");
 pref("extensions.babeldoc-for-zotero.downloadSource", "china");
 pref("extensions.babeldoc-for-zotero.translateReferences", false);
-pref("extensions.babeldoc-for-zotero.outputMode", "mono");
 pref("extensions.babeldoc-for-zotero.tokenParam", "max_tokens");

@@ -72,7 +72,7 @@ for (const locale of ["zh-CN", "en-US"]) {
     assert.match(localization, new RegExp(`^${messageID}\\s*=`, "m"), `${locale} defines ${messageID}`);
   }
 }
-assert.match(read("addon/content/modules/menu.js"), /var MENU_ID = "babeldoc-for-zotero-translate-pdf"/);
+assert.match(read("addon/content/modules/menu.js"), /var MENU_ID = "babeldoc-for-zotero-menu"/);
 
 const prefsSource = read("addon/prefs.js");
 assert.match(prefsSource, /extensions\.babeldoc-for-zotero\.baseURL/);
@@ -90,7 +90,7 @@ for (const relativePath of [
 
 assert.match(read("addon/content/preferences.js"), /return "BabelDOC for Zotero"/);
 assert.match(read("addon/content/modules/queue.js"), /progress\.changeHeadline\("BabelDOC for Zotero"\)/);
-assert.equal(manifest.version, "0.5.0");
+assert.equal(manifest.version, "0.5.1");
 assert.match(read("addon/bootstrap.js"), /content\/modules\/installer\.js/);
 assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero\.downloadSource/);
 assert.match(read("addon/content/preferences.xhtml"), /babeldoc-for-zotero-pref-section-environment/);

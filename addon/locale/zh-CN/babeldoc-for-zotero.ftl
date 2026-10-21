@@ -1,7 +1,11 @@
 babeldoc-for-zotero-name = BabelDOC for Zotero
 babeldoc-for-zotero-pref-pane-label = BabelDOC for Zotero
-babeldoc-for-zotero-menu-label =
+babeldoc-for-zotero-menu-root =
+    .label = BabelDOC for Zotero
+babeldoc-for-zotero-menu-mono =
     .label = 翻译成中文 PDF
+babeldoc-for-zotero-menu-dual =
+    .label = 生成双语对照 PDF
 babeldoc-for-zotero-pref-base-url = 接口地址
 babeldoc-for-zotero-pref-api-key = API key
 babeldoc-for-zotero-pref-model = 模型名
@@ -57,10 +61,6 @@ babeldoc-for-zotero-pref-api-network-error = 接口：网络错误，未收到 H
 babeldoc-for-zotero-import-tag-warning-title = 译本已添加，但无法标记为已翻译
 babeldoc-for-zotero-import-tag-warning-description = { $title } 已添加到 Zotero，但未能添加“已翻译”标记。
 babeldoc-for-zotero-import-tag-warning-default-name = 中文译本
-babeldoc-for-zotero-pref-output-mode = 输出格式
-babeldoc-for-zotero-pref-output-mono = 单语中文译本
-babeldoc-for-zotero-pref-output-dual = 左右双语对照
-babeldoc-for-zotero-pref-output-both = 同时生成两种
 
 babeldoc-for-zotero-check-status-pass = 通过
 babeldoc-for-zotero-check-status-fail = 失败

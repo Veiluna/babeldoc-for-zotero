@@ -1236,7 +1236,10 @@ def _verbatim_identifier_like(text: str) -> bool:
         if token.strip(",;:()[]\"'!?")
     ]
     if len(tokens) <= 1:
-        return True
+        # 正文单个词只有术语/标识符/链接可以原样保留；Security、Adaboost
+        # 这类普通单词必须翻译，不能因“只有一个词”而放过。
+        # _term_like_source 定义在本函数之后，调用发生在模块加载完成后。
+        return _term_like_source(plain, "body")
     lowered = [token.casefold() for token in tokens]
     # 代词/系动词/冠词是句子标记；of/on/for 等连接词仍可属于合法名称。
     if any(word in _SENTENCE_MARKERS for word in lowered):
@@ -1270,7 +1273,8 @@ def _title_verbatim_allowed(text: str) -> bool:
 
     def identifier_like(token: str) -> bool:
         if re.fullmatch(r"[A-Z]{2,6}[a-z]?", token):  # HTTP, IEEE, LLMs
-            return True
+            # 全大写变体不能绕过标题词表：METHOD、RESULT 等必须翻译。
+            return token.casefold() not in _TRANSLATABLE_TITLE_WORDS
         if re.search(r"[0-9]", token):  # CIC-IDS-2017, GPT-4, 754
             return True
         if re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+", token):
@@ -1321,6 +1325,152 @@ def verbatim_output_allowed(text: str, layout_label: str = "") -> bool:
     if len(plain.split()) >= 2 and re.search(r"[.!?]\s*$", plain):
         return False
     return len(lowercase) < _PROSE_MIN_LOWERCASE_WORDS
+
+
+# 术语/标识符：不含普通英文句子的短文本，模型原样返回时可以保留原文。
+# 这些词是常见可译标题，不能因为“全大写”或“单个词”而放过。
+_TRANSLATABLE_TITLE_WORDS = {
+    "abstract", "introduction", "conclusion", "keywords", "references",
+    "acknowledgements", "acknowledgment", "appendix", "table", "figure",
+    "section", "results", "discussion", "methods",
+    # 常见标题/小标题词：全大写变体同样必须翻译，不能按缩写保留。
+    "method", "result", "security", "overview", "analysis", "evaluation",
+    "performance", "experiments", "dataset", "datasets", "attack", "attacks",
+    "model", "models", "data", "system", "systems", "approach", "framework",
+    # 与表头黑名单重叠的标题词：即使被识别为 title，全大写变体也必须翻译。
+    "year", "title", "task", "rank", "number",
+}
+_TERM_ABBREVIATIONS = {
+    "http", "https", "ftp", "doi", "auc", "url", "uri", "api", "cpu", "gpu",
+    "ram", "ids", "ml", "ai", "llm", "pdf", "html", "css", "xml", "json",
+    # 表格指标缩写：同时出现在表头黑名单里，但仍应原样保留。
+    "roc", "tpr", "fpr", "tp", "fp", "tn", "fn",
+}
+# 通用表头词具有可译含义，不能因为“单个首字母大写的短词”被当作术语保留。
+# 仅用于 table_header / table_body 的宽松回退；标题、正文只允许紧标识符。
+# 多词条目按归一化后的整串匹配（"network traffic"、"machine learning"）。
+_TRANSLATABLE_TABLE_HEADERS = {
+    "label", "labels", "feature", "features", "weight", "network", "traffic",
+    "email", "browser", "other", "method", "methods", "precision", "recall",
+    "accuracy", "class", "value", "count", "total", "size", "length", "type",
+    "name", "description", "result", "score", "rate", "time", "date", "status",
+    "category", "group", "sample", "dataset", "attack", "normal", "training",
+    "testing", "model", "data", "source", "target", "auc", "roc", "tpr", "fpr",
+    "tp", "fp", "tn", "fn",
+    # 常见表头（含多词整串）：单个首字母大写的短词不再一律视为术语。
+    "year", "years", "title", "titles", "authors", "author", "number",
+    "numbers", "task", "tasks", "rank", "pages", "page", "volume", "issue",
+    "journal", "conference", "booktitle", "publisher", "address", "edition",
+    "chapter", "chapters", "section", "sections", "figure", "figures", "note",
+    "notes", "network traffic", "machine learning", "attack type", "day",
+    "days", "hour", "hours", "percentage", "percent",
+}
+# 句子标点与中文标点：出现任一字符就按句子/标题处理，不按术语保留。
+_SENTENCE_PUNCTUATION_RE = re.compile(
+    r"[.\[\]!?;:]|[\u3001\u3002\uff01\uff1f\uff1b\uff1a\uff0c"
+    r"\u201c\u201d\u2018\u2019\uff08\uff09\u3010\u3011\u2014\u2026]"
+)
+# 纯数值/百分比/区间（12.7%、0.912、1,024、3–5、±0.3）不是英文句子，
+# 句点在其中只是小数或千分位分隔符；必须原样保留，不计为未翻译。
+_NUMERIC_VERBATIM_RE = re.compile(
+    r"[+\-\u2212\u2013\u2014~±]?[0-9]"
+    r"[0-9\s.,%+\-\u2212\u2013\u2014/()~×±eE]*"
+)
+# 表头/标题常带显著性、脚注标记（Method*、YEAR†、Label‡、Recall#）。
+# 查词表与宽松回退前先剥离尾随标记，否则通用表头会漏过黑名单。
+_TRAILING_MARKER_CHARS = "*\u2020\u2021#"
+
+
+def _strip_trailing_markers(text: str) -> str:
+    """Remove trailing significance/footnote markers from a label."""
+    return str(text or "").rstrip(_TRAILING_MARKER_CHARS).strip()
+
+
+def _term_like_source(source: Any, layout_label: str = "") -> bool:
+    """术语、缩写、标识符或编号：模型原样返回时无需翻译。
+
+    基础规则：不含中文；长度不超过 40；纯数值/百分比直接放行；无句子
+    标点；单词数不超过 2。词表匹配与宽松回退前先剥离尾随标记（*、†、‡、#）。
+
+    判定顺序（前两条优先于全大写快捷）：
+    1. 单个词命中 _TRANSLATABLE_TITLE_WORDS：METHOD、RESULT、YEAR 等
+       可译标题词在任意角色下都必须翻译；
+    2. table_header / table_body 的整串命中 _TRANSLATABLE_TABLE_HEADERS：
+       YEAR、TITLE、TASK 等通用表头必须翻译；AUC 等已认定缩写除外；
+    3. 第一层（任何角色都放行）：“紧标识符/缩写”，即含数字且不含
+       普通英文单词（F1、CIC-IDS-2017、IEEE 754；"5 models" 不算）、
+       在 _TERM_ABBREVIATIONS 中（http、https、auc 等），或 2–6 个
+       全大写字母（SECOND、SVM、CNN）；
+    4. 第二层（宽松回退，仅 table_header / table_body）：未命中黑名单的
+       单个首字母大写短词（Adaboost、Swin）放行。标题、正文等其它角色
+       只保留第一层，避免 Security、Overview、Method 等被误放行。
+    """
+    text = _PLACEHOLDER_TOKEN_RE.sub(" ", str(source or "")).strip()
+    if not text or len(text) > 40:
+        return False
+    if re.search(r"[\u3400-\u9fff]", text):
+        return False
+    # 数值/百分比/区间不是英文句子；必须在句子标点判断之前放行，否则
+    # 正文 "12.7%"、"0.912" 的小数点会被当成句子标点。
+    if _NUMERIC_VERBATIM_RE.fullmatch(text):
+        return True
+    if _SENTENCE_PUNCTUATION_RE.search(text):
+        return False
+    words = text.split()
+    if not words or len(words) > 2:
+        return False
+    label = _normalized_layout_label(layout_label)
+    unmarked = _strip_trailing_markers(text)
+    unmarked_words = unmarked.split()
+    if not unmarked_words:
+        return False
+    normalized = " ".join(unmarked.casefold().split())
+
+    # 可译标题词与表头黑名单必须先于全大写快捷执行，否则 YEAR/METHOD 等
+    # 会被 [A-Z]{2,6} 当成缩写放行。带 *、†、‡、# 的表头按去标记文本匹配。
+    if (
+        len(unmarked_words) == 1
+        and unmarked_words[0].casefold() in _TRANSLATABLE_TITLE_WORDS
+    ):
+        return False
+    if (
+        label in ("table_header", "table_body")
+        and normalized in _TRANSLATABLE_TABLE_HEADERS
+        and unmarked.casefold() not in _TERM_ABBREVIATIONS
+    ):
+        return False
+
+    # 第一层：紧标识符/缩写，任何角色都放行。
+    if re.search(r"[0-9]", unmarked) and not _ordinary_english_words(unmarked):
+        return True
+    if unmarked.casefold() in _TERM_ABBREVIATIONS:
+        return True
+    if re.fullmatch(r"[A-Z]{2,6}", unmarked):
+        return True
+
+    # 第二层：只有表格角色允许宽松回退；标题、正文等必须翻译。
+    if label not in ("table_header", "table_body"):
+        return False
+    if len(unmarked_words) == 1:
+        word = unmarked_words[0]
+        return word[:1].isupper() and len(word) <= 8
+    return False
+
+
+def _verbatim_echo_allowed(
+    source: Any, translated: Any, layout_label: Any
+) -> bool:
+    """Whether an echoed item may keep its source without counting as failure."""
+    label = str(layout_label or "")
+    if not _is_verbatim_output(source, translated):
+        return False
+    if not _normalized_layout_label(label):
+        # 调用点漏传 layout_label 时不得回退到“短标签”启发式：没有版式
+        # 上下文时只信术语/标识符，避免表头或正文普通单词被当成保留。
+        return _term_like_source(source, "")
+    return verbatim_output_allowed(str(source or ""), label) or _term_like_source(
+        source, label
+    )
 
 
 def _is_first_page_author_block(paragraph: Any, page_index: int) -> bool:
@@ -1414,6 +1564,13 @@ def validate_translation_output(
         return {"usable": False, "reason": "模型返回空译文，已进入合并补译。", "checks": checks}
 
     output = str(translated)
+    identical = " ".join(output.split()) == " ".join(source.split())
+    # A term, abbreviation or identifier may legitimately come back unchanged
+    # even from a must-translate label ("Adaboost", "F1", "http"); it keeps the
+    # original glyphs and is not a failed translation.
+    if identical and _term_like_source(source, item.get("layout_label", "")):
+        checks["kept_verbatim"] = True
+        return {"usable": True, "reason": "术语或标识符无需翻译，保留原文。", "checks": checks}
     if _is_verbatim_output(source, output) and verbatim_output_allowed(source, item.get("layout_label", "")):
         checks["kept_verbatim"] = True
         return {"usable": True, "reason": "模型原样返回，保留原段落与排版。", "checks": checks}
@@ -1423,7 +1580,6 @@ def validate_translation_output(
     # Identical output is fine only for abbreviations, names, numbers and
     # identifiers ("HTTP", "CIC-IDS-2017", a lone "pcap"); two or more ordinary
     # lowercase words ("of the system") mean the text was simply not translated.
-    identical = " ".join(output.split()) == " ".join(source.split())
     # Label-like sources (names, author lines, labels) skip every
     # "left in English" heuristic; the prompt asks to keep them unchanged.
     label_like = verbatim_output_allowed(source, item.get("layout_label", ""))
@@ -4510,9 +4666,11 @@ def _install_min_request_patches(
                     output_item = outputs_by_item_id.get(item_id, {})
                     if output_item.get("_ztf_failed") or output_item.get("_ztf_deferred"):
                         continue
-                    if not _is_verbatim_output(
-                        input_item.get("input"), output_item.get("output")
-                    ) or not verbatim_output_allowed(str(input_item.get("input", "")), input_item.get("layout_label", "")):
+                    if not _verbatim_echo_allowed(
+                        input_item.get("input"),
+                        output_item.get("output"),
+                        input_item.get("layout_label", ""),
+                    ):
                         continue
                     try:
                         paragraph_index = int(item_id)
@@ -5229,9 +5387,11 @@ def _install_min_request_patches(
             output_item = outputs_by_id.get(repair_id, {})
             if output_item.get("_ztf_failed") or output_item.get("_ztf_deferred"):
                 continue
-            if _is_verbatim_output(
-                repair_items[repair_id].get("input"), output_item.get("output")
-            ) and verbatim_output_allowed(str(repair_items[repair_id].get("input", "")), repair_items[repair_id].get("layout_label", "")):
+            if _verbatim_echo_allowed(
+                repair_items[repair_id].get("input"),
+                output_item.get("output"),
+                repair_items[repair_id].get("layout_label", ""),
+            ):
                 paragraph_id = id(record["paragraph"])
                 repair_kept_verbatim_paragraph_ids.add(paragraph_id)
                 _mark_paragraph_kept_verbatim(

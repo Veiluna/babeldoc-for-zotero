@@ -552,6 +552,7 @@ var ZoteroTranslateFilesQueue = (function () {
           }
         },
         signal: controller.signal,
+        outputMode: job.outputMode,
       });
       translationWarning = translationResult && translationResult.warning;
       translationLogPath = translationResult && translationResult.logPath;
@@ -670,12 +671,13 @@ var ZoteroTranslateFilesQueue = (function () {
       stopped = false;
     },
 
-    enqueue: function (attachmentIDs) {
+    enqueue: function (attachmentIDs, outputMode) {
       if (stopped) {
         showEnqueueNotice(0, 0, 0);
         return { addedCount: 0, duplicateCount: 0, aheadCount: 0 };
       }
 
+      var requestedOutputMode = outputMode === "dual" ? "dual" : "mono";
       var beforeCount = pending.length + (currentJob ? 1 : 0);
       var addedCount = 0;
       var duplicateCount = 0;
@@ -696,7 +698,7 @@ var ZoteroTranslateFilesQueue = (function () {
         } catch (error) {
           // Keep an ID-based fallback title if the attachment lookup already fails.
         }
-        var job = { attachmentID: numericID };
+        var job = { attachmentID: numericID, outputMode: requestedOutputMode };
         job.attachmentTitle = getAttachmentTitle(queuedItem, job);
         pending.push(job);
         addedCount++;
