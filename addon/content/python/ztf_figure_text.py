@@ -77,6 +77,17 @@ def _shift(rect: pymupdf.Rect, dx: float, dy: float) -> pymupdf.Rect:
     return pymupdf.Rect(rect.x0 + dx, rect.y0 + dy, rect.x1 + dx, rect.y1 + dy)
 
 
+def _overlaps(first: pymupdf.Rect, second: pymupdf.Rect,
+              tolerance: float = 0.5) -> bool:
+    """True when two rectangles intersect, with a small optional tolerance."""
+    return (
+        first.x0 < second.x1 + tolerance
+        and first.x1 > second.x0 - tolerance
+        and first.y0 < second.y1 + tolerance
+        and first.y1 > second.y0 - tolerance
+    )
+
+
 def _source_lines(page: pymupdf.Page, region: pymupdf.Rect) -> list[dict]:
     lines = []
     try:
@@ -102,7 +113,7 @@ def _source_lines(page: pymupdf.Page, region: pymupdf.Rect) -> list[dict]:
 
 def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
                     region: pymupdf.Rect, offset_x: float) -> dict:
-    stats = {"restored_labels": 0, "aligned_labels": 0}
+    stats = {"restored_labels": 0, "aligned_labels": 0, "removed_fragments": 0}
     output_region = _shift(region, offset_x, 0)
     source_lines = _source_lines(source_page, region)
     if not source_lines:
@@ -138,19 +149,23 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
         except Exception:
             continue
 
-    # 2) Re-anchor translated row labels to the source right edge.
+    # 2) Re-anchor translated row labels to the source right edge.  While
+    #    doing so, remove leftover English fragments that overlap a Chinese
+    #    row label (BabelDOC keeps the untranslated row text, or this helper
+    #    re-draws it as a short label, underneath the translation).
     source_right = {}
     for line in source_lines:
         y = round(line["rect"].y0 / 3.0)
         source_right[y] = line["rect"].x1 + offset_x
-    redactions = []
-    replacements = []
+    chinese_rows = []
     for block in output_page.get_text("dict", clip=output_region).get("blocks", []):
         for line in block.get("lines", []):
             text = "".join(span.get("text", "") for span in line.get("spans", [])).strip()
             if not text or not _CJK_RE.search(text) or len(text) > 60:
                 continue
             rect = pymupdf.Rect(line["bbox"])
+            if not _overlaps(rect, output_region, 0.0):
+                continue
             nearest = None
             best = 6.0
             for key, target in source_right.items():
@@ -158,29 +173,103 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
                 if distance <= best:
                     best = distance
                     nearest = target
-            if nearest is None or abs(rect.x1 - nearest) <= 2.0:
-                continue
             span = line.get("spans", [{}])[0]
             size = max(4.0, float(span.get("size") or 8.0))
+            realign = nearest is not None and abs(rect.x1 - nearest) > 2.0
+            right = nearest if realign else rect.x1
             try:
-                width = pymupdf.get_text_length(text, fontname="china-s", fontsize=size)
+                width = pymupdf.get_text_length(
+                    text, fontname="china-s", fontsize=size
+                )
             except Exception:
-                continue
-            redactions.append(rect)
-            replacements.append((pymupdf.Point(nearest - width, rect.y1 - 1.0), text, size))
-    if replacements:
+                if realign:
+                    continue
+                width = None
+            if width is None:
+                # The row cannot be redrawn, so never redact fragments that
+                # overlap it: the row would disappear with them.
+                target_rect = rect
+                point = None
+            else:
+                target_rect = pymupdf.Rect(
+                    right - width, rect.y0, right, rect.y1
+                )
+                point = pymupdf.Point(right - width, rect.y1 - 1.0)
+            chinese_rows.append({
+                "rect": rect,
+                "target": target_rect,
+                "point": point,
+                "text": text,
+                "size": size,
+                "realign": realign,
+                "force": False,
+            })
+
+    # Collect horizontal English fragments overlapping a Chinese row label.
+    # get_text("dict", clip=...) may also return lines from blocks that start
+    # on the source half, so require the line bbox itself to sit on the
+    # translated side.  Rotated text (heat-map numbers, 45-degree axis labels,
+    # "Attack phase"), pure numbers and unrelated English are left alone.
+    fragments = []
+    if chinese_rows:
+        for block in output_page.get_text("dict", clip=output_region).get("blocks", []):
+            for line in block.get("lines", []):
+                text = "".join(
+                    span.get("text", "") for span in line.get("spans", [])
+                ).strip()
+                if not text or _CJK_RE.search(text):
+                    continue
+                if len(text) < 2 or len(text) > 60:
+                    continue
+                if not re.search(r"[A-Za-z]", text):
+                    continue
+                direction = line.get("dir") or (1.0, 0.0)
+                angle = math.degrees(
+                    math.atan2(-float(direction[1]), float(direction[0]))
+                )
+                if abs(angle) > 5.0:
+                    continue
+                span = line.get("spans", [{}])[0]
+                if float(span.get("size") or 0.0) < 2.0:
+                    continue
+                rect = pymupdf.Rect(line["bbox"])
+                if not _overlaps(rect, output_region, 0.0):
+                    continue
+                hits = [
+                    row for row in chinese_rows
+                    if row["point"] is not None
+                    and _overlaps(rect, row["target"])
+                ]
+                if not hits:
+                    continue
+                fragments.append(rect)
+                for row in hits:
+                    # A fragment is removed with a redaction; redraw the
+                    # Chinese label even if it was already aligned, otherwise
+                    # the redaction would delete it without a replacement.
+                    row["force"] = True
+
+    redactions = [
+        row["rect"] for row in chinese_rows if row["realign"] or row["force"]
+    ] + fragments
+    stats["removed_fragments"] = len(fragments)
+    if redactions:
         for rect in redactions:
             output_page.add_redact_annot(rect, fill=False)
         try:
             output_page.apply_redactions()
         except Exception:
             return stats
-        for point, text, size in replacements:
+        for row in chinese_rows:
+            if not (row["realign"] or row["force"]):
+                continue
             try:
                 output_page.insert_text(
-                    point, text, fontname="china-s", fontsize=size, color=(0, 0, 0)
+                    row["point"], row["text"], fontname="china-s",
+                    fontsize=row["size"], color=(0, 0, 0),
                 )
-                stats["aligned_labels"] += 1
+                if row["realign"]:
+                    stats["aligned_labels"] += 1
             except Exception:
                 continue
     return stats
@@ -195,7 +284,10 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
             output[0].rect.width > source[0].rect.width * 1.5
         )
         offset_x = source[0].rect.width if dual else 0.0
-        stats = {"pages": 0, "regions": 0, "restored_labels": 0, "aligned_labels": 0}
+        stats = {
+            "pages": 0, "regions": 0, "restored_labels": 0,
+            "aligned_labels": 0, "removed_fragments": 0,
+        }
         for index in range(min(len(source), len(output))):
             source_page = source[index]
             output_page = output[index]
