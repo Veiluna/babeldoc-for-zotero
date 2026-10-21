@@ -688,6 +688,12 @@ def create_completion_adapting(
         response = None
         failure = None
         delay = 0
+        notify_start = request_state.get("notify_request_start")
+        if callable(notify_start):
+            try:
+                notify_start()
+            except Exception:
+                pass
         try:
             response = client.chat.completions.create(**call)
             return response
@@ -727,6 +733,12 @@ def create_completion_adapting(
                 record["provider_message"] = provider_message_for_log(failure, api_key, "")
                 record["status_code"] = _provider_status(failure)
             _write_job_log(request_state, record, api_key)
+            notify_finish = request_state.get("notify_request_finish")
+            if callable(notify_finish):
+                try:
+                    notify_finish()
+                except Exception:
+                    pass
         if delay:
             _write_job_log(request_state, {"event": "request_retry", "delay_seconds": delay,
                                           "request_index": budget.requests if budget else None}, api_key)
@@ -1064,6 +1076,24 @@ def _is_verbatim_output(source: Any, translated: Any) -> bool:
         and isinstance(translated, str)
         and _normalized_verbatim_parts(source) == _normalized_verbatim_parts(translated)
     )
+
+
+_CJK_PUNCT_AFTER_COMMA_RE = re.compile(r",(\s*)([，；。！？、])")
+_DUPLICATE_CJK_PUNCT_RE = re.compile(r"([，；。！？、])\1+")
+
+
+def _normalize_translated_punctuation(text: Any) -> Any:
+    """Remove an English comma left before Chinese punctuation.
+
+    The model sometimes returns "[0, 1], ；" / "[0, 1], ，": the bracket keeps
+    its ASCII comma, then a Chinese comma/semicolon follows.  Only the
+    comma immediately followed by CJK punctuation is removed; decimals,
+    citation clusters and English lists keep their commas.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    normalized = _CJK_PUNCT_AFTER_COMMA_RE.sub(r"\2", text)
+    return _DUPLICATE_CJK_PUNCT_RE.sub(r"\1", normalized)
 
 
 def _apply_translation_output(
@@ -3833,6 +3863,15 @@ def _install_min_request_patches(
     def post_translate_paragraph_with_log(instance: Any, paragraph: Any, *args: Any, **kwargs: Any) -> Any:
         translate_input = args[1] if len(args) > 1 else kwargs.get("translate_input")
         translated_text = args[2] if len(args) > 2 else kwargs.get("translated_text")
+        normalized_text = _normalize_translated_punctuation(translated_text)
+        if normalized_text != translated_text:
+            args = list(args)
+            if len(args) > 2:
+                args[2] = normalized_text
+            else:
+                kwargs = dict(kwargs)
+                kwargs["translated_text"] = normalized_text
+            translated_text = normalized_text
         source = getattr(translate_input, "unicode", None)
         accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
         if accepted is None:
@@ -3958,11 +3997,12 @@ def _install_min_request_patches(
         pbar = args[2] if len(args) > 2 else None
         try:
             translate_input = accepted["translate_input"]
+            accepted_text = _normalize_translated_punctuation(accepted["text"])
             outcome, _ = _apply_translation_output(
                 getattr(translate_input, "unicode", None),
-                accepted["text"],
+                accepted_text,
                 lambda: original_post_translate_paragraph(
-                    owner, paragraph, tracker, translate_input, accepted["text"]
+                    owner, paragraph, tracker, translate_input, accepted_text
                 ),
             )
             if outcome == "kept_verbatim":
@@ -6715,6 +6755,30 @@ def main() -> int:
         )
 
     request_budget = RequestBudget(max_requests, emit_request_progress)
+
+    def notify_translation_progress(stage: str, overall: int) -> None:
+        """Push a local stage update; no network request is made for progress."""
+        state["stage"] = stage
+        state["overall"] = max(int(state.get("overall") or 0), int(overall))
+        _emit(
+            "ZTF_PROGRESS ",
+            {
+                "overall": state["overall"],
+                "stage": state["stage"],
+                "current": state["current"],
+                "total": state["total"],
+                "requests": request_budget.requests,
+                "planned": request_budget.planned,
+            },
+            api_key,
+        )
+
+    def notify_request_start() -> None:
+        notify_translation_progress("模型正在翻译", 25)
+
+    def notify_request_finish() -> None:
+        notify_translation_progress("模型正在翻译", 30)
+
     token_param = os.environ.pop("ZTF_TOKEN_PARAM", "").strip()
     request_state: dict[str, Any] = {
         "request_budget": request_budget,
@@ -6728,6 +6792,8 @@ def main() -> int:
         "repair_records": {},
         "translated_paragraph_ids": set(),
         "fragment_paragraph_ids": set(),
+        "notify_request_start": notify_request_start,
+        "notify_request_finish": notify_request_finish,
     }
     _write_job_log(
         request_state,

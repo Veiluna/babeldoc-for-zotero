@@ -310,7 +310,7 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
-  function progressText(progress, queueRemaining) {
+  function progressText(progress, queueRemaining, elapsed) {
     var stage = String(progress && progress.stage || "正在翻译");
     var overall = Number(progress && progress.overall);
     if (!Number.isFinite(overall)) overall = 0;
@@ -323,7 +323,10 @@ var ZoteroTranslateFilesQueue = (function () {
       if (Number.isFinite(planned) && planned > 0) requestText += "/" + Math.floor(planned);
       else requestText += " 次";
     }
-    return stage + " · " + Math.round(overall) + "%" + requestText + "（队列中还有 " + queueRemaining + " 篇）";
+    // 用户要求的长请求文案：“模型正在翻译（已用时 mm:ss）”。
+    var elapsedText = "（已用时 " + String(elapsed == null ? "0:00" : elapsed) + "）";
+    return stage + elapsedText + " · " + Math.round(overall) + "%" + requestText
+      + "（队列中还有 " + queueRemaining + " 篇）";
   }
 
   function refreshProgress(job, progress) {
@@ -340,41 +343,14 @@ var ZoteroTranslateFilesQueue = (function () {
       var overall = Number(entry.lastProgress && entry.lastProgress.overall);
       if (!Number.isFinite(overall)) overall = 0;
       entry.itemProgress.setProgress(Math.max(0, Math.min(100, overall)));
-      var text = progressText(entry.lastProgress, pending.length);
       var seconds = Math.max(0, Math.floor((Date.now() - entry.stageStartedAt) / 1000));
       var elapsed = Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, "0");
-      var fallback = "Stage elapsed: " + elapsed;
-      var sequence = ++entry.sequence;
-      entry.itemProgress.setText(text + " · " + fallback);
-      formatStageElapsed(elapsed, fallback).then(function (label) {
-        if (currentProgress !== entry || !entry.active || entry.sequence !== sequence) return;
-        try {
-          entry.itemProgress.setText(text + " · " + label);
-        } catch (error) {
-          // A late localization result must not interrupt the queue.
-        }
-      });
+      // 每秒同步刷新：异步本地化结果会锁定在发起那一刻的旧秒数，
+      // 长时间静默请求时就会一直显示“0:00”。
+      entry.itemProgress.setText(progressText(entry.lastProgress, pending.length, elapsed));
     } catch (error) {
       // Progress UI errors must not interrupt the translation queue.
     }
-  }
-
-  async function formatStageElapsed(elapsed, fallback) {
-    try {
-      var mainWindow = Zotero.getMainWindow();
-      var document = mainWindow && !mainWindow.closed && mainWindow.document;
-      if (document && document.l10n && typeof document.l10n.formatValue === "function") {
-        if (mainWindow.MozXULElement && typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
-          mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
-        }
-        return await document.l10n.formatValue(
-          "babeldoc-for-zotero-progress-stage-elapsed", { elapsed: elapsed }
-        ) || fallback;
-      }
-    } catch (error) {
-      // Match the existing localization fallback without exposing exception text.
-    }
-    return fallback;
   }
 
   function stopProgressTimer(entry) {

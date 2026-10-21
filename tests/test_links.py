@@ -270,5 +270,96 @@ class LinkDestinationTest(unittest.TestCase):
                 self.assertEqual(doc[0].get_links(), [])
 
 
+class TargetPointSearchTest(unittest.TestCase):
+    def test_section_number_prefers_heading_near_approximate_point(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=400, height=600)
+            page.insert_text((50, 100), "3.4 Method", fontname="tiro", fontsize=12)
+            page.insert_text((50, 320), "see 3.4 and 3.41", fontname="tiro", fontsize=10)
+            page.insert_text((50, 520), "3.4 again", fontname="tiro", fontsize=10)
+            destination = {"type": "goto", "page": 0, "point": [50.0, 100.0]}
+            target_page, target_point, reason = links._target_point_for_link(
+                destination, [], doc, {0: 0}, doc, anchor_text="3.4"
+            )
+            self.assertEqual(target_page, 0)
+            self.assertEqual(reason, "target_anchor_search")
+            self.assertGreaterEqual(target_point[1], 70.0)
+            self.assertLessEqual(target_point[1], 130.0)
+        finally:
+            doc.close()
+
+    def test_approximate_point_is_used_when_no_anchor_is_found(self) -> None:
+        doc = pymupdf.open()
+        try:
+            doc.new_page(width=400, height=600)
+            destination = {"type": "goto", "page": 0, "point": [100.0, 300.0]}
+            target_page, target_point, reason = links._target_point_for_link(
+                destination, [], doc, {0: 0}, doc, anchor_text="9.9"
+            )
+            self.assertEqual(target_page, 0)
+            self.assertEqual(reason, "target_point_approximate")
+            self.assertAlmostEqual(target_point[0], 100.0, delta=1.0)
+            self.assertAlmostEqual(target_point[1], 300.0, delta=1.0)
+        finally:
+            doc.close()
+
+
+class CompoundAnchorAndClusterTest(unittest.TestCase):
+    def test_clipped_compound_number_is_recovered_from_line(self) -> None:
+        for under in (".1", "3", "3.1"):
+            with self.subTest(under=under):
+                anchor = links._anchor_from_text(
+                    under, "See Section 3.1 for details."
+                )
+                self.assertEqual(anchor["text"], "3.1", anchor)
+                self.assertEqual(anchor["label"], "section")
+
+    def test_superscript_and_equation_numbers_keep_full_text(self) -> None:
+        self.assertEqual(
+            links._anchor_from_text("10", "策略 10 展示了结果。")["text"], "10"
+        )
+        self.assertEqual(
+            links._anchor_from_text("1", "见公式 1。")["text"], "1"
+        )
+        self.assertEqual(
+            links._anchor_from_text("1(d)", "见 Fig. 1(d)。")["text"], "1(d)"
+        )
+
+    def test_citation_cluster_assigns_source_order(self) -> None:
+        records = []
+        for number in (4, 7, 18):
+            records.append(
+                {
+                    "source_paragraph": {"id": 1},
+                    "anchor": {"type": "number", "text": str(number)},
+                    "source_line": "Earlier work [4, 7, 18] showed",
+                    "source_from_unrotated": [number, 100, number + 3, 110],
+                }
+            )
+        ordinals = links._assign_group_ordinals(records)
+        self.assertEqual(
+            [ordinals[index] for index in range(3)],
+            [(0, 3), (1, 3), (2, 3)],
+        )
+        self.assertEqual(
+            [record["_cluster"]["index"] for record in records], [0, 1, 2]
+        )
+
+    def test_cluster_rect_targets_the_nth_number(self) -> None:
+        doc = pymupdf.open()
+        try:
+            page = doc.new_page(width=400, height=200)
+            page.insert_text((50, 100), "[4, 7, 18]", fontname="tiro", fontsize=12)
+            region = pymupdf.Rect(0, 0, 400, 200)
+            for index, number in enumerate((4, 7, 18)):
+                cluster = {"numbers": [4, 7, 18], "index": index}
+                rect = links._find_cluster_rect(page, region, cluster)
+                self.assertIsNotNone(rect, cluster)
+                self.assertEqual(page.get_textbox(rect).strip(), str(number))
+        finally:
+            doc.close()
+
+
 if __name__ == "__main__":
     unittest.main()
