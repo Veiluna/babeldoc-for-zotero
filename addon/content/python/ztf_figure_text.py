@@ -305,7 +305,9 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
         for rect in redactions:
             output_page.add_redact_annot(rect, fill=False)
         try:
-            output_page.apply_redactions()
+            # 只删文字：默认 images=2 会擦除重叠图像像素、graphics=1 会删
+            # 完全被覆盖的矢量图，热图下的表格线必须保留。
+            output_page.apply_redactions(images=0, graphics=0)
         except Exception:
             return stats
         for row in chinese_rows:
@@ -326,11 +328,9 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
     """Rewrite the translated PDF, restoring figure labels in place."""
     source = pymupdf.open(source_path)
     output = pymupdf.open(output_path)
+    temporary = output_path + ".figuretmp"
+    saved = False
     try:
-        dual = len(output) > 0 and len(source) > 0 and (
-            output[0].rect.width > source[0].rect.width * 1.5
-        )
-        offset_x = source[0].rect.width if dual else 0.0
         stats = {
             "pages": 0, "regions": 0, "restored_labels": 0,
             "aligned_labels": 0, "removed_fragments": 0,
@@ -338,6 +338,10 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
         for index in range(min(len(source), len(output))):
             source_page = source[index]
             output_page = output[index]
+            # BabelDOC 的双语版左半是原页宽；整页宽度可能大于两倍，不能用
+            # output 宽度的一半当译文侧起点。
+            dual = output_page.rect.width >= source_page.rect.width * 1.5
+            offset_x = source_page.rect.width if dual else 0.0
             regions = _figure_regions(source_page)
             stats["regions"] += len(regions)
             page_stats = None
@@ -352,9 +356,9 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
                 for key, value in page_stats.items():
                     stats[key] += value
                 stats["pages"] += 1
-        temporary = output_path + ".figuretmp"
         output.save(temporary, garbage=3, deflate=True)
         output.close()
+        saved = True
         os.replace(temporary, output_path)
         return stats
     finally:
@@ -362,3 +366,12 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
             source.close()
         except Exception:
             pass
+        try:
+            output.close()
+        except Exception:
+            pass
+        if not saved:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass

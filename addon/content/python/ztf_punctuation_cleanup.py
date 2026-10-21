@@ -88,30 +88,41 @@ def _redaction_rect(rect: pymupdf.Rect) -> pymupdf.Rect:
     )
 
 
-def _translated_offset(source_path: str, output_path: str) -> float:
-    """Left edge of the translated half in a bilingual PDF, else 0."""
+def _page_offsets(source_path: str, output_path: str) -> dict[int, float]:
+    """Left edge of the translated half per page, else 0.
+
+    BabelDOC copies the source page in the left half, so the translated side
+    starts at the source page width; the whole page can be wider than twice
+    that, so half of the output width is not a safe guess.
+    """
+    offsets: dict[int, float] = {}
+    if not source_path:
+        return offsets
     try:
         with pymupdf.open(source_path) as source, pymupdf.open(output_path) as output:
-            if not len(source) or not len(output):
-                return 0.0
-            source_width = float(source[0].rect.width)
-            output_width = float(output[0].rect.width)
-            if source_width > 0 and output_width >= source_width * 1.5:
-                return output_width / 2.0
+            for index in range(min(len(source), len(output))):
+                source_width = float(source[index].rect.width)
+                output_width = float(output[index].rect.width)
+                offsets[index] = (
+                    source_width
+                    if source_width > 0 and output_width >= source_width * 1.5
+                    else 0.0
+                )
     except Exception:
-        return 0.0
-    return 0.0
+        return {}
+    return offsets
 
 
 def clean_duplicate_punctuation(output_path: str, source_path: str = "") -> dict:
     """Delete redundant comma glyphs from the finished PDF and save in place."""
-    offset = _translated_offset(source_path, output_path) if source_path else 0.0
+    offsets = _page_offsets(source_path, output_path)
     document = pymupdf.open(output_path)
     stats: dict = {"pages": 0, "removed": 0, "failed": False}
     try:
         modified = False
         for page_index in range(document.page_count):
             page = document[page_index]
+            offset = offsets.get(page_index, 0.0)
             chars = _text_chars(page)
             if not chars:
                 continue

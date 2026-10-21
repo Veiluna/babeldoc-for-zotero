@@ -123,5 +123,52 @@ class PdfCleanupTest(unittest.TestCase):
             self.assertIn("[0,1]；结束", compact)
 
 
+    def test_mixed_page_width_uses_source_width_as_translation_start(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.pdf"
+            output = root / "output.pdf"
+            source_doc = pymupdf.open()
+            try:
+                source_doc.new_page(width=300, height=200).insert_text(
+                    (20, 50), "source", fontname="helv", fontsize=9
+                )
+                source_doc.save(str(source))
+            finally:
+                source_doc.close()
+            output_doc = pymupdf.open()
+            try:
+                # The left half is the untouched source page; the whole page is
+                # wider than twice the source width, so half of it is not the
+                # start of the translation.
+                page = output_doc.new_page(width=700, height=200)
+                page.insert_text(
+                    (40, 50), "12018,,", fontname="china-s", fontsize=9
+                )
+                page.insert_text(
+                    (300, 50), "12018,,", fontname="china-s", fontsize=9
+                )
+                output_doc.save(str(output))
+            finally:
+                output_doc.close()
+
+            stats = cleanup.clean_duplicate_punctuation(
+                str(output), str(source)
+            )
+            self.assertGreaterEqual(stats["removed"], 1)
+            document = pymupdf.open(str(output))
+            try:
+                left = document[0].get_text(
+                    "text", clip=pymupdf.Rect(0, 0, 300, 200)
+                )
+                right = document[0].get_text(
+                    "text", clip=pymupdf.Rect(300, 0, 700, 200)
+                )
+            finally:
+                document.close()
+            self.assertIn("12018,,", "".join(left.split()))
+            self.assertNotIn("12018,,", "".join(right.split()))
+
+
 if __name__ == "__main__":
     unittest.main()

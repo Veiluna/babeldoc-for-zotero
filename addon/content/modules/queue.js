@@ -310,6 +310,68 @@ var ZoteroTranslateFilesQueue = (function () {
     }
   }
 
+  // 预取一次 Fluent 模板（用标记占位），之后每秒同步替换秒数。
+  // 这样既遵守"界面文字用 Fluent"，又避免异步本地化把旧秒数写回。
+  var PROGRESS_ELAPSED_MARKER = "__ZTF_ELAPSED__";
+  var progressElapsedLabels = null;
+  var progressElapsedLabelsLoading = null;
+
+  function loadProgressElapsedLabels() {
+    if (progressElapsedLabels || progressElapsedLabelsLoading) {
+      return progressElapsedLabelsLoading;
+    }
+    var mainWindow = null;
+    try {
+      mainWindow = Zotero.getMainWindow();
+    } catch (error) {
+      mainWindow = null;
+    }
+    var document = mainWindow && !mainWindow.closed && mainWindow.document;
+    if (!document || !document.l10n || typeof document.l10n.formatValue !== "function") {
+      return null;
+    }
+    try {
+      if (mainWindow.MozXULElement &&
+          typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
+        mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
+      }
+    } catch (error) {
+      // The fallback formatting below still shows the timer.
+    }
+    var pending;
+    try {
+      pending = document.l10n.formatValue(
+        "babeldoc-for-zotero-progress-elapsed", { elapsed: PROGRESS_ELAPSED_MARKER }
+      );
+    } catch (error) {
+      return null;
+    }
+    progressElapsedLabelsLoading = Promise.resolve(pending).then(function (value) {
+      var text = String(value || "");
+      var marker = text.indexOf(PROGRESS_ELAPSED_MARKER);
+      if (marker < 0) return null;
+      progressElapsedLabels = {
+        prefix: text.slice(0, marker),
+        suffix: text.slice(marker + PROGRESS_ELAPSED_MARKER.length),
+      };
+      return progressElapsedLabels;
+    }).catch(function () {
+      return null;
+    }).then(function (value) {
+      progressElapsedLabelsLoading = null;
+      return value;
+    });
+    return progressElapsedLabelsLoading;
+  }
+
+  function formatElapsed(elapsed) {
+    var value = String(elapsed == null ? "0:00" : elapsed);
+    if (progressElapsedLabels) {
+      return progressElapsedLabels.prefix + value + progressElapsedLabels.suffix;
+    }
+    return " (" + value + ")";
+  }
+
   function progressText(progress, queueRemaining, elapsed) {
     var stage = String(progress && progress.stage || "正在翻译");
     var overall = Number(progress && progress.overall);
@@ -324,7 +386,7 @@ var ZoteroTranslateFilesQueue = (function () {
       else requestText += " 次";
     }
     // 用户要求的长请求文案：“模型正在翻译（已用时 mm:ss）”。
-    var elapsedText = "（已用时 " + String(elapsed == null ? "0:00" : elapsed) + "）";
+    var elapsedText = formatElapsed(elapsed);
     return stage + elapsedText + " · " + Math.round(overall) + "%" + requestText
       + "（队列中还有 " + queueRemaining + " 篇）";
   }
@@ -415,6 +477,7 @@ var ZoteroTranslateFilesQueue = (function () {
       stage: "正在准备 BabelDOC",
     } };
     currentProgress = entry;
+    loadProgressElapsedLabels();
     try {
       entry.window = new Zotero.ProgressWindow({ closeOnClick: false });
       // Zotero 10.0.6 also calls this public close method when the parent window closes.

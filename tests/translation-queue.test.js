@@ -35,10 +35,14 @@ function makeHarness(options = {}) {
   let now = 0;
   const mainWindow = { name: "most-recent-zotero-window" };
   const progressWindowSet = { add() {} };
-  if (options.formatValue) {
-    mainWindow.document = { l10n: { formatValue: options.formatValue } };
-    mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
-  }
+  const formatValue = options.formatValue || function (key, args) {
+    if (key === "babeldoc-for-zotero-progress-elapsed") {
+      return Promise.resolve("（已用时 " + ((args && args.elapsed) || "") + "）");
+    }
+    return Promise.resolve("");
+  };
+  mainWindow.document = { l10n: { formatValue } };
+  mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
   const items = new Map();
   const settings = options.settings || {
     baseURL: "https://example.test/v1",
@@ -409,7 +413,12 @@ async function localizationErrorsFallBackWithoutStoppingTheQueue() {
     harness.items.set(1, { id: 1 });
     harness.queue.enqueue([1]);
     await harness.advanceTime(1000);
-    assert.match(harness.progressWindows[0].text, /（已用时 0:01）/);
+    await settleLocalization();
+    assert.match(
+      harness.progressWindows[0].text,
+      /0:01/,
+      "the local timer must keep running when localization fails"
+    );
     assert.ok(!harness.logs.join("\n").includes("private diagnostic"));
     finish.resolve("translated.pdf");
     await harness.queue.onIdle();
@@ -1010,8 +1019,33 @@ async function importsBilingualArtifactsInOrder() {
   );
 }
 
+async function elapsedFormatComesFromFluent() {
+  const finish = deferred();
+  const harness = makeHarness({
+    formatValue(key, args) {
+      if (key === "babeldoc-for-zotero-progress-elapsed") {
+        return Promise.resolve("stage time: " + ((args && args.elapsed) || ""));
+      }
+      return Promise.resolve("");
+    },
+    runner: { translate: () => finish.promise },
+  });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  await settleLocalization();
+  await harness.advanceTime(1000);
+  assert.match(
+    harness.progressWindows[0].text,
+    /stage time: 0:0[12]/,
+    "the elapsed label must come from the Fluent template, not hardcoded text"
+  );
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+}
+
 (async () => {
   await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
+  await elapsedFormatComesFromFluent();
   await outputModeIsPassedPerJobAndDefaultsToMono();
   await importsBilingualArtifactsInOrder();
   await failedShowRestoresRegistrationAndRemovesUnloadListener();
