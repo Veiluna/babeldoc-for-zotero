@@ -218,7 +218,7 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
   for (const helperName of [
     "ztf_inline_formulas.py", "ztf_style_guards.py",
-    "ztf_links.py", "ztf_table_headers.py",
+    "ztf_links.py",
   ]) {
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
       entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);

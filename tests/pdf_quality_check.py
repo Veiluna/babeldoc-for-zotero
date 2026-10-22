@@ -907,60 +907,15 @@ def check_commas(ctx: Context) -> dict[str, object]:
     }
 
 
-def _vertical_cjk_columns(
-    chars: list[CharBox], clip: pymupdf.Rect
-) -> list[list[CharBox]]:
-    """Group CJK characters into upright vertical columns.
-
-    A rotated-header translation draws each character upright at a fixed x
-    centre and steps down/up in y, so a column is 2+ consecutive characters with
-    the same centre x and a monotonic y.  A 90-degree rotated string would put
-    every character on one horizontal line instead.
-    """
-    picked = [
-        char
-        for char in chars
-        if CJK_RE.match(char.char) and _rect_contains(clip, _center(char.bbox))
-    ]
-    columns: list[dict[str, object]] = []
-    for char in sorted(picked, key=lambda item: item.bbox.x0):
-        centre_x = _center(char.bbox).x
-        target = None
-        for column in columns:
-            if abs(float(column["x"]) - centre_x) <= 1.5:
-                target = column
-                break
-        if target is None:
-            columns.append({"x": centre_x, "chars": [char]})
-        else:
-            members = target["chars"]
-            assert isinstance(members, list)
-            members.append(char)
-            target["x"] = (
-                float(target["x"]) * (len(members) - 1) + centre_x
-            ) / len(members)
-    found: list[list[CharBox]] = []
-    for column in columns:
-        members = column["chars"]
-        assert isinstance(members, list)
-        if len(members) < 2:
-            continue
-        ys = [char.bbox.y0 for char in members]
-        ascending = all(right > left for left, right in zip(ys, ys[1:]))
-        descending = all(right < left for left, right in zip(ys, ys[1:]))
-        if ascending or descending:
-            found.append(members)
-    return found
-
-
 def check_table2(ctx: Context) -> dict[str, object]:
+    """0.7.0 表格翻译封存：表2 内容必须保留英文原文（题注另走普通翻译）。"""
     if (
         PAGE_TABLE2 >= ctx.source.page_count
         or PAGE_TABLE2 >= ctx.translated.page_count
     ):
         return {
             "id": "table2",
-            "name": "表2 旋转列标题",
+            "name": "表2 表格内容保留原文",
             "status": "FAIL",
             "summary": f"PDF 页数不足，无法检查第 {PAGE_TABLE2 + 1} 页",
             "evidence": {},
@@ -977,63 +932,42 @@ def check_table2(ctx: Context) -> dict[str, object]:
         if len(run.text.strip()) >= 3
     ]
     translated_lines = [
-        run
+        run.text.strip()
         for run in ctx.side_lines(PAGE_TABLE2, translated_clip)
-        if len(run.text.strip()) >= 1
+        if run.text.strip()
     ]
-    translated_titles = [run.text.strip() for run in translated_lines]
-    cjk_lines = [run for run in translated_lines if CJK_RE.search(run.text)]
-    # 字形正立：逐字竖排绘制的每个汉字仍是水平字形（dir=(1,0)）。
-    upright_ok = bool(cjk_lines) and all(
-        abs(run.angle) <= 5.0 for run in cjk_lines
-    )
-    columns = _vertical_cjk_columns(ctx.page_chars(PAGE_TABLE2), translated_clip)
-    cjk_chars = sum(
-        1 for text in translated_titles for char in text if CJK_RE.match(char)
-    )
-    expected_columns = max(2, len(source_titles))
+    translated_text = " ".join(translated_lines)
+    preserved = [title for title in source_titles if title in translated_text]
+    cjk_lines = [text for text in translated_lines if CJK_RE.search(text)]
+    required = max(1, int(len(source_titles) * 0.8))
     status = (
         "PASS"
-        if len(cjk_lines) >= 2 and upright_ok and len(columns) >= expected_columns
+        if source_titles and len(preserved) >= required and not cjk_lines
         else "FAIL"
     )
     summary = (
-        f"源列标题 {len(source_titles)} 个；译文含 CJK 行 {len(cjk_lines)} 个，"
-        f"竖排列 {len(columns)} 个，字形正立 {upright_ok}"
+        f"源列标题 {len(source_titles)} 个；译文中保留原文 {len(preserved)} 个；"
+        f"表内 CJK 行 {len(cjk_lines)} 个（封存后应为 0）"
     )
     details = [
         f"检查页: p{PAGE_TABLE2 + 1}，表2 表头区域",
         summary,
         f"源标题: {', '.join(source_titles[:15])}",
-        f"译标题: {', '.join(translated_titles[:15])}",
+        f"译文: {', '.join(translated_lines[:15])}",
     ]
-    details.append(
-        "竖排列: "
-        + ", ".join(
-            f"{''.join(char.char for char in column)}"
-            f"(x={statistics.median([_center(char.bbox).x for char in column]):.1f}, "
-            f"{len(column)} 字)"
-            for column in columns[:15]
-        )
-    )
     if status == "FAIL":
-        details.append("表2 旋转列标题仍为英文，或中文不是正立竖排")
+        details.append("表2 内容未保留英文原文，或表内出现中文（0.7.0 应封存表格翻译）")
     return {
         "id": "table2",
-        "name": "表2 旋转列标题",
+        "name": "表2 表格内容保留原文",
         "status": status,
         "summary": summary,
         "evidence": {
             "page": PAGE_TABLE2 + 1,
             "source_titles": source_titles,
-            "translated_titles": translated_titles,
-            "cjk_title_count": len(cjk_lines),
-            "cjk_titles": [run.text.strip() for run in cjk_lines],
-            "cjk_char_count": cjk_chars,
-            "upright": upright_ok,
-            "vertical_columns": [
-                "".join(char.char for char in column) for column in columns
-            ],
+            "translated_lines": translated_lines,
+            "preserved_titles": preserved,
+            "cjk_lines": cjk_lines,
         },
         "details": details,
     }
@@ -1066,13 +1000,14 @@ def _table3_source_map(ctx: Context) -> dict[str, str]:
 
 
 def check_table3(ctx: Context) -> dict[str, object]:
+    """0.7.0 表格翻译封存：表3 整句描述必须保留英文原文。"""
     if (
         PAGE_TABLE3 >= ctx.source.page_count
         or PAGE_TABLE3 >= ctx.translated.page_count
     ):
         return {
             "id": "table3",
-            "name": "表3 整句翻译",
+            "name": "表3 表格内容保留原文",
             "status": "FAIL",
             "summary": f"PDF 页数不足，无法检查第 {PAGE_TABLE3 + 1} 页",
             "evidence": {},
@@ -1080,116 +1015,49 @@ def check_table3(ctx: Context) -> dict[str, object]:
         }
 
     source_map = _table3_source_map(ctx)
-    probes = [
-        abbreviation
-        for abbreviation in (
-            "A-Acc-Chr1",
-            "A-Acc-Chr2",
-            "A-Acc-Clc",
-            "A-Acc-Ent1",
-            "A-Acc-Ent3",
-            "A-Acc-Frq",
-            "A-Aud-Com1",
-            "A-Aud-Com2",
-            "A-Dns-Chr",
-            "A-Dns-Clc1",
-            "A-Dns-Val1",
-            "A-Mon-Avg",
-        )
-        if abbreviation in source_map
-    ]
-
+    source_descriptions = list(dict.fromkeys(source_map.values()))
     clip = pymupdf.Rect(
         ctx.offset + 50.0, 100.0, ctx.offset + 310.0, 415.0
     )
-    translated_lines = ctx.side_lines(PAGE_TABLE3, clip)
-    translated_by_abbr: dict[str, TextRun] = {}
-    for run in translated_lines:
-        text = run.text.strip()
-        if ABBR_RE.fullmatch(text) and run.bbox.x0 > ctx.offset + 230.0:
-            translated_by_abbr[text] = run
-
-    results = []
-    for abbreviation in probes:
-        source_description = source_map[abbreviation]
-        description = ""
-        if abbreviation in translated_by_abbr:
-            abbr_run = translated_by_abbr[abbreviation]
-            candidates = [
-                run
-                for run in translated_lines
-                if run.bbox.x1 < abbr_run.bbox.x0 - 5.0
-                and abs(run.bbox.y0 - abbr_run.bbox.y0) <= 6.0
-                and len(run.text.strip()) >= 2
-            ]
-            if candidates:
-                candidates.sort(
-                    key=lambda run: abs(run.bbox.y0 - abbr_run.bbox.y0)
-                )
-                description = candidates[0].text.strip()
-        has_cjk = bool(CJK_RE.search(description))
-        results.append(
-            {
-                "abbreviation": abbreviation,
-                "source_description": source_description,
-                "translated_description": description,
-                "has_cjk": has_cjk,
-            }
-        )
-
-    translated_text = " ".join(run.text for run in translated_lines)
-    source_text = " ".join(
-        run.text
-        for run in extract_lines(
-            ctx.source, PAGE_TABLE3, pymupdf.Rect(60.0, 100.0, 300.0, 415.0)
-        )
-    )
-    preserved = {
-        "Apache": "Apache" in translated_text,
-        "A-Acc-Chr1": "A-Acc-Chr1" in translated_text,
-        "A-Mon-Avg": "A-Mon-Avg" in translated_text,
-    }
-    if "CIP" in source_text:
-        preserved["CIP"] = "CIP" in translated_text
-
-    translated_count = sum(1 for item in results if item["has_cjk"])
+    translated_lines = [
+        run.text.strip()
+        for run in ctx.side_lines(PAGE_TABLE3, clip)
+        if run.text.strip()
+    ]
+    translated_text = " ".join(translated_lines)
+    preserved = [
+        description
+        for description in source_descriptions
+        if description in translated_text
+    ]
+    cjk_lines = [text for text in translated_lines if CJK_RE.search(text)]
+    required = max(1, int(len(source_descriptions) * 0.8))
     status = (
         "PASS"
-        if results
-        and translated_count == len(results)
-        and all(preserved.values())
+        if source_descriptions and len(preserved) >= required and not cjk_lines
         else "FAIL"
     )
     summary = (
-        f"抽查 {len(results)} 条整句描述：{translated_count} 条含 CJK，"
-        f"{len(results) - translated_count} 条未翻译"
+        f"源表3 描述 {len(source_descriptions)} 条；译文中保留原文 {len(preserved)} 条；"
+        f"表内 CJK 行 {len(cjk_lines)} 个（封存后应为 0）"
     )
     details = [f"检查页: p{PAGE_TABLE3 + 1}，表3 区域", summary]
-    for item in results:
-        status_text = "PASS" if item["has_cjk"] else "FAIL"
+    for description in source_descriptions[:5]:
         details.append(
-            f"  {item['abbreviation']}: {status_text} "
-            f"{item['translated_description'][:80]!r}"
+            f"  {'PASS' if description in translated_text else 'FAIL'} {description[:80]!r}"
         )
-    details.append(
-        "专名/缩写保留: "
-        + ", ".join(f"{name}={value}" for name, value in preserved.items())
-    )
-    if "CIP" not in source_text:
-        details.append("CIP 未在源表3 中出现，跳过该专名")
     if status == "FAIL":
-        details.append("表3 仍有整句描述未翻译（部分翻译、部分未翻译）")
+        details.append("表3 整句描述未保留英文原文，或表内出现中文（0.7.0 应封存表格翻译）")
     return {
         "id": "table3",
-        "name": "表3 整句翻译",
+        "name": "表3 表格内容保留原文",
         "status": status,
         "summary": summary,
         "evidence": {
             "page": PAGE_TABLE3 + 1,
-            "probe_count": len(results),
-            "translated_count": translated_count,
-            "probes": results,
-            "preserved": preserved,
+            "source_description_count": len(source_descriptions),
+            "preserved_count": len(preserved),
+            "cjk_lines": cjk_lines,
         },
         "details": details,
     }

@@ -16,7 +16,6 @@ import math
 import multiprocessing
 import os
 import re
-import statistics
 import sys
 import threading
 import time
@@ -29,8 +28,6 @@ from typing import Any
 
 EXPECTED_BABELDOC_VERSION = "0.6.4"
 MAX_OUTPUT_TOKENS = 50000
-# 表2 的 13 个列标题只是一次短请求：输出远小于主翻译，固定上限避免浪费额度。
-TABLE2_OUTPUT_TOKENS = 4000
 OUTPUT_EXPANSION_FACTOR = 1.6
 JSON_OUTPUT_OVERHEAD_TOKENS = 20
 OUTPUT_HEADROOM_RATIO = 0.10
@@ -46,10 +43,7 @@ CONSISTENCY_SYSTEM_PROMPT = (
     "a column or page break; continues_in / continued_from give the id of the other part "
     "when it is in the same request. Translate only that item's own fragment, so that "
     "each output covers exactly its own source text: do not move content between items, "
-    "and never return an empty output. An item with table_role is a confirmed table header "
-    "(table_context lists its table and sibling labels): translate that label into concise "
-    "table terminology, but keep method names, dataset names, abbreviations, numbers and "
-    "symbols unchanged. Return exactly the JSON array format required by the "
+    "and never return an empty output. Return exactly the JSON array format required by the "
     "surrounding prompt, with one output item for each input item and no extra text."
 )
 
@@ -100,16 +94,8 @@ _CAPTION_FRAGMENT_OWNER_LABELS = _BODY_TEXT_LAYOUT_LABELS | {
     "table_caption",
     "figure_caption",
 }
-# Ordinary word gaps are roughly 0.25-0.35 character heights; a table gutter
-# must exceed one line height before a fallback line is split.
-_TABLE_COLUMN_GAP_HEIGHT_MULTIPLIER = 1.0
-# Leave a small inset so rendered glyph bounds do not touch table grid strokes.
-_TABLE_CELL_BORDER_INSET = 0.5
-_TABLE_CURVE_AXIS_TOLERANCE = 0.5
-# A table paragraph under half the median height of its table's paragraphs is
-# a fragment of a line (e.g. a stray comma split from its cell); retypeset at
-# the table's font size its glyphs would overflow onto the neighbouring text.
-_TABLE_FRAGMENT_HEIGHT_RATIO = 0.5
+# 0.7.0 表格内容封存：题注仍走普通翻译路径，题注之外的表格框内段落保留原文。
+_TABLE_CAPTION_LAYOUT_LABELS = frozenset({"table_title", "table_caption"})
 _PRESERVED_LAYOUT_RE = re.compile(
     r"header|footer|page.?number|running.?head|license|copyright|watermark|stamp|marginalia",
     re.I,
@@ -152,16 +138,6 @@ def _figure_text_helper() -> Any:
     return _load_helper("ztf_figure_text")
 
 
-def _table_text_helper() -> Any:
-    """Load the table-cell content rules module."""
-    return _load_helper("ztf_table_text")
-
-
-def _table2_helper() -> Any:
-    """Load the sibling helper that translates rotated table headers."""
-    return _load_helper("ztf_table2")
-
-
 def _punctuation_helper() -> Any:
     """Load the sibling helper that removes duplicate punctuation glyphs."""
     return _load_helper("ztf_punctuation_cleanup")
@@ -170,109 +146,6 @@ def _punctuation_helper() -> Any:
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
     return _load_helper("ztf_links")
-
-
-_RULE_ERROR_LOG_LIMIT = 3
-
-
-def _record_rule_error(
-    request_state: dict[str, Any] | None,
-    event: str,
-    reason: str,
-    source: str,
-    error: BaseException,
-    api_key: str = "",
-) -> None:
-    """记录内容规则降级事件；同一事件与异常类型最多 3 条，避免刷屏。
-
-    error 与 preview 写入前统一经 _write_job_log/_text_preview 按 api_key
-    脱敏；没有 request_state 时静默返回（调用方仍需保持容错行为）。
-    该机制用于落实 CODING_STANDARDS §4 的“不允许静默地部分完成”。
-    """
-    if not isinstance(request_state, dict):
-        return
-    counts = request_state.setdefault("rule_error_counts", {})
-    if not isinstance(counts, dict):
-        return
-    signature = (event, type(error).__name__)
-    count = int(counts.get(signature, 0)) + 1
-    counts[signature] = count
-    if count > _RULE_ERROR_LOG_LIMIT:
-        return
-    _write_job_log(
-        request_state,
-        {
-            "event": event,
-            "error": str(error),
-            "error_type": type(error).__name__,
-            "reason": reason,
-            "preview": _text_preview(source, api_key),
-            "occurrences": count,
-        },
-        api_key,
-    )
-
-
-def _table_body_should_translate(
-    paragraph: Any,
-    request_state: dict[str, Any] | None = None,
-    api_key: str = "",
-) -> bool:
-    """判断表体段落是否送译：只有标识符/数字/URL/代码保留原文，其余送译。
-
-    内容规则异常时记录 table_rule_error 事件（error/preview 按 api_key 脱敏）
-    并按“保留原文”容错，异常不得阻断 PDF 交付；无 request_state 时只返回 False。
-    """
-    text = ""
-    try:
-        text = getattr(paragraph, "unicode", "") or ""
-        return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
-    except Exception as error:
-        _record_rule_error(
-            request_state,
-            "table_rule_error",
-            "表体内容规则异常，已保留原文",
-            text,
-            error,
-            api_key,
-        )
-        return False
-
-
-def _should_verify_chinese(
-    source: Any,
-    request_state: dict[str, Any] | None = None,
-    api_key: str = "",
-) -> bool:
-    """判断送译文本是否必须以真中文返回（Q11 兜底）。
-
-    Q11 回退只用于短值/表头：分类为 translate 的短单元格返回纯回声、数字或
-    标点说明模型没有翻译。整句（词数 > 3 且长度 > 40）不再套用该回退，
-    避免把正常的长句译文误判为无效中文。校验异常时记录 chinese_check_error
-    事件（error/preview 按 api_key 脱敏）并跳过回退，不得中断翻译。
-    """
-    text = ""
-    try:
-        text = " ".join(str(source or "").split())
-        if not text:
-            return False
-        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
-        if len(words) > 3 and len(text) > 40:
-            return False
-        return (
-            _table_text_helper().classify_table_cell(text, "body")["action"]
-            == "translate"
-        )
-    except Exception as error:
-        _record_rule_error(
-            request_state,
-            "chinese_check_error",
-            "中文校验异常，跳过 Q11 回退",
-            text,
-            error,
-            api_key,
-        )
-        return False
 
 
 def _argument_value(arguments: list[str], name: str) -> str:
@@ -423,11 +296,6 @@ def _link_paragraph_map(
                 "output_formula_boxes": _paragraph_formula_boxes(paragraph, page),
             })
     return {"version": 1, "paragraphs": paragraphs}
-
-
-def _table_headers() -> Any:
-    """Load the sibling helper that separates table headers from table body."""
-    return _load_helper("ztf_table_headers")
 
 
 class RequestCapExceeded(RuntimeError):
@@ -1974,14 +1842,6 @@ def _paragraph_layout_label(paragraph: Any) -> str:
     return str(getattr(paragraph, "layout_label", "") or "").strip()
 
 
-def _request_layout_label(request_state: dict[str, Any], paragraph: Any) -> str:
-    """Model-facing layout label; confirmed table headers are not fallback lines."""
-    metadata = request_state.get("table_header_metadata", {}).get(id(paragraph))
-    if metadata is not None:
-        return "table_header"
-    return _paragraph_layout_label(paragraph)
-
-
 def _is_structural_quality_failure(checks: Any) -> bool:
     """Whether a failure means the translation could not be restored safely.
 
@@ -2008,35 +1868,6 @@ def _paragraph_location(request_state: dict[str, Any], paragraph: Any) -> str:
     return f"{location}（{label or 'text'}）"
 
 
-def _record_table_header_layout_failure(
-    request_state: dict[str, Any], paragraph: Any, api_key: str
-) -> None:
-    """An identified header whose translation cannot fit its cell is a structural failure.
-
-    It is recorded as a quality failure and, since 0.5.2, degrades the result
-    (import with a warning) instead of discarding an already produced PDF.
-    """
-    failed_ids = request_state.setdefault("table_header_layout_failed_ids", set())
-    if id(paragraph) in failed_ids:
-        return
-    failed_ids.add(id(paragraph))
-    table_metadata = request_state.get("table_header_metadata", {}).get(
-        id(paragraph)
-    ) or {}
-    _record_quality_failure(
-        request_state,
-        paragraph,
-        "已识别表头译文无法在单元格内安全排版，可能覆盖数据。",
-        {
-            "table_layout_failed": True,
-            "table": table_metadata.get("table", ""),
-            "role": table_metadata.get("role", ""),
-        },
-        api_key,
-        phase="typesetting",
-    )
-
-
 def _record_quality_failure(
     request_state: dict[str, Any],
     paragraph: Any,
@@ -2055,7 +1886,7 @@ def _record_quality_failure(
         "page": position[0] + 1 if position else None,
         "paragraph": position[1] + 1 if position else None,
         "layout_label": (
-            _request_layout_label(request_state, paragraph)
+            _paragraph_layout_label(paragraph)
             if paragraph is not None
             else ""
         ),
@@ -2156,103 +1987,19 @@ def _caption_expansion_covers_body(caption_box: Any, fragment_boxes: list[Any], 
     )
 
 
-def _repair_fallback_line_layouts(page: Any) -> None:
-    """Split table fallback-line boxes at column gutters without changing chars."""
+def _merge_caption_fragment_layouts(page: Any) -> None:
+    """把表格题注附近的 fallback_line 碎片并回 table_caption/figure_caption 框。
+
+    0.7.0 表格内容封存后只保留题注碎片合并：BabelDOC 的 fallback_line 阶段
+    可能把一条多行题注拆成多个碎片（例如 "Tabl" + 其余文本 + "."），不合并会
+    导致题注部分保留英文、部分送译，出现中英混杂。题注合并只扩展 caption
+    框并移除无主碎片，不做表格内容 gutter 列切分/翻译相关处理。
+    """
     layouts = list(getattr(page, "page_layout", ()) or ())
     table_layouts = [
         layout for layout in layouts if getattr(layout, "class_name", "") == "table"
     ]
-    next_id = max(
-        (int(getattr(layout, "id", 0) or 0) for layout in layouts),
-        default=0,
-    ) + 1
-    repaired_layouts = []
-
-    for layout in layouts:
-        if getattr(layout, "class_name", "") != "fallback_line":
-            repaired_layouts.append(layout)
-            continue
-        line_box = getattr(layout, "box", None)
-        containing_tables = [
-            table
-            for table in table_layouts
-            if (
-                line_box is not None
-                and table.box.x <= (line_box.x + line_box.x2) / 2 <= table.box.x2
-            and table.box.y <= (line_box.y + line_box.y2) / 2 <= table.box.y2
-            )
-        ]
-        if not containing_tables:
-            repaired_layouts.append(layout)
-            continue
-        table = min(
-            containing_tables,
-            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
-        )
-
-        line_characters = []
-        for char in getattr(page, "pdf_character", ()) or ():
-            char_box = getattr(getattr(char, "visual_bbox", None), "box", None)
-            if char_box is None:
-                continue
-            center_x = (char_box.x + char_box.x2) / 2
-            center_y = (char_box.y + char_box.y2) / 2
-            if (
-                line_box.x <= center_x <= line_box.x2
-                and line_box.y <= center_y <= line_box.y2
-            ):
-                inside_table = (
-                    table.box.x <= center_x <= table.box.x2
-                    and table.box.y <= center_y <= table.box.y2
-                )
-                line_characters.append((char_box, char, inside_table))
-        line_characters.sort(key=lambda item: item[0].x)
-        line_height = line_box.y2 - line_box.y
-        if (
-            len(line_characters) < 2
-            or not any(inside_table for _, _, inside_table in line_characters)
-            or line_height <= 0
-            or any(getattr(char, "vertical", False) for _, char, _ in line_characters)
-        ):
-            repaired_layouts.append(layout)
-            continue
-
-        gap_threshold = line_height * _TABLE_COLUMN_GAP_HEIGHT_MULTIPLIER
-        segments: list[tuple[bool, list[Any]]] = []
-        for char_box, _, inside_table in line_characters:
-            gap = (
-                char_box.x - segments[-1][1][-1].x2
-                if segments
-                else 0
-            )
-            if (
-                not segments
-                or segments[-1][0] != inside_table
-                or (inside_table and gap > gap_threshold)
-            ):
-                segments.append((inside_table, []))
-            segments[-1][1].append(char_box)
-        outside_segment_indexes = [
-            index for index, (inside_table, _) in enumerate(segments) if not inside_table
-        ]
-        table_segment_count = sum(inside_table for inside_table, _ in segments)
-        if not outside_segment_indexes and table_segment_count <= 1:
-            repaired_layouts.append(layout)
-            continue
-
-        original_segment_index = outside_segment_indexes[0] if outside_segment_indexes else 0
-        for index, (_, segment) in enumerate(segments):
-            x = min(char_box.x for char_box in segment)
-            y = min(char_box.y for char_box in segment)
-            x2 = max(char_box.x2 for char_box in segment)
-            y2 = max(char_box.y2 for char_box in segment)
-            target = layout if index == original_segment_index else copy.copy(layout)
-            target.box = copy.copy(layout.box)
-            target.box.x, target.box.y, target.box.x2, target.box.y2 = x, y, x2, y2
-            if target is not layout:
-                target.id = next_id
-                next_id += 1
-            repaired_layouts.append(target)
+    repaired_layouts = layouts
 
     removed_fallback_ids: set[int] = set()
     for layout in repaired_layouts:
@@ -2373,311 +2120,237 @@ def _paragraph_center_inside_table(paragraph: Any, page: Any) -> bool:
     )
 
 
-def _table_cell_layout_box(paragraph_box: Any, page: Any, table: Any) -> Any | None:
-    """Return the paragraph box widened only to its geometrically bounded cell."""
-    table_box = getattr(table, "box", None)
-    if paragraph_box is None or table_box is None:
-        return None
-    try:
-        center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
-        center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
-        table_left = float(table_box.x)
-        table_right = float(table_box.x2)
-        table_top = float(table_box.y)
-        table_bottom = float(table_box.y2)
-    except (TypeError, ValueError, AttributeError):
-        return None
-    if not (table_left <= center_x <= table_right and table_top <= center_y <= table_bottom):
-        return None
-
-    x_boundaries = [table_left, table_right]
-    minimum_line_length = max(3.0, (table_bottom - table_top) * 0.01)
-    for curve in getattr(page, "pdf_curve", ()) or ():
-        curve_box = getattr(curve, "box", None)
-        if curve_box is None:
-            continue
-        try:
-            x, y, x2, y2 = (
-                float(curve_box.x),
-                float(curve_box.y),
-                float(curve_box.x2),
-                float(curve_box.y2),
-            )
-        except (TypeError, ValueError, AttributeError):
-            continue
-        if (
-            abs(x2 - x) > _TABLE_CURVE_AXIS_TOLERANCE
-            or y2 - y < minimum_line_length
-            or not table_left - _TABLE_CURVE_AXIS_TOLERANCE
-            <= (x + x2) / 2
-            <= table_right + _TABLE_CURVE_AXIS_TOLERANCE
-            or center_y < y - _TABLE_CURVE_AXIS_TOLERANCE
-            or center_y > y2 + _TABLE_CURVE_AXIS_TOLERANCE
-        ):
-            continue
-        x_boundaries.append(min(table_right, max(table_left, (x + x2) / 2)))
-
-    cell_left = max((x for x in x_boundaries if x <= center_x), default=table_left)
-    cell_right = min((x for x in x_boundaries if x > center_x), default=table_right)
-    try:
-        bounded_box = copy.copy(paragraph_box)
-        bounded_box.x = max(float(paragraph_box.x), cell_left + _TABLE_CELL_BORDER_INSET)
-        bounded_box.x2 = cell_right - _TABLE_CELL_BORDER_INSET
-        bounded_box.y = max(float(paragraph_box.y), table_top)
-        bounded_box.y2 = min(float(paragraph_box.y2), table_bottom)
-    except (TypeError, ValueError, AttributeError):
-        return None
-    if bounded_box.x2 <= bounded_box.x or bounded_box.y2 <= bounded_box.y:
-        return None
-    return bounded_box
+_TABLE_NOTE_START_RE = re.compile(r"^\s*[\*\u2020\u2021\u00a7\u00b6\u203b]")
+_TABLE_NOTE_WORD_RE = re.compile(
+    r"^\s*(?:Source|Sources|Note|Notes|Table\s+notes?|Data\s+source)\s*:",
+    re.I,
+)
 
 
-def _with_table_cell_bounds(
-    instance: Any,
-    paragraph: Any,
-    page: Any,
-    operation: Any,
-    cell_box: Any = None,
-) -> Any:
-    """Run scale measurement or rendering with table expansion clamped to a cell."""
-    paragraph_box = getattr(paragraph, "box", None)
-    if paragraph_box is None:
-        return operation()
-    bounded_box = None
-    if cell_box is not None:
-        try:
-            bounded_box = copy.copy(paragraph_box)
-            bounded_box.x, bounded_box.y, bounded_box.x2, bounded_box.y2 = (
-                float(cell_box[0]),
-                float(cell_box[1]),
-                float(cell_box[2]),
-                float(cell_box[3]),
-            )
-        except (TypeError, ValueError, AttributeError, IndexError):
-            bounded_box = None
-    if bounded_box is None:
-        try:
-            center_x = (float(paragraph_box.x) + float(paragraph_box.x2)) / 2
-            center_y = (float(paragraph_box.y) + float(paragraph_box.y2)) / 2
-            containing_tables = [
-                layout
-                for layout in getattr(page, "page_layout", ()) or ()
-                if getattr(layout, "class_name", "") == "table"
-                and layout.box.x <= center_x <= layout.box.x2
-                and layout.box.y <= center_y <= layout.box.y2
-            ]
-        except (TypeError, ValueError, AttributeError):
-            return operation()
-        if not containing_tables:
-            return operation()
-        table = min(
-            containing_tables,
-            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
-        )
-        bounded_box = _table_cell_layout_box(paragraph_box, page, table)
-    if bounded_box is None:
-        return operation()
-
-    original_box = paragraph_box
-    instance_dict = getattr(instance, "__dict__", {})
-    methods = {}
-    for name in ("get_max_right_space", "get_max_bottom_space"):
-        method = getattr(instance, name, None)
-        if callable(method):
-            methods[name] = (name in instance_dict, instance_dict.get(name), method)
-
-    paragraph.box = bounded_box
-    try:
-        if "get_max_right_space" in methods:
-            original_method = methods["get_max_right_space"][2]
-
-            def bounded_right_space(
-                current_box: Any,
-                owner: Any,
-                _original_method: Any = original_method,
-            ) -> float:
-                available = _original_method(current_box, owner)
-                if owner is page:
-                    return min(float(available), float(current_box.x2))
-                return available
-
-            instance.get_max_right_space = bounded_right_space
-        if "get_max_bottom_space" in methods:
-            original_method = methods["get_max_bottom_space"][2]
-
-            def bounded_bottom_space(
-                current_box: Any,
-                owner: Any,
-                _original_method: Any = original_method,
-            ) -> float:
-                available = _original_method(current_box, owner)
-                if owner is page:
-                    return max(float(available), float(current_box.y))
-                return available
-
-            instance.get_max_bottom_space = bounded_bottom_space
-        return operation()
-    finally:
-        paragraph.box = original_box
-        for name, (had_override, old_override, _) in methods.items():
-            if had_override:
-                setattr(instance, name, old_override)
-            else:
-                delattr(instance, name)
+def _is_table_note_start(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(_TABLE_NOTE_START_RE.match(text) or _TABLE_NOTE_WORD_RE.match(text))
+_TABLE_NOTE_LAYOUT_LABELS = {"fallback_line", "table_footnote", "table_footnotes"}
 
 
-def _page_paragraphs_with_table_short_text(
-    page: Any,
-    min_text_length: int,
-    translated_ids: set[int] | None,
-    is_cid_paragraph: Any,
-) -> tuple[list[Any], set[int], int]:
-    """Keep short paragraphs only when their centers fall inside a table box."""
-    translated_ids = translated_ids or set()
-    paragraphs = []
-    table_paragraph_ids = set()
-    skipped_short = 0
-    for paragraph in getattr(page, "pdf_paragraph", ()) or ():
-        in_table = _paragraph_center_inside_table(paragraph, page)
-        if in_table:
-            table_paragraph_ids.add(id(paragraph))
-        unicode = getattr(paragraph, "unicode", None)
-        if (
-            id(paragraph) in translated_ids
-            or getattr(paragraph, "debug_id", None) is None
-            or unicode is None
-            or is_cid_paragraph(paragraph)
-            or len(unicode) >= min_text_length
-            or in_table
-        ):
-            paragraphs.append(paragraph)
-        else:
-            skipped_short += 1
-    return paragraphs, table_paragraph_ids, skipped_short
+def _paragraph_near_table_layout(paragraph: Any, page: Any) -> bool:
+    """段落是否邻近某个 BabelDOC table 布局框（同列 x 重叠 + 垂直距离近）。
 
-
-def _pre_translate_with_table_min_text_length(
-    original_pre_translate: Any,
-    instance: Any,
-    paragraph: Any,
-    tracker: Any,
-    page_font_map: Any,
-    xobj_font_map: Any,
-    *,
-    is_table_paragraph: bool,
-    min_text_length: int,
-    config_lock: Any,
-) -> Any:
-    """Temporarily relax BabelDOC's length guard for a geometric table item."""
-    with config_lock:
-        unicode = getattr(paragraph, "unicode", None) or ""
-        if len(unicode) < min_text_length and not is_table_paragraph:
-            return None, None
-        config = instance.translation_config
-        current_minimum = config.min_text_length
-        if len(unicode) < min_text_length and is_table_paragraph:
-            config.min_text_length = 0
-            try:
-                return original_pre_translate(
-                    instance, paragraph, tracker, page_font_map, xobj_font_map
-                )
-            finally:
-                config.min_text_length = current_minimum
-        return original_pre_translate(
-            instance, paragraph, tracker, page_font_map, xobj_font_map
-        )
-
-
-def _apply_common_table_scales(
-    instance: Any,
-    deferred: list[tuple[Any, Any, Any]],
-    translated_paragraph_ids: set[int],
-) -> None:
-    """Give translated paragraphs in each table one common final-box scale."""
-    groups: dict[tuple[int, int], list[tuple[Any, float]]] = {}
-    for paragraph, page, fonts in deferred:
-        if id(paragraph) not in translated_paragraph_ids:
-            continue
-        if _is_independent_formula_paragraph(paragraph):
-            continue
-        box = getattr(paragraph, "box", None)
-        if box is None:
-            continue
-        center_x = (box.x + box.x2) / 2
-        center_y = (box.y + box.y2) / 2
-        containing_tables = [
-            layout
-            for layout in getattr(page, "page_layout", ()) or ()
-            if getattr(layout, "class_name", "") == "table"
-            and layout.box.x <= center_x <= layout.box.x2
-            and layout.box.y <= center_y <= layout.box.y2
-        ]
-        if not containing_tables:
-            continue
-        table = min(
-            containing_tables,
-            key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
-        )
-        try:
-            units = instance.create_typesetting_units(paragraph, fonts)
-            if all(unit.can_passthrough for unit in units):
-                continue
-            raw_scale = float(instance._get_optimal_scale(paragraph, page, units))
-        except Exception:
-            continue
-        table_id = int(getattr(table, "id", id(table)))
-        groups.setdefault((id(page), table_id), []).append((paragraph, raw_scale))
-
-    for members in groups.values():
-        common_scale = min(scale for _, scale in members)
-        for paragraph, _ in members:
-            paragraph.optimal_scale = common_scale
-
-
-def collect_table_fragment_ids(
-    document: Any, excluded_ids: set[int] | None = None
-) -> set[int]:
-    """Table paragraphs far shorter than their table's lines, kept as they are.
-
-    Confirmed header/body roles are excluded: a short header such as "F1" is a
-    real header, not a fragment split from a neighbouring cell.
+    Source:/Note: 起首词只有在邻近表格时才视为表注；页面无表格、或距离过远的
+    普通正文不保留，照常翻译。
     """
-    excluded_ids = excluded_ids or set()
-    fragment_ids: set[int] = set()
-    for page in getattr(document, "page", ()) or ():
-        tables = [
-            layout
-            for layout in getattr(page, "page_layout", ()) or ()
-            if getattr(layout, "class_name", "") == "table"
-        ]
-        groups: dict[int, list[tuple[Any, float]]] = {}
-        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
-            if id(paragraph) in excluded_ids:
-                continue
-            box = getattr(paragraph, "box", None)
-            if box is None:
-                continue
-            center_x = (box.x + box.x2) / 2
-            center_y = (box.y + box.y2) / 2
-            containing = [
-                table
-                for table in tables
-                if table.box.x <= center_x <= table.box.x2
-                and table.box.y <= center_y <= table.box.y2
-            ]
-            if not containing:
-                continue
-            table = min(
-                containing,
-                key=lambda item: (item.box.x2 - item.box.x) * (item.box.y2 - item.box.y),
+    box = getattr(paragraph, "box", None)
+    if box is None:
+        return False
+    try:
+        height = float(box.y2) - float(box.y)
+    except (TypeError, ValueError):
+        return False
+    if height <= 0:
+        return False
+    for layout in getattr(page, "page_layout", ()) or ():
+        if getattr(layout, "class_name", "") != "table":
+            continue
+        table_box = getattr(layout, "box", None)
+        if table_box is None:
+            continue
+        try:
+            overlap_width = min(float(box.x2), float(table_box.x2)) - max(
+                float(box.x), float(table_box.x)
             )
-            groups.setdefault(id(table), []).append((paragraph, box.y2 - box.y))
-        for members in groups.values():
-            median = statistics.median(height for _, height in members)
-            for paragraph, height in members:
-                if height < median * _TABLE_FRAGMENT_HEIGHT_RATIO:
-                    fragment_ids.add(id(paragraph))
-    return fragment_ids
+            vertical_gap = max(
+                0.0,
+                float(box.y) - float(table_box.y2),
+                float(table_box.y) - float(box.y2),
+            )
+        except (TypeError, ValueError):
+            continue
+        if overlap_width <= 0:
+            continue
+        if vertical_gap <= max(60.0, height * 6.0):
+            return True
+    return False
+
+
+def _paragraph_inside_table_frame(paragraph: Any, page: Any) -> bool:
+    """段落是否大部分位于 BabelDOC table 布局框内（表格单元格语义）。
+
+    0.7.0 定界：表内单元格（含以 */†/‡ 开头的注号单元格）保留原文；表格框外
+    的题注仍走普通翻译，表注保留原文（不翻译、不合并）。用“框内重叠 >= 80%”
+    而不是中心点：表注可能紧贴表格底边、中心略入框内，但大部分仍在框外。
+    """
+    box = getattr(paragraph, "box", None)
+    if box is None:
+        return False
+    try:
+        width = float(box.x2) - float(box.x)
+        height = float(box.y2) - float(box.y)
+    except (TypeError, ValueError):
+        return False
+    if width <= 0 or height <= 0:
+        return False
+    for layout in getattr(page, "page_layout", ()) or ():
+        if getattr(layout, "class_name", "") != "table":
+            continue
+        table_box = getattr(layout, "box", None)
+        if table_box is None:
+            continue
+        try:
+            overlap_width = min(float(box.x2), float(table_box.x2)) - max(
+                float(box.x), float(table_box.x)
+            )
+            overlap_height = min(float(box.y2), float(table_box.y2)) - max(
+                float(box.y), float(table_box.y)
+            )
+        except (TypeError, ValueError):
+            continue
+        center_x = (float(box.x) + float(box.x2)) / 2
+        center_y = (float(box.y) + float(box.y2)) / 2
+        center_inside = (
+            float(table_box.x) <= center_x <= float(table_box.x2)
+            and float(table_box.y) <= center_y <= float(table_box.y2)
+        )
+        if overlap_width >= width * 0.8 and overlap_height >= height * 0.8:
+            return True
+        # 边缘 guard：79% 等紧贴边界的表格单元格（中心仍在框内、宽度大部分在框内）
+        # 仍按表格内容保留；表注通常中心略入框内但高度大部分在框外（<70%）。
+        if (
+            center_inside
+            and overlap_width >= width * 0.8
+            and overlap_height >= height * 0.7
+        ):
+            return True
+    return False
+
+
+def collect_table_content_paragraph_ids(document: Any) -> set[int]:
+    """0.7.0 表格内容与表注封存：保留原文、不送译的段落 id。
+
+    表格布局框内（题注除外）的段落一律保留原文；表格框外的表注候选
+    （table_footnote，或注号/Source:/Note: 开头的 fallback_line）也保留原文。
+    table_title/table_caption 仍走普通翻译路径。
+    """
+    content_ids: set[int] = set()
+    note_seeds: list[tuple[Any, int]] = []
+    for page in getattr(document, "page", ()) or ():
+        paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+        for index, paragraph in enumerate(paragraphs):
+            label = _normalized_layout_label(_paragraph_layout_label(paragraph))
+            if label in _TABLE_CAPTION_LAYOUT_LABELS:
+                continue
+            text = str(getattr(paragraph, "unicode", "") or "").strip()
+            # 先几何、后 marker：表框内（含 */†/‡ 开头）的单元格按表格内容保留，
+            # 不做 marker 豁免、不送译。
+            if _paragraph_inside_table_frame(paragraph, page):
+                content_ids.add(id(paragraph))
+                continue
+            # 方案 A（0.7.0 收敛）：表注也保留原文，不翻译、不合并。
+            if label in ("table_footnote", "table_footnotes"):
+                content_ids.add(id(paragraph))
+                note_seeds.append((page, index))
+                continue
+            marker_note = bool(_TABLE_NOTE_START_RE.match(text))
+            word_note = bool(_TABLE_NOTE_WORD_RE.match(text))
+            if (
+                label == "fallback_line"
+                and len(text) >= 8
+                and (
+                    marker_note
+                    or (word_note and _paragraph_near_table_layout(paragraph, page))
+                )
+            ):
+                content_ids.add(id(paragraph))
+                note_seeds.append((page, index))
+                continue
+            if _paragraph_center_inside_table(paragraph, page):
+                content_ids.add(id(paragraph))
+    # 表注续行碎片（如 "* Values..." 后的 "publication."）不以注号开头，
+    # 但也不能送译；从注号种子向后扩展相邻 fallback_line/table_footnote 碎片，
+    # 仅加入 preserved（不修改段落、不合并 glyph）。
+    for page, seed_index in note_seeds:
+        _expand_table_note_fragment_ids(page, seed_index, content_ids)
+    return content_ids
+
+
+_URL_FRAGMENT_RE = re.compile(r"^[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$")
+
+
+def _looks_like_url_fragment(value: str) -> bool:
+    text = str(value or "").strip()
+    return (
+        len(text) >= 6
+        and ("/" in text or "." in text)
+        and not re.search(r"\s", text)
+        and bool(_URL_FRAGMENT_RE.match(text))
+    )
+
+
+def _expand_table_note_fragment_ids(page: Any, seed_index: int, content_ids: set[int]) -> None:
+    """把表注种子相邻的续行碎片加入 preserved（不合并、不修改段落）。
+
+    BabelDOC 可能把 URL 行识别为普通文本标签，因此候选还允许 URL-like 片段；
+    同列/相邻/gap 约束防止把双栏正文并入。
+    """
+    paragraphs = list(getattr(page, "pdf_paragraph", ()) or ())
+    if seed_index >= len(paragraphs):
+        return
+    seed = paragraphs[seed_index]
+    seed_box = getattr(seed, "box", None)
+    if seed_box is None:
+        return
+    group_boxes = [copy.copy(seed_box)]
+    line_height = max(6.0, float(seed_box.y2 - seed_box.y))
+    changed = True
+    while changed:
+        changed = False
+        for candidate in paragraphs:
+            if id(candidate) in content_ids:
+                continue
+            label = _normalized_layout_label(_paragraph_layout_label(candidate))
+            text = str(getattr(candidate, "unicode", "") or "").strip()
+            box = getattr(candidate, "box", None)
+            if not text or box is None or label in _TABLE_CAPTION_LAYOUT_LABELS:
+                continue
+            if _paragraph_inside_table_frame(candidate, page):
+                continue
+            if label not in _TABLE_NOTE_LAYOUT_LABELS and not _looks_like_url_fragment(text):
+                continue
+            candidate_width = float(box.x2) - float(box.x)
+            for group_box in group_boxes:
+                vertical_gap = max(
+                    0.0,
+                    float(group_box.y) - float(box.y2),
+                    float(box.y) - float(group_box.y2),
+                )
+                horizontal_gap = max(
+                    0.0,
+                    float(box.x) - float(group_box.x2),
+                    float(group_box.x) - float(box.x2),
+                )
+                if vertical_gap > line_height * 1.2 or horizontal_gap > line_height * 4.0:
+                    continue
+                column_overlap = min(float(group_box.x2), float(box.x2)) - max(
+                    float(group_box.x), float(box.x)
+                )
+                same_row = (
+                    min(float(group_box.y2), float(box.y2))
+                    - max(float(group_box.y), float(box.y))
+                ) > line_height * 0.5
+                x_start_close = (
+                    abs(float(box.x) - float(seed_box.x)) <= max(line_height * 2.0, 20.0)
+                )
+                horizontal_contiguous = same_row and (
+                    0.0 <= float(box.x) - float(group_box.x2) <= line_height * 1.5
+                )
+                column_overlap_ok = (
+                    candidate_width > 0 and column_overlap / candidate_width > 0.5
+                )
+                if not (x_start_close or horizontal_contiguous or column_overlap_ok):
+                    continue
+                content_ids.add(id(candidate))
+                group_boxes.append(copy.copy(box))
+                changed = True
+                break
 
 
 def _is_body_text_paragraph(paragraph: Any) -> bool:
@@ -3978,35 +3651,6 @@ def _install_min_request_patches(
             translated_text = normalized_text
         source = getattr(translate_input, "unicode", None)
         accepted = request_state.get("accepted_outputs", {}).get(id(paragraph))
-        # 规格 T4/Q11：送译内容返回无效中文（纯数字、纯标点、回声）时回退原文，
-        # 由 _is_verbatim_output 走保留原文路径，并写入诊断日志。
-        if (
-            isinstance(translated_text, str)
-            and translated_text
-            and _should_verify_chinese(source, request_state, api_key)
-            and not _table_text_helper().meaningful_chinese(
-                source, translated_text
-            )
-        ):
-            _write_job_log(
-                request_state,
-                {
-                    "event": "invalid_chinese_fallback",
-                    "preview": _text_preview(source, api_key),
-                    "output_preview": _text_preview(translated_text, api_key),
-                },
-                api_key,
-            )
-            translated_text = source
-            if accepted is not None:
-                # 让 _is_verbatim_output 判定为保留原文（原字形/原位置）。
-                accepted["text"] = source
-            if len(args) > 2:
-                args = list(args)
-                args[2] = translated_text
-            else:
-                kwargs = dict(kwargs)
-                kwargs["translated_text"] = translated_text
         if accepted is None:
             return original_post_translate_paragraph(
                 instance, paragraph, *args, **kwargs
@@ -4046,6 +3690,8 @@ def _install_min_request_patches(
             instance: Any, document: Any, *args: Any,
             _original: Any = original_translate, **kwargs: Any
         ) -> Any:
+            # 方案 A：表注保留原文（不翻译、不合并）；snapshot 只记录原文，
+            # 供 links.json 恢复链接使用。
             snapshot_paragraph_source_text(document)
             return _original(instance, document, *args, **kwargs)
 
@@ -4054,68 +3700,20 @@ def _install_min_request_patches(
     original_generate_fallback_line_layouts = (
         LayoutParser.generate_fallback_line_layout_for_page
     )
-    original_process_page = llm_module.ILTranslatorLLMOnly.process_page
-    table_min_text_lock = threading.RLock()
 
     @functools.wraps(original_generate_fallback_line_layouts)
-    def generate_fallback_line_layouts_with_table_repair(
+    def generate_fallback_line_layouts_with_caption_merge(
         instance: Any, page: Any, progress: Any
     ) -> Any:
+        # 必须在 pdf_paragraph 生成和表格内容判定之前把题注碎片并回 caption 框，
+        # 否则题注会被拆成多个段落，部分碎片被保留、部分被送译（中英混杂）。
         result = original_generate_fallback_line_layouts(instance, page, progress)
-        _repair_fallback_line_layouts(page)
+        _merge_caption_fragment_layouts(page)
         return result
 
     LayoutParser.generate_fallback_line_layout_for_page = (
-        generate_fallback_line_layouts_with_table_repair
+        generate_fallback_line_layouts_with_caption_merge
     )
-
-    @functools.wraps(original_process_page)
-    def process_page_with_table_short_paragraphs(
-        instance: Any,
-        page: Any,
-        executor: Any,
-        pbar: Any = None,
-        tracker: Any = None,
-        executor2: Any = None,
-        translated_ids: set[int] | None = None,
-    ) -> Any:
-        config = instance.translation_config
-        with table_min_text_lock:
-            minimum = config.min_text_length
-            paragraphs, table_ids, skipped_short = (
-                _page_paragraphs_with_table_short_text(
-                    page,
-                    minimum,
-                    translated_ids,
-                    llm_module.is_cid_paragraph,
-                )
-            )
-            request_state.setdefault("table_paragraph_ids", set()).update(table_ids)
-            original_paragraphs = page.pdf_paragraph
-            page.pdf_paragraph = paragraphs
-            current_minimum = config.min_text_length
-            try:
-                # The geometry filter above has removed every short paragraph
-                # outside table boxes before BabelDOC applies its page gate.
-                config.min_text_length = 0
-                result = original_process_page(
-                    instance,
-                    page,
-                    executor,
-                    pbar,
-                    tracker,
-                    executor2,
-                    translated_ids,
-                )
-            finally:
-                config.min_text_length = current_minimum
-                page.pdf_paragraph = original_paragraphs
-        if skipped_short and pbar is not None and hasattr(pbar, "advance"):
-            pbar.advance(skipped_short)
-        return result
-
-    llm_module.ILTranslatorLLMOnly.process_page = process_page_with_table_short_paragraphs
-
     def apply_accepted_after_babeldoc_rejection(owner: Any, args: tuple[Any, ...]) -> bool:
         """BabelDOC re-checks length after our validation and hands rejected
         paragraphs to its fallback translator. Our checks are authoritative
@@ -4191,7 +3789,7 @@ def _install_min_request_patches(
             "reason": reason,
             "checks": {"apply_error": True},
             "metadata": metadata,
-            "layout_label": _request_layout_label(request_state, paragraph),
+            "layout_label": _paragraph_layout_label(paragraph),
             "fragment": bool(metadata.get("fragment")),
             "repair_status": "pending",
         }
@@ -4275,46 +3873,6 @@ def _install_min_request_patches(
 
     Typesetting._layout_typesetting_units = layout_with_body_line_spacing
 
-    original_find_optimal_scale_and_layout = Typesetting._find_optimal_scale_and_layout
-
-    @functools.wraps(original_find_optimal_scale_and_layout)
-    def find_table_scale_with_cell_bounds(
-        instance: Any,
-        paragraph: Any,
-        page: Any,
-        typesetting_units: Any,
-        initial_scale: float = 1.0,
-        use_english_line_break: bool = True,
-        apply_layout: bool = False,
-    ) -> Any:
-        cell_box = request_state.get("table_header_cell_boxes", {}).get(
-            id(paragraph)
-        )
-        result = _with_table_cell_bounds(
-            instance,
-            paragraph,
-            page,
-            lambda: original_find_optimal_scale_and_layout(
-                instance,
-                paragraph,
-                page,
-                typesetting_units,
-                initial_scale,
-                use_english_line_break,
-                apply_layout,
-            ),
-            cell_box=cell_box,
-        )
-        if (
-            apply_layout
-            and id(paragraph) in request_state.get("table_header_ids", set())
-            and (not isinstance(result, (tuple, list)) or len(result) < 2 or result[1] is None)
-        ):
-            _record_table_header_layout_failure(request_state, paragraph, api_key)
-        return result
-
-    Typesetting._find_optimal_scale_and_layout = find_table_scale_with_cell_bounds
-
     original_get_optimal_scale = Typesetting._get_optimal_scale
 
     @functools.wraps(original_get_optimal_scale)
@@ -4397,12 +3955,6 @@ def _install_min_request_patches(
                 }
             )
         request_state["body_font_class_summary"] = class_summary
-        _apply_common_table_scales(
-            instance,
-            deferred,
-            request_state.get("translated_paragraph_ids", set()),
-        )
-
     def typesetting_document_two_phase(instance: Any, document: Any) -> None:
         """BabelDOC's render_page shrinks paragraph boxes to resolve overlaps and
         then re-typesets each paragraph independently, which undid a scale
@@ -4844,7 +4396,6 @@ def _install_min_request_patches(
                         "continued_from": None,
                         "previous_context": previous_context,
                         "next_context": next_context,
-                        "table": packed_item.get("table_metadata"),
                         "protected_spans": _style_guards().protected_span_specs(
                             getattr(translate_input, "placeholders", ()) or ()
                         ),
@@ -4863,13 +4414,7 @@ def _install_min_request_patches(
                     paragraph = prepared_paragraphs[paragraph_index]
                     packed_item = packed_items_by_paragraph.get(id(paragraph), {})
                     _, metadata = metadata_for_packed_item(packed_item)
-                    input_item["layout_label"] = _request_layout_label(
-                        request_state, paragraph
-                    )
-                    table_metadata = metadata.get("table") or {}
-                    if table_metadata:
-                        input_item["table_role"] = table_metadata.get("role")
-                        input_item["table_context"] = table_metadata.get("context")
+                    input_item["layout_label"] = _paragraph_layout_label(paragraph)
                     if metadata["required_placeholders"]:
                         input_item["required_placeholders"] = metadata[
                             "required_placeholders"
@@ -5015,9 +4560,7 @@ def _install_min_request_patches(
                                 "reason": reason,
                                 "checks": {"fragment_group_invalid": True},
                                 "metadata": member_metadata,
-                                "layout_label": _request_layout_label(
-                                    request_state, member_paragraph
-                                ),
+                                "layout_label": _paragraph_layout_label(member_paragraph),
                                 "fragment": True,
                                 "repair_status": "pending",
                             }
@@ -5141,9 +4684,7 @@ def _install_min_request_patches(
                                     "reason": item_reason,
                                     "checks": checks,
                                     "metadata": metadata,
-                                    "layout_label": _request_layout_label(
-                                        request_state, paragraph
-                                    ),
+                                    "layout_label": _paragraph_layout_label(paragraph),
                                     "fragment": bool(metadata.get("fragment")),
                                     "repair_status": "pending",
                                 }
@@ -5347,7 +4888,7 @@ def _install_min_request_patches(
                     ),
                     "checks": {"fragment_group_invalid": True},
                     "metadata": metadata,
-                    "layout_label": _request_layout_label(request_state, paragraph),
+                    "layout_label": _paragraph_layout_label(paragraph),
                     "fragment": True,
                     "repair_status": "pending",
                 }
@@ -5484,10 +5025,6 @@ def _install_min_request_patches(
                 "previous_context": metadata.get("previous_context", ""),
                 "next_context": metadata.get("next_context", ""),
             }
-            table_metadata = metadata.get("table") or {}
-            if table_metadata:
-                repair_item["table_role"] = table_metadata.get("role")
-                repair_item["table_context"] = table_metadata.get("context")
             placeholders_hint = getattr(
                 repair_translate_input, "get_placeholders_hint", None
             )
@@ -5517,9 +5054,7 @@ def _install_min_request_patches(
             "one part (fragment_part) of a sentence split across a column or page break, and "
             "continues_in / continued_from name the other part's id when it is in this "
             "request; translate only this item's own fragment; do not move content between "
-            "items and do not return an empty output. When table_role/table_context are "
-            "present, the item is a confirmed table header: translate the label and keep "
-            "method names, dataset names, abbreviations, numbers and symbols unchanged. "
+            "items and do not return an empty output. "
             "Return only a JSON array with one "
             "{id, output} object per input.\n"
             "## Here is the input:\n"
@@ -5959,69 +5494,22 @@ def _install_min_request_patches(
             docs = translator.il_translator.docs
             original_paragraph_state = snapshot_paragraph_state(docs)
 
-            # 表格角色由 BabelDOC 的表格边界和整表单元格决定（同一请求内完成，
-            # 不产生逐格请求）。已确认的表头直接送译；表体只保留纯标识符/缩写/
-            # 数字/URL/代码，其余（含 1-2 词普通英文与含专名整句）一律送译，
-            # 模型原样返回时走 kept_verbatim 保留原文。表头无法可靠识别时提示
-            # 用户表名与页码，但表体仍按内容规则处理（不整表保留）。
-            table_plans = _table_headers().analyze_document(docs)
-            table_header_metadata: dict[int, dict[str, Any]] = {}
-            table_header_cell_boxes: dict[int, tuple[float, float, float, float]] = {}
-            table_header_ids: set[int] = set()
-            table_body_ids: set[int] = set()
-            table_warnings: list[dict[str, Any]] = []
-            for plan in table_plans:
-                if plan.get("status") == "uncertain":
-                    table_warnings.append(
-                        {
-                            "table": plan.get("table", ""),
-                            "table_number": plan.get("table_number", ""),
-                            "page": plan.get("page"),
-                            "reason": plan.get("reason", ""),
-                        }
-                    )
-                for header in plan.get("headers", ()):
-                    paragraph = header.get("paragraph")
-                    if paragraph is None:
-                        continue
-                    paragraph_id = id(paragraph)
-                    table_header_ids.add(paragraph_id)
-                    table_header_metadata[paragraph_id] = {
-                        "role": header.get("role", "column_header"),
-                        "context": header.get("context") or {},
-                        "table": plan.get("table", ""),
-                        "table_number": plan.get("table_number", ""),
-                        "page": plan.get("page"),
-                    }
-                    cell_box = header.get("cell_box")
-                    if cell_box:
-                        table_header_cell_boxes[paragraph_id] = tuple(cell_box)
-                for body in plan.get("body", ()):
-                    paragraph = body.get("paragraph")
-                    if paragraph is not None:
-                        table_body_ids.add(id(paragraph))
-            # A paragraph that belongs to two overlapping layout boxes is a
-            # header if either table identified it as one.
-            table_body_ids -= table_header_ids
-            request_state["table_plans"] = table_plans
-            request_state["table_header_ids"] = table_header_ids
-            request_state["table_header_metadata"] = table_header_metadata
-            request_state["table_header_cell_boxes"] = table_header_cell_boxes
-            request_state["table_body_ids"] = table_body_ids
-            request_state["table_warnings"] = table_warnings
+            # 0.7.0 表格翻译封存：表格布局框内的段落（题注除外）与表注一律保留原文；
+            # 题注（table_title/table_caption）与表外正文仍走普通翻译路径。
+            # 4 个表格 helper 不再加载/部署，因此这里只做几何判定，不做表头/表体分析。
+            table_content_ids = collect_table_content_paragraph_ids(docs)
+            request_state["table_content_paragraph_ids"] = table_content_ids
+            request_state["table_warnings"] = []
             _write_job_log(
                 request_state,
                 {
-                    "event": "table_analysis",
-                    "tables": _table_headers().summary(table_plans),
+                    "event": "table_translation_suspended",
+                    "paragraphs": len(table_content_ids),
                 },
                 api_key,
             )
 
             repeated_marginal_ids = collect_repeated_marginal_ids(docs)
-            table_fragment_ids = collect_table_fragment_ids(
-                docs, table_header_ids | table_body_ids
-            )
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
@@ -6106,7 +5594,6 @@ def _install_min_request_patches(
                             "fragment_index": fragment_siblings.get(paragraph_id, (None, None))[0],
                             "fragment_sibling_id": fragment_siblings.get(paragraph_id, (None, None))[1],
                             "fragment_sibling_paragraph": fragment_sibling_paragraphs.get(paragraph_id),
-                            "table_metadata": table_header_metadata.get(paragraph_id),
                             "source_tokens": translator.calc_token_count(
                                 paragraph.unicode or ""
                             ),
@@ -6127,23 +5614,15 @@ def _install_min_request_patches(
             def prepare_paragraph(item: dict[str, Any]) -> Any:
                 paragraph = item["paragraph"]
                 paragraph_id = id(paragraph)
-                if paragraph_id in request_state.get("table_header_ids", set()):
-                    # Confirmed header: translate it even when the generic
-                    # layout rules would have kept this short label.
-                    pass
-                elif (
-                    paragraph_id in request_state.get("table_body_ids", set())
-                    and not _table_body_should_translate(paragraph, request_state, api_key)
-                ):
-                    # 标识符/数字/URL/代码保留原文，其余表体内容进入送译路径。
+                if paragraph_id in request_state.get("table_content_paragraph_ids", set()):
+                    # 0.7.0 表格内容封存：表头/表体/旋转表头一律保留原文。
                     request_state["preserved_paragraph_ids"].add(paragraph_id)
                     if pbar is not None:
                         pbar.advance(1)
                     return None, None
-                elif (
+                if (
                     id(paragraph) in request_state["reference_paragraph_ids"]
                     or id(paragraph) in repeated_marginal_ids
-                    or id(paragraph) in table_fragment_ids
                     or _paragraph_is_marginal_or_stamp(paragraph, item["page"])
                     or _is_first_page_author_block(paragraph, item["position"][0])
                 ):
@@ -6151,19 +5630,12 @@ def _install_min_request_patches(
                     if pbar is not None:
                         pbar.advance(1)
                     return None, None
-                result = _pre_translate_with_table_min_text_length(
-                    original_pre_translate,
+                result = original_pre_translate(
                     translator.il_translator,
                     paragraph,
                     item["tracker"],
                     item["page_font_map"],
                     item["xobj_font_map"],
-                    is_table_paragraph=(
-                        id(paragraph)
-                        in request_state.get("table_paragraph_ids", set())
-                    ),
-                    min_text_length=translator.il_translator.translation_config.min_text_length,
-                    config_lock=table_min_text_lock,
                 )
                 if (
                     isinstance(result, (tuple, list))
@@ -6374,78 +5846,13 @@ def babeldoc_version_error() -> str | None:
     return None
 
 
-def _table2_translations(
-    request_state: dict[str, Any], headers: list[str], api_key: str
-) -> list[str] | None:
-    """Send one small completion for rotated table headers; cache it per document.
-
-    The monolingual and the bilingual PDF are post-processed separately, so the
-    translation must be reused: 0.6.0 promises exactly one extra request, not one
-    per output file.  A failure is recorded and returns None so the PDF keeps the
-    English headers; it never blocks the document.
-    """
-    cache = request_state.setdefault("table2_translation_cache", {})
-    key = tuple(headers)
-    if key in cache:
-        return cache[key]
-    helper = _table2_helper()
-    translator = request_state.get("openai_translator")
-    if translator is None:
-        _write_job_log(
-            request_state,
-            {"event": "table2_translate_skipped", "reason": "missing_translator"},
-            api_key,
-        )
-        cache[key] = None
-        return None
-
-    def request_headers() -> Any:
-        return create_completion_adapting(
-            translator.client,
-            request_state,
-            TABLE2_OUTPUT_TOKENS,
-            request_metadata={"phase": "table_headers", "item_count": len(headers)},
-            api_key=api_key,
-            model=translator.model,
-            messages=[{"role": "user", "content": helper.build_prompt_text(headers)}],
-        )
-
-    budget = request_state.get("request_budget")
-    try:
-        response = (
-            request_once(budget, request_headers)
-            if budget is not None
-            else request_headers()
-        )
-        content = response.choices[0].message.content or ""
-    except Exception as error:
-        cache[key] = None
-        _write_job_log(
-            request_state,
-            {"event": "table2_translate_error", "error": log_safe_error(error, api_key)},
-            api_key,
-        )
-        return None
-    translations = helper.parse_response(content, len(headers))
-    if translations is None or not all(
-        helper.is_valid_translation(original, translated)
-        for original, translated in zip(headers, translations)
-    ):
-        cache[key] = None
-        _write_job_log(
-            request_state,
-            {"event": "table2_translate_failed", "reason": "parse_or_validation"},
-            api_key,
-        )
-        return None
-    cache[key] = translations
-    return translations
-
-
-def _restore_figure_and_table_text(
+def _restore_figure_text(
     source_pdf: str, output_pdf: str, request_state: dict[str, Any], api_key: str
 ) -> None:
-    """Restore dropped figure labels and translate rotated table headers in place."""
+    """Restore dropped figure-internal labels in place.
+
+    0.7.0 起表格翻译封存：这里只恢复图内文字，不再翻译/重绘旋转表头。
+    """
     try:
         figure_helper = _figure_text_helper()
         figure_stats = figure_helper.restore_figure_text(source_pdf, output_pdf)
@@ -6463,33 +5870,6 @@ def _restore_figure_and_table_text(
             request_state,
             {
                 "event": "figure_text_restore_error",
-                "file": os.path.basename(output_pdf),
-                "error": log_safe_error(error, api_key),
-            },
-            api_key,
-        )
-
-    try:
-        table2_helper = _table2_helper()
-        table2_stats = table2_helper.restore_rotated_headers(
-            source_pdf,
-            output_pdf,
-            lambda headers: _table2_translations(request_state, headers, api_key),
-        )
-        record = {
-            "event": "table2_restore",
-            "file": os.path.basename(output_pdf),
-        }
-        for name in ("groups", "requested", "translated", "redacted", "drawn", "skipped"):
-            if name in table2_stats:
-                record[name] = table2_stats[name]
-        record["failed_count"] = len(table2_stats.get("failed") or [])
-        _write_job_log(request_state, record, api_key)
-    except Exception as error:
-        _write_job_log(
-            request_state,
-            {
-                "event": "table2_restore_error",
                 "file": os.path.basename(output_pdf),
                 "error": log_safe_error(error, api_key),
             },
@@ -6541,10 +5921,10 @@ def _restore_links_after_layout(
             api_key,
         )
         return summary
-    # 图内文字与旋转表头必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，
-    # 译文图5 行标签会失去右对齐，表2 的 90° 列标题保持英文。三者都只改
-    # 图/表区域，链接恢复需要最终排版，因此顺序不能反。
-    _restore_figure_and_table_text(source_pdf, output_pdf, request_state, api_key)
+    # 图内文字必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，译文图5
+    # 行标签会失去右对齐；图内文字恢复只改图区域，链接恢复需要最终排版，
+    # 因此顺序不能反。0.7.0 起表格内容封存，不再处理旋转表头。
+    _restore_figure_text(source_pdf, output_pdf, request_state, api_key)
 
     try:
         helper = _links_helper()
@@ -6617,10 +5997,10 @@ def _restore_dual_links_after_layout(
     if not dual_pdf or not os.path.isfile(dual_pdf):
         return None
     source_pdf = _argument_value(sys.argv, "--files")
-    # 最终交付的双语 PDF 同样需要图内文字恢复与旋转表头翻译；表2 的翻译
-    # 结果按标题缓存，因此双语版本复用单语版本的那一次额外请求。
+    # 最终交付的双语 PDF 同样需要图内文字恢复；表格内容封存后不再有表头
+    # 翻译请求。
     if source_pdf:
-        _restore_figure_and_table_text(source_pdf, dual_pdf, request_state, api_key)
+        _restore_figure_text(source_pdf, dual_pdf, request_state, api_key)
     mono_mapping = str((link_stats or {}).get("mapping_path") or "")
     if not mono_mapping or not os.path.isfile(mono_mapping) or not source_pdf:
         summary = {"source": 0, "restored": 0, "skipped": "missing_mapping"}
@@ -6847,7 +6227,6 @@ def _result_payload(
     request_budget: Any,
     job_log_path: str,
     link_stats: dict[str, Any] | None,
-    table_warnings: list[dict[str, Any]],
     dual_link_stats: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build the ZTF_RESULT payload shared by success and degraded exports."""
@@ -6869,7 +6248,7 @@ def _result_payload(
             for key in ("source", "restored", "unresolved", "unsupported",
                         "mapping_path", "error", "split_layout", "paragraphs")
         } if link_stats else None,
-        "table_warnings": table_warnings,
+        "table_warnings": [],
         "dual_links": dual_link_stats,
     }
 
@@ -6885,7 +6264,6 @@ def _finish_degraded_output(
     api_key: str,
 ) -> None:
     """Import the produced PDF even though some paragraphs kept the source text."""
-    table_warnings = list(request_state.get("table_warnings") or [])
     link_stats: dict[str, Any] = {}
     dual_link_stats: dict[str, Any] = {}
     try:
@@ -6927,7 +6305,7 @@ def _finish_degraded_output(
             "document_errors": [
                 item["reason"] for item in failures if item.get("page") is None
             ],
-            "table_warnings": table_warnings,
+            "table_warnings": [],
             "log_path": job_log_path or None,
         },
         api_key,
@@ -6943,7 +6321,7 @@ def _finish_degraded_output(
             "document_errors": [
                 item["reason"] for item in failures if item.get("page") is None
             ],
-            "tables": table_warnings,
+            "tables": [],
             "requests": request_budget.requests,
             "planned": request_budget.planned,
             "log_path": job_log_path or None,
@@ -6958,7 +6336,6 @@ def _finish_degraded_output(
             request_budget,
             job_log_path,
             link_stats,
-            table_warnings,
             dual_link_stats,
         ),
         api_key,
@@ -7426,27 +6803,18 @@ def main() -> int:
     dual_link_stats = _restore_dual_links_after_layout(
         state, request_state, link_stats, api_key
     )
-    table_warnings = list(request_state.get("table_warnings") or [])
-    table_warning_message = "；".join(
-        f"{warning.get('table') or '未编号表'}（物理第 {warning.get('page')} 页）"
-        f"表头未能可靠识别，表体按内容规则处理"
-        + (f"：{warning['reason']}" if warning.get("reason") else "")
-        for warning in table_warnings
-    )
     warning_messages = []
     warning_failed = 0
     if decision and decision["kind"] == "warning":
         warning_messages.append(str(decision["message"]))
         warning_failed += int(decision.get("failed_paragraphs") or 0)
-    if table_warning_message:
-        warning_messages.append(table_warning_message)
     if warning_messages:
         _emit(
             "ZTF_WARNING ",
             {
                 "message": "；".join(warning_messages),
                 "failed_paragraphs": warning_failed,
-                "tables": table_warnings,
+                "tables": [],
                 "requests": request_budget.requests,
                 "planned": request_budget.planned,
             },
@@ -7478,7 +6846,7 @@ def main() -> int:
             "repair_request_count": request_state.get("repair_request_count", 0),
             "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
             "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
-            "table_warnings": table_warnings,
+            "table_warnings": [],
             "token_param": request_state.get("token_param"),
             "parameter_adaptations": request_state.get("parameter_adaptations", []),
             "links": {
@@ -7497,7 +6865,6 @@ def main() -> int:
             request_budget,
             job_log_path,
             link_stats,
-            table_warnings,
             dual_link_stats,
         ),
         api_key,

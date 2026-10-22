@@ -1,4 +1,5 @@
-"""Classify table cells as translatable headers or table-body content.
+"""封存（0.7.0 起不启用；见 docs/archive/table-translation.md）。
+Classify table cells as translatable headers or table-body content.
 
 BabelDOC 0.6.4 has no table model: a table is one 'table' layout box and its
 cells are ordinary 'fallback_line' paragraphs.  The layout box alone cannot

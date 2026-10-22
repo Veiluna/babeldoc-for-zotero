@@ -1,509 +1,296 @@
-"""End-to-end regressions for table header translation and table body content rules (#18/#37).
+"""End-to-end regression: 0.7.0 表格封存 + 多行题注完整翻译。
 
-Run with the installed BabelDOC 0.6.4 environment:
-
-    python tests/test_table_headers_e2e.py
-
-The fixture is synthetic; the mock API never calls a real provider. Diagnostic
-artefacts live under build/table-headers/.
+用户定案：表格内容保留原文、仅题注/表外正文翻译；本 e2e 专门覆盖“多行
+题注”场景（现有合成 fixture 原先只有单行题注）：BabelDOC 的 fallback_line
+阶段容易把一条多行题注拆成 "Tabl" + 其余文本 + "." 碎片，若未合并会出现
+中英混杂。真实 BabelDOC + 本地 mock 接口，不消耗真实额度。
 """
 
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import threading
-import unicodedata
 import unittest
+from pathlib import Path
 
 import pymupdf
 
-sys.path.insert(0, str(Path(__file__).parent))
-from mock_openai_server import (
-    MockOpenAIHandler,
-    MockOpenAIServer,
-    _prompt_items,
-    _synthetic_translation,
-)
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNNER = ROOT / "addon/content/python/ztf_babeldoc_runner.py"
-RUNNER_JS = ROOT / "addon/content/modules/runner.js"
-ARTIFACTS = ROOT / "build/table-headers"
-FONT_ROMAN = r"C:\Windows\Fonts\times.ttf"
-FONT_BOLD = r"C:\Windows\Fonts\timesbd.ttf"
+RUNNER = ROOT / "addon" / "content" / "python" / "ztf_babeldoc_runner.py"
+RUNNER_JS = ROOT / "addon" / "content" / "modules" / "runner.js"
+HELPER_DIR = ROOT / "addon" / "content" / "python"
+ARTIFACTS = ROOT / "build" / "table-headers"
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
+LATIN_RE = re.compile(r"[A-Za-z]")
+FIXED_TRANSLATION = "多行题注应完整翻译"
+BODY_TEXT = "We describe the dataset collection methodology in detail."
+CAPTION_LINE_1 = "Table 1: Performance of the proposed method"
+CAPTION_LINE_2 = "on the benchmark dataset."
+OUTSIDE_TEXT = "The table above summarizes the results."
+NOTE_LINE_1 = "* Values accurate at time of publication."
+NOTE_LINE_2 = (
+    "For the full table (including corruptions), "
+    "see minor residual corrections in the online appendix."
+)
+
+sys.path.insert(0, str(Path(__file__).parent))
+from mock_openai_server import MockOpenAIHandler, MockOpenAIServer, _prompt_items  # noqa: E402
 
 
-def _compact(text: str) -> str:
-    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or ""))
-
-
-def _runner_js_python_helpers() -> list[str]:
-    """读取 runner.js 的复制清单：runner 与全部 helper 必须一起部署。"""
+def _runner_js_helpers() -> list[str]:
     source = RUNNER_JS.read_text(encoding="utf-8")
     block = re.search(r"var pythonHelpers = \[(.*?)\];", source, re.S)
     assert block is not None, "runner.js 中未找到 pythonHelpers 复制清单"
     helpers = re.findall(r'\["([^"]+\.py)"', block.group(1))
-    assert helpers, "runner.js 的 pythonHelpers 复制清单为空"
+    assert helpers
     return helpers
 
 
-def _text(page: pymupdf.Page, x: float, y: float, value: str, size: float = 9,
-          bold: bool = False) -> None:
-    page.insert_text(
-        (x, y),
-        value,
-        fontname="times-bold" if bold else "times-roman",
-        fontfile=FONT_BOLD if bold else FONT_ROMAN,
-        fontsize=size,
-    )
+def _deploy(destination: Path) -> Path:
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True)
+    deployed_runner = destination / RUNNER.name
+    shutil.copyfile(RUNNER, deployed_runner)
+    for helper in _runner_js_helpers():
+        shutil.copyfile(HELPER_DIR / helper, destination / helper)
+    return deployed_runner
 
 
-def _center_text(page: pymupdf.Page, box: tuple[float, float, float, float],
-                 value: str, size: float = 9, bold: bool = False) -> None:
-    width = pymupdf.get_text_length(value, fontname="times-roman", fontsize=size)
-    x = box[0] + (box[2] - box[0] - width) / 2
-    _text(page, x, box[3] - 5, value, size=size, bold=bold)
-
-
-def _draw_grid(page: pymupdf.Page, left: float, top: float, widths: list[float],
-               row_height: float, rows: int,
-               merged: dict[int, list[tuple[int, int]]] | None = None) -> list[float]:
-    total = sum(widths)
-    ys = [top + index * row_height for index in range(rows + 1)]
-    for y in ys:
-        page.draw_line((left, y), (left + total, y), width=0.7)
-    boundaries = [left]
+def _draw_table(page: pymupdf.Page) -> None:
+    left, top = 90, 170
+    widths = [90, 90, 90]
+    row_height = 26
+    rows = 3
+    for index in range(rows + 1):
+        y = top + index * row_height
+        page.draw_line((left, y), (left + sum(widths), y), width=0.7)
     x = left
     for width in widths:
+        page.draw_line((x, top), (x, top + rows * row_height), width=0.7)
         x += width
-        boundaries.append(x)
-    for row in range(rows):
-        spans = (merged or {}).get(row, [])
-        for boundary_index, boundary in enumerate(boundaries):
-            if any(start < boundary_index < end for start, end in spans):
-                continue
-            page.draw_line((boundary, ys[row]), (boundary, ys[row + 1]), width=0.7)
-    return ys
-
-
-def _table_one(page: pymupdf.Page) -> None:
-    _text(page, 50, 60, "Table Header Study", size=17, bold=True)
-    _text(page, 50, 88, "We compare three detectors on the SECOND dataset.", size=10)
-    _text(page, 50, 112, "Table 1: Detection results on the SECOND dataset.", size=10)
-    left, top = 50, 128
-    widths = [95, 75, 75, 75, 75, 70, 65]
-    row_height = 22
-    ys = _draw_grid(
-        page, left, top, widths, row_height, 6,
-        merged={0: [(1, 5), (5, 7)]},
-    )
-    rows = [
-        ["", "Detection Performance", "", "", "", "Efficiency", ""],
-        ["Method", "Precision", "Recall", "F1", "Real-time", "Params", "FPS"],
-        ["ChangeMamba", "0.912", "0.887", "0.899", "YES", "33M", "51"],
-        ["SECOND", "0.874", "0.851", "0.862", "NO", "21M", "87"],
-        ["Swin", "0.851", "0.832", "0.840", "YES", "27M", "64"],
-        ["CenterPoint", "0.836", "0.815", "0.824", "YES", "18M", "75"],
+    page.draw_line((x, top), (x, top + rows * row_height), width=0.7)
+    cells = [
+        ["Method", "Precision", "Recall"],
+        ["Swin", "0.91", "0.87"],
+        ["Monday", "* p < 0.05", "**p<0.01"],
     ]
-    for row_index, row in enumerate(rows):
+    for row_index, row in enumerate(cells):
         x = left
         for column_index, value in enumerate(row):
-            if value:
-                x2 = x + widths[column_index]
-                if row_index == 0 and column_index == 1:
-                    x2 = left + sum(widths[0:5])
-                if row_index == 0 and column_index == 5:
-                    x2 = left + sum(widths[0:7])
-                _center_text(
-                    page,
-                    (x, ys[row_index], x2, ys[row_index + 1]),
-                    value,
-                    size=9,
-                    bold=row_index < 2,
-                )
-            x += widths[column_index]
-    _text(
-        page,
-        50,
-        330,
-        "* Precision, Recall and F1 are percentages. ChangeMamba is a state space model.",
-        size=9,
-    )
-    _text(
-        page,
-        50,
-        346,
-        "Note: YES and NO indicate whether the detector runs in real time.",
-        size=9,
-    )
-
-
-def _table_two(page: pymupdf.Page) -> None:
-    _text(page, 50, 80, "Table 2: Ablation study of the proposed modules.", size=10)
-    left, top = 70, 96
-    widths = [140, 110, 110, 110]
-    row_height = 24
-    ys = _draw_grid(page, left, top, widths, row_height, 6)
-    rows = [
-        ["Method", "ChangeMamba", "SECOND", "Swin"],
-        ["Precision", "0.91", "0.87", "0.85"],
-        ["Recall", "0.88", "0.85", "0.83"],
-        ["F1", "0.89", "0.86", "0.84"],
-        ["Params", "33M", "21M", "27M"],
-        ["Real-time", "YES", "NO", "YES"],
-    ]
-    for row_index, row in enumerate(rows):
-        x = left
-        for column_index, value in enumerate(row):
-            _center_text(
-                page,
-                (x, ys[row_index], x + widths[column_index], ys[row_index + 1]),
+            page.insert_text(
+                (x + 6, top + row_index * row_height + 17),
                 value,
-                size=9,
-                bold=row_index == 0,
+                fontname="times-roman",
+                fontfile=r"C:\Windows\Fonts\times.ttf",
+                fontsize=10,
             )
             x += widths[column_index]
-    _text(
-        page,
-        50,
-        280,
-        "The first column lists the metric and the remaining columns list the detectors.",
-        size=9,
-    )
 
 
-def _table_three(page: pymupdf.Page) -> None:
-    _text(page, 50, 80, "Table 3: Terms used in this study.", size=10)
-    left, top = 90, 96
-    widths = [150, 150]
-    row_height = 24
-    ys = _draw_grid(page, left, top, widths, row_height, 4)
-    rows = [
-        ["Precision", "Recall"],
-        ["F1", "AP"],
-        ["mAP", "IoU"],
-        ["Params", "FPS"],
-    ]
-    for row_index, row in enumerate(rows):
-        x = left
-        for column_index, value in enumerate(row):
-            _center_text(
-                page,
-                (x, ys[row_index], x + widths[column_index], ys[row_index + 1]),
-                value,
-                size=9,
-            )
-            x += widths[column_index]
-    _text(
-        page,
-        50,
-        230,
-        "This glossary-like table has no data rows and no reliable header band.",
-        size=9,
-    )
-
-
-def write_fixture(path: Path) -> None:
+def _write_fixture(path: Path) -> None:
     document = pymupdf.open()
-    for builder in (_table_one, _table_two, _table_three):
-        page = document.new_page(width=595, height=842)
-        builder(page)
+    body_page = document.new_page(width=595, height=842)
+    body_page.insert_text((60, 100), BODY_TEXT, fontname="times-roman",
+                          fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
+    table_page = document.new_page(width=595, height=842)
+    table_page.insert_text((90, 140), CAPTION_LINE_1, fontname="times-roman",
+                           fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
+    table_page.insert_text((90, 152), CAPTION_LINE_2, fontname="times-roman",
+                           fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
+    _draw_table(table_page)
+    table_page.insert_text((90, 262), NOTE_LINE_1, fontname="times-roman",
+                           fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
+    table_page.insert_text((90, 274), NOTE_LINE_2, fontname="times-roman",
+                           fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
+    table_page.insert_text((90, 330), OUTSIDE_TEXT, fontname="times-roman",
+                           fontfile=r"C:\Windows\Fonts\times.ttf", fontsize=10)
     document.save(path)
     document.close()
 
 
-class TableHeaderHandler(MockOpenAIHandler):
-    """Record every item and optionally echo confirmed table headers unchanged."""
-
+class _FixedChineseHandler(MockOpenAIHandler):
     def do_POST(self) -> None:
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         items = _prompt_items(payload)
         self.server.count_request()
         self.server.inputs.extend(items)
-        outputs = []
-        for index, item in enumerate(items):
-            source = str(item.get("input", ""))
-            if self.server.header_echo and item.get("layout_label") == "table_header":
-                translated = source
-            else:
-                translated = _synthetic_translation(source, index)
-            outputs.append({"id": item.get("id", index), "output": translated})
-        self._send_json(
-            200,
-            {
-                "id": "table-mock",
-                "object": "chat.completion",
-                "created": 0,
-                "model": "mock-model",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps(outputs, ensure_ascii=False),
-                        },
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            },
+        outputs = [
+            {"id": item.get("id", index), "output": FIXED_TRANSLATION}
+            for index, item in enumerate(items)
+        ]
+        self._send_json(200, {
+            "id": "table-headers-mock",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "mock-model",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(outputs, ensure_ascii=False),
+                },
+                "finish_reason": "stop",
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+
+def _run_runner(runner_path: Path, source: Path, destination: Path, timeout: int = 600):
+    server = MockOpenAIServer(("127.0.0.1", 0), _FixedChineseHandler)
+    server.inputs = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    shutil.rmtree(destination, ignore_errors=True)
+    destination.mkdir(parents=True)
+    environment = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith("ZTF_") and "API_KEY" not in key.upper()
+    }
+    environment.update({
+        "ZTF_OPENAI_API_KEY": "mock-test-key",
+        "ZTF_MAX_OUTPUT_TOKENS": "8192",
+        "ZTF_MAX_REQUESTS": "20",
+        "ZTF_REPAIR_FAILED": "1",
+        "ZTF_TRANSLATE_REFERENCES": "0",
+        "ZTF_JOB_LOG_PATH": str(destination / "job.jsonl"),
+        "PYTHONIOENCODING": "utf-8",
+    })
+    command = [
+        sys.executable, str(runner_path),
+        "--files", str(source),
+        "--output", str(destination / "output"),
+        "--working-dir", str(destination / "work"),
+        "--openai", "--openai-model", "mock-model",
+        "--openai-base-url", f"http://127.0.0.1:{server.server_address[1]}/v1",
+        "--lang-in", "en", "--lang-out", "zh",
+        "--no-dual", "--no-auto-extract-glossary",
+        "--disable-same-text-fallback",
+        "--watermark-output-mode", "no_watermark",
+        "--skip-scanned-detection",
+    ]
+    try:
+        completed = subprocess.run(
+            command, cwd=str(ROOT), env=environment, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
         )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+    (destination / "stdout.txt").write_text(completed.stdout, encoding="utf-8")
+    (destination / "stderr.txt").write_text(completed.stderr, encoding="utf-8")
+    result = None
+    for line in completed.stdout.splitlines():
+        if line.startswith("ZTF_RESULT "):
+            result = json.loads(line[len("ZTF_RESULT "):])
+    return completed, result, server.request_count, list(server.inputs)
 
 
-def read_pdf_pages(pdf_path: Path) -> list[str]:
-    pages = []
-    with pymupdf.open(pdf_path) as document:
-        for page in document:
-            pages.append(page.get_text())
-    return pages
-
-
-def read_job_records(path: Path) -> list[dict[str, object]]:
+def _records(destination: Path) -> list[dict]:
+    path = destination / "job.jsonl"
     if not path.is_file():
         return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-class TableHeaderIntegrationTest(unittest.TestCase):
+class TableHeadersE2ETest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         cls.source = ARTIFACTS / "tables.pdf"
-        write_fixture(cls.source)
-        deployed = ARTIFACTS / "deployed"
-        # 每次都从空目录重建：部署残留（例如上一轮留下的 ztf_table_text.py）
-        # 会让“helper 漏拷”的回归测试误判为通过（P2-1）。
-        shutil.rmtree(deployed, ignore_errors=True)
-        deployed.mkdir(parents=True)
-        shutil.copyfile(RUNNER, deployed / RUNNER.name)
-        helpers = _runner_js_python_helpers()
-        for helper in helpers:
-            shutil.copyfile(ROOT / "addon/content/python" / helper, deployed / helper)
-        expected_files = {RUNNER.name, *helpers}
-        actual_files = {path.name for path in deployed.iterdir()}
-        assert actual_files == expected_files, (
-            "deployed 目录必须与 runner.js 复制清单完全一致；"
-            f"多出={sorted(actual_files - expected_files)}，"
-            f"缺少={sorted(expected_files - actual_files)}"
-        )
-        cls.completed, cls.result, cls.error, cls.inputs, cls.records, cls.request_count = cls.run_job()
-
-    @classmethod
-    def run_job(cls, *, header_echo: bool = False):
-        server = MockOpenAIServer(("127.0.0.1", 0), TableHeaderHandler)
-        server.inputs = []
-        server.header_echo = header_echo
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        destination = ARTIFACTS / ("header-echo" if header_echo else "main")
-        destination.mkdir(parents=True, exist_ok=True)
-        for stale in (destination / "job.jsonl",):
-            if stale.is_file():
-                stale.unlink()
-        for stale_dir in (destination / "output", destination / "work"):
-            if stale_dir.is_dir():
-                shutil.rmtree(stale_dir, ignore_errors=True)
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("ZTF_") and "API_KEY" not in key.upper()
-        }
-        environment.update(
-            {
-                "ZTF_OPENAI_API_KEY": "mock-test-key",
-                "ZTF_MAX_OUTPUT_TOKENS": "8192",
-                "ZTF_REPAIR_FAILED": "1",
-                "ZTF_TRANSLATE_REFERENCES": "0",
-                "ZTF_JOB_LOG_PATH": str(destination / "job.jsonl"),
-                "PYTHONIOENCODING": "utf-8",
-            }
-        )
-        deployed_runner = ARTIFACTS / "deployed" / RUNNER.name
-        command = [
-            sys.executable,
-            str(deployed_runner),
-            "--files", str(cls.source),
-            "--output", str(destination / "output"),
-            "--working-dir", str(destination / "work"),
-            "--openai", "--openai-model", "mock-model",
-            "--openai-base-url", f"http://127.0.0.1:{server.server_address[1]}/v1",
-            "--lang-in", "en", "--lang-out", "zh", "--no-dual",
-            "--no-auto-extract-glossary", "--disable-same-text-fallback",
-            "--watermark-output-mode", "no_watermark", "--skip-scanned-detection",
-        ]
-        try:
-            completed = subprocess.run(
-                command, cwd=ROOT, env=environment, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=600,
-            )
-        finally:
-            server.shutdown()
-            thread.join(timeout=2)
-            server.server_close()
-        (destination / "stdout.txt").write_text(completed.stdout, encoding="utf-8")
-        (destination / "stderr.txt").write_text(completed.stderr, encoding="utf-8")
-        (destination / "inputs.json").write_text(
-            json.dumps(server.inputs, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        result_match = re.search(r"(?m)^ZTF_RESULT (\{.*\})\s*$", completed.stdout)
-        result = json.loads(result_match.group(1)) if result_match else None
-        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout)
-        warning = json.loads(warning_match.group(1)) if warning_match else None
-        error_match = re.search(r"(?m)^ZTF_ERROR (\{.*\})\s*$", completed.stdout)
-        error = json.loads(error_match.group(1)) if error_match else None
-        records = read_job_records(destination / "job.jsonl")
-        return completed, result, error, server.inputs, records, server.request_count
-
-    def test_clear_headers_are_translated_and_body_content_rules_applied(self) -> None:
-        self.assertEqual(self.completed.returncode, 0, self.completed.stderr[-5000:])
-        self.assertIsNotNone(self.result, self.completed.stdout[-5000:])
-        self.assertIsNone(self.error, self.error)
-
-        header_items = [
-            item for item in self.inputs
-            if item.get("layout_label") == "table_header"
-        ]
-        header_texts = {str(item.get("input", "")) for item in header_items}
-        for expected in (
-            "Method", "Precision", "Recall", "F1", "Real-time", "Params", "FPS",
-            "Detection Performance", "Efficiency",
-        ):
-            self.assertIn(expected, header_texts)
-        self.assertTrue(all(item.get("table_role") for item in header_items))
-        self.assertTrue(all(item.get("table_context") for item in header_items))
-
-        all_inputs = {str(item.get("input", "")) for item in self.inputs}
-        # 新语义：表体只有纯标识符/缩写/数字/URL/代码保留，普通英文送译；
-        # “Swin”（表 1/表 2 表体普通英文）与 “mAP”（表 3 表体普通英文）
-        # 出现在请求输入中，证明表体进入了送译路径（含 uncertain 表）。
-        for sent_value in ("Swin", "mAP"):
-            self.assertIn(sent_value, all_inputs, "表体普通英文应进入送译路径")
-        for kept_value in (
-            "ChangeMamba", "SECOND", "CenterPoint", "0.912", "0.887",
-            "YES", "NO", "33M", "51", "AP", "IoU",
-        ):
-            self.assertNotIn(kept_value, all_inputs, "表体标识符/数字/缩写不应送译")
-        self.assertFalse(
-            [
-                item for item in self.inputs
-                if (item.get("table_context") or {}).get("table") == "表 3"
-            ],
-            "不确定表格不应有表头送译",
+        _write_fixture(cls.source)
+        cls.deployed_runner = _deploy(ARTIFACTS / "deployed")
+        cls.destination = ARTIFACTS / "run"
+        (cls.completed, cls.result, cls.requests, cls.inputs) = _run_runner(
+            cls.deployed_runner, cls.source, cls.destination,
         )
 
-        warning_match = re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", self.completed.stdout)
-        self.assertIsNotNone(warning_match, self.completed.stdout[-5000:])
-        warning = json.loads(warning_match.group(1))
-        self.assertEqual(warning["failed_paragraphs"], 0)
-        self.assertEqual(len(warning["tables"]), 1)
-        self.assertEqual(warning["tables"][0]["page"], 3)
-        self.assertIn("3", warning["tables"][0]["table"])
-
-        analysis_records = [
-            record for record in self.records if record.get("event") == "table_analysis"
-        ]
-        self.assertTrue(analysis_records, self.records)
-        statuses = {
-            table["table"]: table["status"]
-            for table in analysis_records[-1]["tables"]
-        }
-        self.assertEqual(statuses.get("表 1"), "clear")
-        self.assertEqual(statuses.get("表 2"), "clear")
-        self.assertEqual(statuses.get("表 3"), "uncertain")
-        finished = [
-            record for record in self.records if record.get("event") == "job_finished"
-        ][-1]
-        self.assertEqual(finished["outcome"], "warning")
-        self.assertEqual(finished["table_warnings"][0]["page"], 3)
-
-        self.assertEqual(self.request_count, 1, "表格表头应保持在单文档批次中")
-        self.assertEqual(self.result["requests"], 1)
-        self.assertEqual(self.result["repair_request_count"], 0)
-
-        pages = [_compact(text) for text in read_pdf_pages(Path(self.result["mono"]))]
-        self.assertEqual(len(pages), 3)
-        for source_label in (
-            "Method", "Precision", "Recall", "F1", "Real-time",
-            "Params", "FPS", "DetectionPerformance", "Efficiency",
-        ):
-            self.assertNotIn(source_label, pages[0])
-        for source_label in ("Method", "Precision", "Recall", "F1", "Params", "Real-time"):
-            self.assertNotIn(source_label, pages[1])
-        for source_value in (
-            "ChangeMamba", "SECOND", "CenterPoint",
-            "0.912", "0.887", "0.899", "YES", "NO", "33M", "51",
-        ):
-            self.assertIn(source_value, pages[0], "表体标识符/数字/缩写必须保持原文")
-        self.assertNotIn("Swin", pages[0], "表体普通英文词应按内容规则送译")
-        for source_value in (
-            "ChangeMamba", "SECOND", "0.91", "0.87", "YES", "NO", "33M",
-        ):
-            self.assertIn(source_value, pages[1], "表体标识符/数字/缩写必须保持原文")
-        self.assertNotIn("Swin", pages[1], "表体普通英文词应按内容规则送译")
-        # 表头无法可靠识别时报告；表体按内容规则处理，模型回声时保留原文。
-        # 本用例 mock 返回合成中文而非回声，因此普通英文词被翻译、标识符保持原文。
-        for source_label in ("F1", "AP", "IoU", "FPS"):
-            self.assertIn(source_label, pages[2], "不确定表的表体标识符应保持原文")
-        for translated_value in ("Precision", "Recall", "mAP", "Params"):
-            self.assertNotIn(
-                translated_value, pages[2],
-                "表头无法可靠识别时表体普通英文仍应按内容规则送译",
-            )
-        self.assertNotIn("Detectionresults", pages[0], "表外题注必须翻译")
-        self.assertNotIn("percentages", pages[0], "表外附注必须翻译")
-        self.assertNotIn("Ablationstudy", pages[1], "表外题注必须翻译")
-        self.assertNotIn("remainingcolumns", pages[1], "表外附注必须翻译")
-        self.assertNotIn("Termsused", pages[2], "表外题注必须翻译")
-        self.assertTrue(CJK_RE.search(pages[0]))
-        self.assertTrue(CJK_RE.search(pages[1]))
-        self.assertTrue(CJK_RE.search(pages[2]))
-
-    def test_clear_header_failure_is_imported_with_a_warning(self) -> None:
-        completed, result, error, inputs, records, request_count = self.run_job(
-            header_echo=True
-        )
-        # 已识别表头原样返回仍算失败，但 BabelDOC 已产出 PDF：降级导入。
-        self.assertEqual(completed.returncode, 0, completed.stderr[-5000:])
-        self.assertIsNotNone(result, completed.stdout[-5000:])
-        self.assertIsNone(error, error)
-        warning = json.loads(
-            re.search(r"(?m)^ZTF_WARNING (\{.*\})\s*$", completed.stdout).group(1)
-        )
-        self.assertIs(warning.get("degraded"), True, warning)
-        self.assertTrue(warning.get("failed_paragraphs", 0) > 0)
-        self.assertIn("页", warning.get("message", ""))
-        header_items = [
-            item for item in inputs if item.get("layout_label") == "table_header"
-        ]
-        self.assertTrue(header_items)
-        self.assertGreaterEqual(request_count, 2, "失败表头应进入合并补译")
-        failures = [
-            record for record in records if record.get("event") == "item_outcome"
-        ]
-        self.assertTrue(failures)
+    def test_multiline_caption_is_one_complete_translation(self) -> None:
+        self.assertEqual(self.completed.returncode, 0, self.completed.stderr[-3000:])
+        self.assertIsNotNone(self.result, self.completed.stdout[-3000:])
+        # 合并成功后，完整的两行题注必须作为同一个 item 送译；若被拆成
+        # "Tabl" + 其余文本 + "." 碎片，就不可能有 item 同时包含两行。
+        sent = [str(item.get("input", "")) for item in self.inputs]
         self.assertTrue(
-            any(
-                "未翻译" in str(record.get("reason", ""))
-                or "原文" in str(record.get("reason", ""))
-                for record in failures
-            ),
-            failures,
+            any("Table 1:" in text and "benchmark" in text for text in sent),
+            "多行题注必须作为同一段送译：" + repr(sent)[:800],
         )
-        finished = next(record for record in records if record.get("event") == "job_finished")
-        self.assertEqual(finished["outcome"], "warning")
-        self.assertIs(finished.get("degraded"), True)
-        self.assertEqual(finished["failed_paragraphs"], warning["failed_paragraphs"])
+        self.assertFalse(
+            any(text.strip() in ("Tabl", "Table", ".") for text in sent),
+            "题注不得以碎片 item 送译：" + repr(sent)[:800],
+        )
+        document = pymupdf.open(Path(self.result["mono"]))
+        try:
+            caption = document[1].get_text("text", clip=pymupdf.Rect(85, 125, 540, 158))
+        finally:
+            document.close()
+        self.assertIn(FIXED_TRANSLATION, caption, caption)
+        self.assertIsNone(LATIN_RE.search(caption), "题注译文不得残留拉丁字母：" + repr(caption))
+        self.assertNotIn("Tabl", caption)
+
+    def test_marker_cells_inside_table_are_not_sent_for_translation(self) -> None:
+        self.assertEqual(self.completed.returncode, 0, self.completed.stderr[-3000:])
+        self.assertIsNotNone(self.result, self.completed.stdout[-3000:])
+        sent = "\n".join(str(item.get("input", "")) for item in self.inputs)
+        for marker in ("* p < 0.05", "**p<0.01"):
+            self.assertNotIn(marker, sent, "表内 marker 单元格不得进入请求：" + marker)
+        document = pymupdf.open(Path(self.result["mono"]))
+        try:
+            table_text = document[1].get_text("text", clip=pymupdf.Rect(85, 155, 450, 250))
+        finally:
+            document.close()
+        for marker in ("* p < 0.05", "**p<0.01"):
+            self.assertIn(marker, table_text, "表内 marker 单元格必须保留原文：" + marker)
+
+    def test_table_cells_keep_source_english(self) -> None:
+        document = pymupdf.open(Path(self.result["mono"]))
+        try:
+            text = document[1].get_text()
+        finally:
+            document.close()
+        for value in ("Method", "Precision", "Recall", "Swin", "0.91", "Monday"):
+            self.assertIn(value, text, f"表格内容必须保留原文：{value}")
+
+    def test_table_note_is_preserved_verbatim(self) -> None:
+        self.assertEqual(self.completed.returncode, 0, self.completed.stderr[-3000:])
+        self.assertIsNotNone(self.result, self.completed.stdout[-3000:])
+        sent = [str(item.get("input", "")) for item in self.inputs]
+        all_sent = "\n".join(sent)
+        # 方案 A：表注保留原文，不进入请求/补译。
+        self.assertNotIn("Values accurate", all_sent)
+        self.assertNotIn("minor residual corrections", all_sent)
+        events = [record.get("event") for record in _records(self.destination)]
+        self.assertNotIn("table_note_merged", events)
+        self.assertNotIn("table_note_merge_warning", events)
+        # 输出表注区域保留英文原 glyph，无中文、无固定译文。
+        document = pymupdf.open(Path(self.result["mono"]))
+        try:
+            note_text = document[1].get_text("text", clip=pymupdf.Rect(85, 250, 540, 305))
+        finally:
+            document.close()
+        normalized = re.sub(r"\s+", " ", note_text).strip()
+        self.assertIn("Values accurate", normalized, "表注必须保留原文：" + repr(note_text))
+        self.assertIn("minor residual corrections", normalized, "表注必须保留原文：" + repr(note_text))
+        self.assertIsNone(CJK_RE.search(note_text), "表注不得出现中文：" + repr(note_text))
+        self.assertNotIn(FIXED_TRANSLATION, note_text)
+
+    def test_caption_and_outside_text_are_translated_without_table_events(self) -> None:
+        records = _records(self.destination)
+        events = [record.get("event") for record in records]
+        self.assertIn("table_translation_suspended", events)
+        for forbidden in ("table_analysis", "table2_restore", "table_layout_patch"):
+            self.assertNotIn(forbidden, events)
+        self.assertEqual(self.requests, 1)
+        sent = "\n".join(str(item.get("input", "")) for item in self.inputs)
+        self.assertIn(BODY_TEXT, sent)
+        self.assertIn(OUTSIDE_TEXT, sent)
+        self.assertNotIn("Precision", sent)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
-"""Translate and vertically redraw rotated table column headers.
+"""封存（0.7.0 起不启用；见 docs/archive/table-translation.md）。
+Translate and vertically redraw rotated table column headers.
 
 BabelDOC 0.6.4 does not translate the 90-degree column headers of some tables:
 they survive in the output PDF as rotated English text.  This module finds such

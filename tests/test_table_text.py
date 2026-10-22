@@ -7,8 +7,10 @@ import unittest
 from pathlib import Path
 
 
+# 0.7.0 表格翻译封存：只验证封存实现的内容规则契约，不依赖生产部署。
 HELPER_PATH = (
-    Path(__file__).parents[1] / "addon" / "content" / "python" / "ztf_table_text.py"
+    Path(__file__).parents[1]
+    / "addon" / "content" / "python" / "archive" / "ztf_table_text.py"
 )
 SPEC = importlib.util.spec_from_file_location("ztf_table_text", HELPER_PATH)
 assert SPEC is not None and SPEC.loader is not None

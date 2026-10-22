@@ -306,14 +306,14 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         self.assertEqual(len(repaired), 2, repaired)
         self.assertTrue(all(item.get("outcome") == "repaired" for item in repaired))
         self.assertTrue(text_blocks)
-        # #18/#37：不确定表格的提示为“表头无法识别时报告，表体按内容规则处理
-        # （模型回声时保留原文）”；该警告不得代表段落失败。
+        # 0.7.0 表格翻译封存：不再产生表头/表体 warning；若仍有警告，只能是
+        # 链接等非段落失败提示，failed_paragraphs 必须为 0。
         for line in completed.stdout.splitlines():
             if not line.startswith("ZTF_WARNING "):
                 continue
             warning = json.loads(line[len("ZTF_WARNING "):])
             self.assertEqual(warning.get("failed_paragraphs"), 0, warning)
-            self.assertIn("tables", warning, warning)
+            self.assertNotIn("表头", warning.get("message", ""), warning)
 
     def test_untranslated_prose_fragment_is_not_a_protected_name(self) -> None:
         completed, result, records, request_count, selected_group, text_blocks = self._run_job(
