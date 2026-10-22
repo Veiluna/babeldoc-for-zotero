@@ -306,7 +306,8 @@ class LinkedFragmentRepairIntegrationTest(unittest.TestCase):
         self.assertEqual(len(repaired), 2, repaired)
         self.assertTrue(all(item.get("outcome") == "repaired" for item in repaired))
         self.assertTrue(text_blocks)
-        # #18 允许“不确定表格，整表保留”警告；它不得代表段落失败。
+        # #18/#37：不确定表格的提示为“表头无法识别时报告，表体按内容规则处理
+        # （模型回声时保留原文）”；该警告不得代表段落失败。
         for line in completed.stdout.splitlines():
             if not line.startswith("ZTF_WARNING "):
                 continue

@@ -172,31 +172,106 @@ def _links_helper() -> Any:
     return _load_helper("ztf_links")
 
 
-def _table_body_should_translate(paragraph: Any) -> bool:
-    """Translate only table-body sentences; short values stay verbatim."""
+_RULE_ERROR_LOG_LIMIT = 3
+
+
+def _record_rule_error(
+    request_state: dict[str, Any] | None,
+    event: str,
+    reason: str,
+    source: str,
+    error: BaseException,
+    api_key: str = "",
+) -> None:
+    """记录内容规则降级事件；同一事件与异常类型最多 3 条，避免刷屏。
+
+    error 与 preview 写入前统一经 _write_job_log/_text_preview 按 api_key
+    脱敏；没有 request_state 时静默返回（调用方仍需保持容错行为）。
+    该机制用于落实 CODING_STANDARDS §4 的“不允许静默地部分完成”。
+    """
+    if not isinstance(request_state, dict):
+        return
+    counts = request_state.setdefault("rule_error_counts", {})
+    if not isinstance(counts, dict):
+        return
+    signature = (event, type(error).__name__)
+    count = int(counts.get(signature, 0)) + 1
+    counts[signature] = count
+    if count > _RULE_ERROR_LOG_LIMIT:
+        return
+    _write_job_log(
+        request_state,
+        {
+            "event": event,
+            "error": str(error),
+            "error_type": type(error).__name__,
+            "reason": reason,
+            "preview": _text_preview(source, api_key),
+            "occurrences": count,
+        },
+        api_key,
+    )
+
+
+def _table_body_should_translate(
+    paragraph: Any,
+    request_state: dict[str, Any] | None = None,
+    api_key: str = "",
+) -> bool:
+    """判断表体段落是否送译：只有标识符/数字/URL/代码保留原文，其余送译。
+
+    内容规则异常时记录 table_rule_error 事件（error/preview 按 api_key 脱敏）
+    并按“保留原文”容错，异常不得阻断 PDF 交付；无 request_state 时只返回 False。
+    """
+    text = ""
     try:
         text = getattr(paragraph, "unicode", "") or ""
         return _table_text_helper().classify_table_cell(text, "body")["action"] == "translate"
-    except Exception:
+    except Exception as error:
+        _record_rule_error(
+            request_state,
+            "table_rule_error",
+            "表体内容规则异常，已保留原文",
+            text,
+            error,
+            api_key,
+        )
         return False
 
 
-def _should_verify_chinese(source: Any) -> bool:
-    """Whether a sent-for-translation text must come back as real Chinese.
+def _should_verify_chinese(
+    source: Any,
+    request_state: dict[str, Any] | None = None,
+    api_key: str = "",
+) -> bool:
+    """判断送译文本是否必须以真中文返回（Q11 兜底）。
 
-    Table cells and sentences are sent only when the content rules expect a
-    Chinese rendering; a pure echo, a number or stray punctuation then means
-    the model failed and the source text must be kept instead.
+    Q11 回退只用于短值/表头：分类为 translate 的短单元格返回纯回声、数字或
+    标点说明模型没有翻译。整句（词数 > 3 且长度 > 40）不再套用该回退，
+    避免把正常的长句译文误判为无效中文。校验异常时记录 chinese_check_error
+    事件（error/preview 按 api_key 脱敏）并跳过回退，不得中断翻译。
     """
+    text = ""
     try:
-        text = str(source or "")
-        if not text.strip():
+        text = " ".join(str(source or "").split())
+        if not text:
+            return False
+        words = re.findall(r"[A-Za-z][A-Za-z'\-]*", text)
+        if len(words) > 3 and len(text) > 40:
             return False
         return (
             _table_text_helper().classify_table_cell(text, "body")["action"]
             == "translate"
         )
-    except Exception:
+    except Exception as error:
+        _record_rule_error(
+            request_state,
+            "chinese_check_error",
+            "中文校验异常，跳过 Q11 回退",
+            text,
+            error,
+            api_key,
+        )
         return False
 
 
@@ -3908,7 +3983,7 @@ def _install_min_request_patches(
         if (
             isinstance(translated_text, str)
             and translated_text
-            and _should_verify_chinese(source)
+            and _should_verify_chinese(source, request_state, api_key)
             and not _table_text_helper().meaningful_chinese(
                 source, translated_text
             )
@@ -5884,10 +5959,11 @@ def _install_min_request_patches(
             docs = translator.il_translator.docs
             original_paragraph_state = snapshot_paragraph_state(docs)
 
-            # Table roles are decided from BabelDOC's table boundary and the
-            # whole table's cells (same request, no per-cell requests). Only
-            # confirmed headers enter translation; every other table cell is
-            # preserved. An unreadable table is kept whole and reported.
+            # 表格角色由 BabelDOC 的表格边界和整表单元格决定（同一请求内完成，
+            # 不产生逐格请求）。已确认的表头直接送译；表体只保留纯标识符/缩写/
+            # 数字/URL/代码，其余（含 1-2 词普通英文与含专名整句）一律送译，
+            # 模型原样返回时走 kept_verbatim 保留原文。表头无法可靠识别时提示
+            # 用户表名与页码，但表体仍按内容规则处理（不整表保留）。
             table_plans = _table_headers().analyze_document(docs)
             table_header_metadata: dict[int, dict[str, Any]] = {}
             table_header_cell_boxes: dict[int, tuple[float, float, float, float]] = {}
@@ -6057,10 +6133,9 @@ def _install_min_request_patches(
                     pass
                 elif (
                     paragraph_id in request_state.get("table_body_ids", set())
-                    and not _table_body_should_translate(paragraph)
+                    and not _table_body_should_translate(paragraph, request_state, api_key)
                 ):
-                    # Short values, names and identifiers stay verbatim; full
-                    # sentences fall through to the normal translation path.
+                    # 标识符/数字/URL/代码保留原文，其余表体内容进入送译路径。
                     request_state["preserved_paragraph_ids"].add(paragraph_id)
                     if pbar is not None:
                         pbar.advance(1)
@@ -7354,7 +7429,7 @@ def main() -> int:
     table_warnings = list(request_state.get("table_warnings") or [])
     table_warning_message = "；".join(
         f"{warning.get('table') or '未编号表'}（物理第 {warning.get('page')} 页）"
-        f"无法可靠识别表头，已整表保留原文"
+        f"表头未能可靠识别，表体按内容规则处理"
         + (f"：{warning['reason']}" if warning.get("reason") else "")
         for warning in table_warnings
     )

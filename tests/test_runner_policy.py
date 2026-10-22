@@ -1041,6 +1041,123 @@ def test_table_short_paragraphs_enter_translation_and_restore_minimum_length() -
     assert config.min_text_length == 5
 
 
+def test_should_verify_chinese_applies_to_short_translated_values() -> None:
+    # Q11 回退只用于送译的短值/表头：短值要求真中文，回声/数字/标点才会被拒绝。
+    for text in (
+        "Benign",
+        "Monday",
+        "harrison",
+        "sO,sA,sW,sR,sL and B)",
+        "Init Win F.Bytes",
+    ):
+        assert runner._should_verify_chinese(text), text
+
+
+def test_should_verify_chinese_skips_identifiers_and_full_sentences() -> None:
+    # 标识符/数字/URL/代码不送译；整句（词数>3 且长度>40）不套用回退，避免误伤。
+    for text in (
+        "17",
+        "YES/NO",
+        "A-Acc-Chr1",
+        "https://example.org/x",
+        "www.example.org/path",
+        "",
+    ):
+        assert not runner._should_verify_chinese(text), text
+    for text in (
+        "Unusual occurrence frequencies of Apache Access request methods.",
+        "The detector identifies new characters in the Apache access log referer field.",
+    ):
+        assert not runner._should_verify_chinese(text), text
+    # 边界：词数<=3 或长度<=40 任一满足仍要校验 Q11。
+    three_words_long = "aaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbb cccccccccccccccccccc"
+    assert len(three_words_long.split()) == 3 and len(three_words_long) > 40
+    assert runner._should_verify_chinese(three_words_long)
+    four_short_words = "one two three four"
+    assert len(four_short_words.split()) == 4 and len(four_short_words) <= 40
+    assert runner._should_verify_chinese(four_short_words)
+
+
+def test_table_body_rule_error_is_logged_redacted_without_breaking_translation() -> None:
+    import tempfile
+
+    secret = "sk-SECRET-123"
+
+    class BrokenParagraph:
+        unicode = "Benign " + secret
+
+    class BrokenHelper:
+        @staticmethod
+        def classify_table_cell(text: object, role: str) -> dict[str, str]:
+            raise ValueError("broken table rule for " + str(text) + " with " + secret)
+
+    with tempfile.TemporaryDirectory() as temp_name:
+        log_path = Path(temp_name) / "job.jsonl"
+        request_state: dict[str, object] = {"job_log_path": str(log_path)}
+        original_helper = runner._table_text_helper
+        runner._table_text_helper = lambda: BrokenHelper
+        try:
+            # 异常按“保留原文”容错，连续调用不得抛异常；每类异常最多记 3 条。
+            for _ in range(5):
+                assert runner._table_body_should_translate(
+                    BrokenParagraph(), request_state, secret
+                ) is False
+            # 没有 request_state 时（例如表体角色测试）同样只返回 False。
+            assert runner._table_body_should_translate(BrokenParagraph()) is False
+        finally:
+            runner._table_text_helper = original_helper
+        raw_log = log_path.read_text(encoding="utf-8")
+        records = [json.loads(line) for line in raw_log.splitlines() if line.strip()]
+
+    events = [record for record in records if record.get("event") == "table_rule_error"]
+    assert 0 < len(events) <= 3, events
+    assert events[0]["preview"].startswith("Benign ")
+    assert events[0]["reason"]
+    assert events[0]["error"]
+    assert events[0]["error_type"] == "ValueError"
+    assert events[0]["occurrences"] == 1
+    # 安全：异常串与段落预览里的 API key 都不得原样落盘。
+    assert secret not in raw_log, raw_log
+    assert "[已隐藏]" in events[0]["preview"], events[0]["preview"]
+    safe_error = events[0]["error"]
+    assert "[已隐藏]" in safe_error or "provider error body omitted" in safe_error, safe_error
+
+
+def test_chinese_check_error_is_logged_redacted_without_breaking_translation() -> None:
+    import tempfile
+
+    secret = "sk-CHECK-456"
+
+    class BrokenHelper:
+        @staticmethod
+        def classify_table_cell(text: object, role: str) -> dict[str, str]:
+            raise RuntimeError("chinese check exploded with " + secret)
+
+    with tempfile.TemporaryDirectory() as temp_name:
+        log_path = Path(temp_name) / "job.jsonl"
+        request_state: dict[str, object] = {"job_log_path": str(log_path)}
+        original_helper = runner._table_text_helper
+        runner._table_text_helper = lambda: BrokenHelper
+        try:
+            # 校验异常跳过回退并记录事件，连续调用不得抛异常；每类最多记 3 条。
+            for _ in range(5):
+                assert runner._should_verify_chinese("Benign", request_state, secret) is False
+            assert runner._should_verify_chinese("Benign") is False
+        finally:
+            runner._table_text_helper = original_helper
+        raw_log = log_path.read_text(encoding="utf-8")
+        records = [json.loads(line) for line in raw_log.splitlines() if line.strip()]
+
+    events = [record for record in records if record.get("event") == "chinese_check_error"]
+    assert 0 < len(events) <= 3, events
+    assert events[0]["reason"]
+    assert events[0]["error_type"] == "RuntimeError"
+    assert events[0]["occurrences"] == 1
+    assert secret not in raw_log, raw_log
+    safe_error = events[0]["error"]
+    assert "[已隐藏]" in safe_error or "provider error body omitted" in safe_error, safe_error
+
+
 def test_table_fragments_much_shorter_than_a_cell_line_are_kept() -> None:
     from types import SimpleNamespace as NS
 
@@ -1167,6 +1284,10 @@ if __name__ == "__main__":
     test_common_table_scale_can_fall_below_point_eight()
     test_final_table_retypesetting_uses_cell_box_and_blocks_expansion()
     test_table_short_paragraphs_enter_translation_and_restore_minimum_length()
+    test_should_verify_chinese_applies_to_short_translated_values()
+    test_should_verify_chinese_skips_identifiers_and_full_sentences()
+    test_table_body_rule_error_is_logged_redacted_without_breaking_translation()
+    test_chinese_check_error_is_logged_redacted_without_breaking_translation()
     test_installed_babeldoc_version_allows_startup()
     test_wrong_babeldoc_version_emits_a_typed_error_before_importing_babeldoc()
     test_missing_babeldoc_package_uses_the_same_error_kind()

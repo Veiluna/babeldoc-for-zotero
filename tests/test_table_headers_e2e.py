@@ -1,4 +1,4 @@
-"""End-to-end regressions for table header translation and body protection (#18).
+"""End-to-end regressions for table header translation and table body content rules (#18/#37).
 
 Run with the installed BabelDOC 0.6.4 environment:
 
@@ -33,6 +33,7 @@ from mock_openai_server import (
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "addon/content/python/ztf_babeldoc_runner.py"
+RUNNER_JS = ROOT / "addon/content/modules/runner.js"
 ARTIFACTS = ROOT / "build/table-headers"
 FONT_ROMAN = r"C:\Windows\Fonts\times.ttf"
 FONT_BOLD = r"C:\Windows\Fonts\timesbd.ttf"
@@ -41,6 +42,16 @@ CJK_RE = re.compile(r"[\u3400-\u9fff]")
 
 def _compact(text: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text or ""))
+
+
+def _runner_js_python_helpers() -> list[str]:
+    """读取 runner.js 的复制清单：runner 与全部 helper 必须一起部署。"""
+    source = RUNNER_JS.read_text(encoding="utf-8")
+    block = re.search(r"var pythonHelpers = \[(.*?)\];", source, re.S)
+    assert block is not None, "runner.js 中未找到 pythonHelpers 复制清单"
+    helpers = re.findall(r'\["([^"]+\.py)"', block.group(1))
+    assert helpers, "runner.js 的 pythonHelpers 复制清单为空"
+    return helpers
 
 
 def _text(page: pymupdf.Page, x: float, y: float, value: str, size: float = 9,
@@ -271,14 +282,21 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         cls.source = ARTIFACTS / "tables.pdf"
         write_fixture(cls.source)
         deployed = ARTIFACTS / "deployed"
-        deployed.mkdir(exist_ok=True)
+        # 每次都从空目录重建：部署残留（例如上一轮留下的 ztf_table_text.py）
+        # 会让“helper 漏拷”的回归测试误判为通过（P2-1）。
+        shutil.rmtree(deployed, ignore_errors=True)
+        deployed.mkdir(parents=True)
         shutil.copyfile(RUNNER, deployed / RUNNER.name)
-        for helper in (
-            "ztf_inline_formulas.py", "ztf_style_guards.py",
-            "ztf_links.py", "ztf_table_headers.py",
-        ):
-            source = ROOT / "addon/content/python" / helper
-            shutil.copyfile(source, deployed / helper)
+        helpers = _runner_js_python_helpers()
+        for helper in helpers:
+            shutil.copyfile(ROOT / "addon/content/python" / helper, deployed / helper)
+        expected_files = {RUNNER.name, *helpers}
+        actual_files = {path.name for path in deployed.iterdir()}
+        assert actual_files == expected_files, (
+            "deployed 目录必须与 runner.js 复制清单完全一致；"
+            f"多出={sorted(actual_files - expected_files)}，"
+            f"缺少={sorted(expected_files - actual_files)}"
+        )
         cls.completed, cls.result, cls.error, cls.inputs, cls.records, cls.request_count = cls.run_job()
 
     @classmethod
@@ -347,7 +365,7 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         records = read_job_records(destination / "job.jsonl")
         return completed, result, error, server.inputs, records, server.request_count
 
-    def test_clear_headers_are_translated_and_body_kept(self) -> None:
+    def test_clear_headers_are_translated_and_body_content_rules_applied(self) -> None:
         self.assertEqual(self.completed.returncode, 0, self.completed.stderr[-5000:])
         self.assertIsNotNone(self.result, self.completed.stdout[-5000:])
         self.assertIsNone(self.error, self.error)
@@ -366,11 +384,16 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         self.assertTrue(all(item.get("table_context") for item in header_items))
 
         all_inputs = {str(item.get("input", "")) for item in self.inputs}
-        for body_value in (
-            "ChangeMamba", "SECOND", "Swin", "CenterPoint",
-            "0.912", "0.887", "YES", "NO", "33M", "51",
+        # 新语义：表体只有纯标识符/缩写/数字/URL/代码保留，普通英文送译；
+        # “Swin”（表 1/表 2 表体普通英文）与 “mAP”（表 3 表体普通英文）
+        # 出现在请求输入中，证明表体进入了送译路径（含 uncertain 表）。
+        for sent_value in ("Swin", "mAP"):
+            self.assertIn(sent_value, all_inputs, "表体普通英文应进入送译路径")
+        for kept_value in (
+            "ChangeMamba", "SECOND", "CenterPoint", "0.912", "0.887",
+            "YES", "NO", "33M", "51", "AP", "IoU",
         ):
-            self.assertNotIn(body_value, all_inputs, "表体不应送译")
+            self.assertNotIn(kept_value, all_inputs, "表体标识符/数字/缩写不应送译")
         self.assertFalse(
             [
                 item for item in self.inputs
@@ -418,16 +441,25 @@ class TableHeaderIntegrationTest(unittest.TestCase):
         for source_label in ("Method", "Precision", "Recall", "F1", "Params", "Real-time"):
             self.assertNotIn(source_label, pages[1])
         for source_value in (
-            "ChangeMamba", "SECOND", "Swin", "CenterPoint",
+            "ChangeMamba", "SECOND", "CenterPoint",
             "0.912", "0.887", "0.899", "YES", "NO", "33M", "51",
         ):
-            self.assertIn(source_value, pages[0], "表体必须保持原文")
+            self.assertIn(source_value, pages[0], "表体标识符/数字/缩写必须保持原文")
+        self.assertNotIn("Swin", pages[0], "表体普通英文词应按内容规则送译")
         for source_value in (
-            "ChangeMamba", "SECOND", "Swin", "0.91", "0.87", "YES", "NO", "33M",
+            "ChangeMamba", "SECOND", "0.91", "0.87", "YES", "NO", "33M",
         ):
-            self.assertIn(source_value, pages[1], "表体必须保持原文")
-        for source_label in ("Precision", "Recall", "F1", "AP", "mAP", "IoU", "Params", "FPS"):
-            self.assertIn(source_label, pages[2], "不确定表格应整表保留")
+            self.assertIn(source_value, pages[1], "表体标识符/数字/缩写必须保持原文")
+        self.assertNotIn("Swin", pages[1], "表体普通英文词应按内容规则送译")
+        # 表头无法可靠识别时报告；表体按内容规则处理，模型回声时保留原文。
+        # 本用例 mock 返回合成中文而非回声，因此普通英文词被翻译、标识符保持原文。
+        for source_label in ("F1", "AP", "IoU", "FPS"):
+            self.assertIn(source_label, pages[2], "不确定表的表体标识符应保持原文")
+        for translated_value in ("Precision", "Recall", "mAP", "Params"):
+            self.assertNotIn(
+                translated_value, pages[2],
+                "表头无法可靠识别时表体普通英文仍应按内容规则送译",
+            )
         self.assertNotIn("Detectionresults", pages[0], "表外题注必须翻译")
         self.assertNotIn("percentages", pages[0], "表外附注必须翻译")
         self.assertNotIn("Ablationstudy", pages[1], "表外题注必须翻译")

@@ -35,11 +35,33 @@ function makeHarness(options = {}) {
   let now = 0;
   const mainWindow = { name: "most-recent-zotero-window" };
   const progressWindowSet = { add() {} };
-  const formatValue = options.formatValue || function (key, args) {
+  const formatValueCalls = [];
+  const formatValueBase = options.formatValue || function (key, args) {
     if (key === "babeldoc-for-zotero-progress-elapsed") {
       return Promise.resolve("（已用时 " + ((args && args.elapsed) || "") + "）");
     }
+    if (key === "babeldoc-for-zotero-table-warning-entry") {
+      return Promise.resolve(
+        String((args && args.table) || "")
+        + "（第 " + String((args && args.page) || "") + " 页）"
+      );
+    }
+    if (key === "babeldoc-for-zotero-table-unnumbered") {
+      return Promise.resolve("未编号表");
+    }
+    if (key === "babeldoc-for-zotero-table-warning-separator") {
+      return Promise.resolve("，");
+    }
+    if (key === "babeldoc-for-zotero-table-header-unreliable") {
+      return Promise.resolve(
+        "（" + String((args && args.tables) || "") + "：表头未能可靠识别，表体按内容规则处理）"
+      );
+    }
     return Promise.resolve("");
+  };
+  const formatValue = (key, args) => {
+    formatValueCalls.push({ key, args });
+    return formatValueBase(key, args);
   };
   mainWindow.document = { l10n: { formatValue } };
   mainWindow.MozXULElement = { insertFTLIfNeeded() {} };
@@ -79,23 +101,32 @@ function makeHarness(options = {}) {
       ProgressWindowSet: progressWindowSet,
       ProgressWindow: function (settings = {}) {
         const notice = { descriptions: [], texts: [], shown: false };
-        const listeners = new Set();
+        const unloadListeners = new Set();
+        const loadListeners = new Set();
         notice.domWindow = {
           closed: false,
+          earlyUnloads: 0,
           addEventListener(type, listener) {
-            assert.equal(type, "unload");
-            listeners.add(listener);
+            if (type === "load") loadListeners.add(listener);
+            else if (type === "unload") unloadListeners.add(listener);
+            else assert.fail("unexpected DOM event type: " + type);
           },
           removeEventListener(type, listener) {
-            assert.equal(type, "unload");
-            listeners.delete(listener);
+            if (type === "load") loadListeners.delete(listener);
+            else if (type === "unload") unloadListeners.delete(listener);
+            else assert.fail("unexpected DOM event type: " + type);
+          },
+          dispatch(type) {
+            const active = type === "load" ? [...loadListeners] : [...unloadListeners];
+            for (const listener of active) listener({ type, target: this });
           },
           close() {
             this.closed = true;
             notice.closed = true;
-            for (const listener of [...listeners]) listener({ type: "unload", target: this });
+            this.dispatch("unload");
           },
-          get unloadListenerCount() { return listeners.size; },
+          get unloadListenerCount() { return unloadListeners.size; },
+          get loadListenerCount() { return loadListeners.size; },
         };
         if (settings.closeOnClick === false) progressWindows.push(notice);
         else notices.push(notice);
@@ -104,6 +135,11 @@ function makeHarness(options = {}) {
         this.show = () => {
           notice.shown = true;
           progressWindowSet.add(notice.domWindow, this);
+          // Zotero 异步打开进度窗口（先 about:blank，再加载 chrome 文档）：
+          // 初次文档的 unload 先于 "load" 触发，队列必须忽略这次早期 unload。
+          notice.domWindow.earlyUnloads++;
+          notice.domWindow.dispatch("unload");
+          notice.domWindow.dispatch("load");
           if (options.failProgressShow && settings.closeOnClick === false) throw new Error("show failed");
         };
         this.close = () => {
@@ -154,6 +190,7 @@ function makeHarness(options = {}) {
     alerts,
     mainWindow,
     progressWindowSet,
+    formatValueCalls,
     get activeTimers() { return timers.size; },
     async advanceTime(milliseconds) {
       const target = now + milliseconds;
@@ -179,7 +216,8 @@ function makeHarness(options = {}) {
 }
 
 async function settleLocalization() {
-  for (let i = 0; i < 8; i++) await Promise.resolve();
+  // 多层异步 Fluent 格式化（表名/分隔符/警告）需要更多微任务轮次才能落盘。
+  for (let i = 0; i < 30; i++) await Promise.resolve();
 }
 
 async function nativePopupUnloadStopsTimersAndInvalidatesLateLocalization() {
@@ -217,6 +255,49 @@ async function nativePopupUnloadStopsTimersAndInvalidatesLateLocalization() {
   await harness.queue.onIdle();
   assert.equal(harness.activeTimers, 0);
   assert.equal(harness.imports.length, 1, "closing UI must not cancel translation or import");
+}
+
+async function earlyAboutBlankUnloadDoesNotStopProgressTicking() {
+  const finish = deferred();
+  const harness = makeHarness({ runner: { translate: () => finish.promise } });
+  harness.items.set(1, { id: 1 });
+  harness.queue.enqueue([1]);
+  const window = harness.progressWindows[0];
+  assert.equal(
+    window.domWindow.earlyUnloads,
+    1,
+    "the harness must simulate the about:blank unload that precedes the popup load"
+  );
+  assert.match(window.text, /正在准备 BabelDOC/, "the initial stage text must be shown");
+  const textsAfterOpen = window.texts.length;
+  // 窗口打开后 Fluent 计时文案会异步预取，先等微任务完成再断言秒数。
+  await settleLocalization();
+
+  await harness.advanceTime(1000);
+  assert.equal(
+    harness.activeTimers,
+    1,
+    "an unload fired before the popup document loads must not stop the progress timer"
+  );
+  assert.match(window.text, /（已用时 0:01）/, "the timer must start counting after the popup opens");
+  await harness.advanceTime(1000);
+  assert.match(window.text, /（已用时 0:02）/, "the timer must keep ticking every second");
+  assert.equal(window.progress, 0, "opening the window must not invent progress");
+  assert.ok(window.texts.length >= textsAfterOpen + 2, "each tick must refresh the DOM text");
+
+  // 弹窗文档 load 之后的真实 unload 仍必须释放计时器。
+  window.domWindow.close();
+  assert.equal(harness.activeTimers, 0, "a post-load unload must stop the progress timer");
+  assert.equal(window.domWindow.unloadListenerCount, 0, "the owned unload listener must be removed");
+  assert.equal(window.domWindow.loadListenerCount, 0, "the owned load listener must be removed");
+  const textsAfterClose = window.texts.length;
+  await harness.advanceTime(3000);
+  assert.equal(window.texts.length, textsAfterClose, "a destroyed popup must not receive ticks");
+
+  finish.resolve("translated.pdf");
+  await harness.queue.onIdle();
+  assert.equal(harness.imports.length, 1, "closing the progress window must not cancel translation");
+  assert.equal(harness.activeTimers, 0);
 }
 
 async function failedShowRestoresRegistrationAndRemovesUnloadListener() {
@@ -878,29 +959,155 @@ async function degradedCompletionProgressIsMarked() {
 }
 
 async function uncertainTableWarningShowsInCompletionProgress() {
-  const harness = makeHarness({
-    runner: {
-      async translate() {
-        return {
-          outputPath: "tables.pdf",
-          warning: {
-            failed_paragraphs: 0,
-            message: "表 5（物理第 2 页）无法可靠识别表头，已整表保留原文。",
-            tables: [{ table: "表 5", page: 2, reason: "" }],
-          },
-        };
-      },
+  const runner = {
+    async translate() {
+      return {
+        outputPath: "tables.pdf",
+        warning: {
+          failed_paragraphs: 0,
+          message: "表 5（物理第 2 页）表头未能可靠识别，表体按内容规则处理。",
+          tables: [{ table: "表 5", page: 2, reason: "" }],
+        },
+      };
     },
-  });
+  };
+  const harness = makeHarness({ runner });
   harness.items.set(44, { id: 44 });
   harness.queue.enqueue([44]);
   await harness.queue.onIdle();
+  await settleLocalization();
 
   assert.ok(
     harness.progressWindows[0].texts.some(text =>
-      text.includes("（表 5（第 2 页）未能可靠识别表头，已整表保留原文）")
+      text.includes("（表 5（第 2 页）：表头未能可靠识别，表体按内容规则处理）")
     ),
-    "uncertain tables should name the table and physical page when the job completes",
+    "uncertain tables should name the table and the accurate body handling status",
+  );
+  const entryCalls = harness.formatValueCalls.filter(
+    call => call.key === "babeldoc-for-zotero-table-warning-entry"
+  );
+  assert.equal(entryCalls.length, 1, "the table label must be formatted through Fluent");
+  assert.equal(entryCalls[0].args.table, "表 5");
+  assert.equal(entryCalls[0].args.page, "2");
+  const warningCalls = harness.formatValueCalls.filter(
+    call => call.key === "babeldoc-for-zotero-table-header-unreliable"
+  );
+  assert.equal(warningCalls.length, 1, "the table warning must be formatted through Fluent");
+  // args 由 vm 上下文创建，跨 realm 对象不能用 deepEqual，这里比较字段值。
+  assert.equal(warningCalls[0].args.tables, "表 5（第 2 页）");
+
+  // 页码缺失时只显示表名；不调用页码格式化键，也不中断完成提示。
+  const noPageRunner = {
+    async translate() {
+      return {
+        outputPath: "tables.pdf",
+        warning: {
+          failed_paragraphs: 0,
+          tables: [{ table: "表 9", page: null, reason: "" }],
+        },
+      };
+    },
+  };
+  const noPageHarness = makeHarness({ runner: noPageRunner });
+  noPageHarness.items.set(46, { id: 46 });
+  noPageHarness.queue.enqueue([46]);
+  await noPageHarness.queue.onIdle();
+  await settleLocalization();
+  assert.ok(
+    noPageHarness.progressWindows[0].texts.some(text =>
+      text.includes("（表 9：表头未能可靠识别，表体按内容规则处理）")
+    ),
+    "a missing page number must fall back to the table name only",
+  );
+  assert.equal(
+    noPageHarness.formatValueCalls.filter(
+      call => call.key === "babeldoc-for-zotero-table-warning-entry"
+    ).length,
+    0,
+    "the page label must not be formatted without a page number",
+  );
+
+  // en-US 本地化：表名/页码与警告文案都不能出现中文页码格式。
+  const englishRunner = {
+    async translate() {
+      return {
+        outputPath: "tables.pdf",
+        warning: {
+          failed_paragraphs: 0,
+          tables: [
+            { table: "Table 5", page: 2, reason: "" },
+            { table: "Table 6", page: 3, reason: "" },
+            { table: "", page: 4, reason: "" },
+          ],
+        },
+      };
+    },
+  };
+  const englishHarness = makeHarness({
+    formatValue(key, args) {
+      if (key === "babeldoc-for-zotero-table-warning-entry") {
+        return Promise.resolve(String(args.table) + " (p. " + String(args.page) + ")");
+      }
+      if (key === "babeldoc-for-zotero-table-unnumbered") {
+        return Promise.resolve("Unnumbered table");
+      }
+      if (key === "babeldoc-for-zotero-table-warning-separator") {
+        return Promise.resolve(", ");
+      }
+      if (key === "babeldoc-for-zotero-table-header-unreliable") {
+        return Promise.resolve(
+          "(" + String(args.tables) + ": table headers could not be identified reliably; "
+          + "the table body is handled by content rules)"
+        );
+      }
+      return Promise.resolve("");
+    },
+    runner: englishRunner,
+  });
+  englishHarness.items.set(47, { id: 47 });
+  englishHarness.queue.enqueue([47]);
+  await englishHarness.queue.onIdle();
+  await settleLocalization();
+  const englishText = englishHarness.progressWindows[0].texts.find(text =>
+    text.includes("table headers could not be identified reliably")
+  );
+  assert.ok(englishText, "the English table warning must appear in the completion text");
+  assert.ok(
+    englishText.includes(
+      "(Table 5 (p. 2), Table 6 (p. 3), Unnumbered table (p. 4): "
+      + "table headers could not be identified reliably; "
+      + "the table body is handled by content rules)"
+    ),
+    "the English warning must use English page labels/separators and the unnumbered-table key",
+  );
+  assert.ok(!englishText.includes("第"), "English completion text must not contain Chinese page labels");
+  assert.ok(!englishText.includes("页"), "English completion text must not contain Chinese page labels");
+  assert.ok(!englishText.includes("未编号表"), "English warning must not hardcode the Chinese table label");
+
+  // 本地化失败时不得中断完成提示，仍要能定位到表名。
+  const fallbackHarness = makeHarness({
+    formatValue(key) {
+      if (
+        key === "babeldoc-for-zotero-table-warning-entry"
+        || key === "babeldoc-for-zotero-table-header-unreliable"
+      ) {
+        return Promise.reject(new Error("l10n unavailable"));
+      }
+      return Promise.resolve("");
+    },
+    runner,
+  });
+  fallbackHarness.items.set(45, { id: 45 });
+  fallbackHarness.queue.enqueue([45]);
+  await fallbackHarness.queue.onIdle();
+  await settleLocalization();
+  assert.ok(
+    fallbackHarness.progressWindows[0].texts.some(text => text.includes("（表 5 (2)）")),
+    "l10n failures must keep the table name and page number in the fallback",
+  );
+  assert.ok(
+    !fallbackHarness.logs.join("\n").includes("l10n unavailable"),
+    "localization errors must not leak into logs",
   );
 }
 
@@ -1044,6 +1251,7 @@ async function elapsedFormatComesFromFluent() {
 }
 
 (async () => {
+  await earlyAboutBlankUnloadDoesNotStopProgressTicking();
   await nativePopupUnloadStopsTimersAndInvalidatesLateLocalization();
   await elapsedFormatComesFromFluent();
   await outputModeIsPassedPerJobAndDefaultsToMono();
