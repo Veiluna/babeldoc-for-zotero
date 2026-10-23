@@ -1,6 +1,6 @@
 # 分栏双语排版规格（0.7.0）
 
-> 状态：草案，待用户审批。调研与真机验证见 [docs/research/split-bilingual-layout.md](../research/split-bilingual-layout.md)，决策记录见 [ADR 0008](../adr/0008-split-column-bilingual-layout.md)。
+> 状态：2026-10-23 用户审批定稿（含 D5–D7 默认值与拆票）。总票 #39，子票 S1–S7 = #40–#46。调研与真机验证见 [docs/research/split-bilingual-layout.md](../research/split-bilingual-layout.md)，决策记录见 [ADR 0008](../adr/0008-split-column-bilingual-layout.md)。
 
 ## 背景
 
@@ -161,7 +161,7 @@ class PagePlan:
 - Zotero 真机验收：临时配置中打开分栏双语 PDF，按 T1–T5 五条用例拖选（脚本合成事件 + 人工拖选各一次），并检查双击选词、Shift+方向键扩选、分屏视图。
 - 发布门禁沿用 CODING_STANDARDS §13.5。
 
-## 拟拆票（待审批后建 GitHub issues）
+## 拆票（已审批，#40–#46）
 
 | 票 | 内容 | 写入范围 | 依赖 | 执行 |
 | --- | --- | --- | --- | --- |
