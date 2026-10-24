@@ -298,6 +298,98 @@ def _link_paragraph_map(
     return {"version": 1, "paragraphs": paragraphs}
 
 
+def _finite_or_none(value: Any) -> float | None:
+    """把数值转为有限浮点数；非数值或 NaN/无穷返回 None。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _split_layout_pages(
+    document: Any,
+    snapshots: dict[int, dict[str, Any]],
+    preserved_ids: set[int],
+    page_offset: int = 0,
+    marginal_ids: set[int] | None = None,
+    skips: Counter[str] | None = None,
+) -> list[dict[str, Any]]:
+    """导出分栏双语合成所需的逐页版面（规格 §1）。
+
+    段落 ``box`` 取排版前快照中的原文框，栏识别因此依据原始版式；
+    ``output_box`` 是单语译文中的排版框，用于扩展跨栏裁框。
+    此处坐标是 BabelDOC IL 页面坐标（左上原点、单位 pt）。BabelDOC 解析前会把
+    MediaBox 归零并清除 CropBox，写出时再恢复，因此在合成前还要用
+    ``_normalize_split_layout_geometry`` 按原 PDF 的页面几何换算；为此每页额外
+    导出 ``il_top``（IL MediaBox 上边界 y2）。
+
+    ``marginal`` 标记页眉、页脚、页码和版权戳（重复边缘行或戳记规则）；
+    ``author`` 标记文档首页的作者信息块，规划时同一行带的作者块整体跨栏。
+    跳过的元素按原因计入 ``skips``（缺少快照、无效版面框、页面尺寸无效），
+    由调用方写入结构化日志，不静默部分完成。
+    """
+    marginal_ids = marginal_ids or set()
+    skips = skips if skips is not None else Counter()
+    pages: list[dict[str, Any]] = []
+    for page_index, page in enumerate(getattr(document, "page", ()) or ()):
+        width = height = il_top = 0.0
+        try:
+            crop = page.cropbox.box
+            values = [_finite_or_none(v) for v in (crop.x, crop.y, crop.x2, crop.y2)]
+            media_top = _finite_or_none(page.mediabox.box.y2)
+        except AttributeError:
+            values, media_top = [None], None
+        if all(v is not None for v in values) and media_top is not None:
+            width = values[2] - values[0]
+            height = values[3] - values[1]
+            il_top = media_top
+        else:
+            skips["invalid_page_geometry"] += 1
+        paragraphs = []
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            snapshot = snapshots.get(id(paragraph))
+            if snapshot is None:
+                skips["missing_snapshot"] += 1
+                continue
+            output_box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if output_box is None:
+                # 译文框无效时只影响跨栏扩框，段落本身仍按原文框规划。
+                skips["invalid_output_box"] += 1
+            paragraphs.append({
+                "box": snapshot["source_box"],
+                "output_box": output_box,
+                "label": _paragraph_layout_label(paragraph),
+                "translated": id(paragraph) not in preserved_ids,
+                "marginal": id(paragraph) in marginal_ids
+                or _paragraph_is_marginal_or_stamp(paragraph, page),
+                "author": _is_first_page_author_block(
+                    paragraph, page_index + page_offset
+                ),
+            })
+        layouts = []
+        for layout in getattr(page, "page_layout", ()) or ():
+            box = _il_box_to_text_box(getattr(layout, "box", None), page)
+            if box is None:
+                skips["invalid_layout_box"] += 1
+                continue
+            layouts.append({
+                "box": box,
+                "class": str(getattr(layout, "class_name", "") or ""),
+            })
+        pages.append({
+            "index": page_index + page_offset,
+            "width": round(width, 3),
+            "height": round(height, 3),
+            "il_top": round(il_top, 3),
+            # IL 页面没有旋转信息；合成前由原 PDF 补上真实旋转角度。
+            "rotation": 0,
+            "paragraphs": paragraphs,
+            "layouts": layouts,
+        })
+    return pages
+
+
 class RequestCapExceeded(RuntimeError):
     """Raised before issuing a completion request beyond the configured cap."""
 
@@ -4012,6 +4104,18 @@ def _install_min_request_patches(
             "link_paragraph_map", {"version": 1, "paragraphs": []}
         )
         combined["paragraphs"].extend(link_map["paragraphs"])
+        if _split_dual_requested():
+            split_layout = request_state.setdefault(
+                "split_layout", {"version": 1, "pages": []}
+            )
+            split_layout["pages"].extend(_split_layout_pages(
+                document,
+                link_snapshots,
+                set(request_state.get("preserved_paragraph_ids") or ()),
+                page_offset,
+                set(request_state.get("repeated_marginal_ids") or ()),
+                request_state.setdefault("split_layout_skips", Counter()),
+            ))
         request_state["link_page_offset"] = page_offset + len(
             getattr(document, "page", ()) or ()
         )
@@ -5510,6 +5614,8 @@ def _install_min_request_patches(
             )
 
             repeated_marginal_ids = collect_repeated_marginal_ids(docs)
+            # 分栏双语规划需要区分页眉页脚类保留段落与作者块等其他保留段落。
+            request_state["repeated_marginal_ids"] = set(repeated_marginal_ids)
             page_positions: dict[int, tuple[int, int]] = {}
             for page_index, page in enumerate(docs.page):
                 for paragraph_index, paragraph in enumerate(page.pdf_paragraph):
@@ -6042,6 +6148,219 @@ def _restore_dual_links_after_layout(
     return stats
 
 
+SPLIT_DUAL_ENV = "ZTF_SPLIT_DUAL"
+
+
+def _split_dual_setting() -> tuple[bool, bool]:
+    """读取 ZTF_SPLIT_DUAL：返回 (是否请求分栏双语, 取值是否合法)。
+
+    插件在双语模式下传 ZTF_SPLIT_DUAL=1，此时 BabelDOC 只生成单语 PDF，
+    分栏双语 PDF 由 runner 用原文与单语译文合成。
+    """
+    try:
+        return _read_boolean_setting(SPLIT_DUAL_ENV, False), True
+    except ValueError:
+        return False, False
+
+
+def _split_dual_requested() -> bool:
+    """插件是否请求分栏双语；非法取值视为未请求（由调用方记录日志）。"""
+    return _split_dual_setting()[0]
+
+
+def _split_dual_output_path(mono_pdf: str) -> str:
+    """单语产物 ``*.zh.mono.pdf`` 对应的分栏双语产物路径 ``*.zh.dual.pdf``。"""
+    lowered = mono_pdf.lower()
+    if lowered.endswith(".zh.mono.pdf"):
+        return mono_pdf[: -len(".zh.mono.pdf")] + ".zh.dual.pdf"
+    return os.path.splitext(mono_pdf)[0] + ".zh.dual.pdf"
+
+
+def _normalize_split_layout_geometry(
+    layout: dict[str, Any], source_pdf: str
+) -> tuple[dict[str, Any], Counter[str]]:
+    """把 IL 坐标换算到原 PDF 最终页面坐标（PyMuPDF 页面坐标，CropBox 相对、左上原点）。
+
+    BabelDOC 解析前把 MediaBox 归零、清除 CropBox，写出时恢复原值；IL 中的框是
+    原 PDF 用户空间坐标（内容流不变）。这里先用 ``il_top`` 还原为用户空间，再用原页
+    ``transformation_matrix`` 换算，页面尺寸取原页 ``rect``，旋转取原页 ``rotation``。
+    返回新版面与计数（换算页数、缺少原页或几何无效而保持原值的页数、被丢弃的非有限框数）。
+    """
+    import pymupdf  # BabelDOC 环境自带；仅在合成分栏双语时需要
+
+    counts: Counter[str] = Counter()
+    normalized = {"version": layout.get("version", 1), "pages": []}
+    document = pymupdf.open(source_pdf)
+    try:
+        for page_entry in layout.get("pages", []):
+            entry = dict(page_entry)
+            index = int(entry.get("index", -1))
+            top = _finite_or_none(entry.get("il_top"))
+            if index < 0 or index >= document.page_count or top is None or top <= 0:
+                counts["pages_unchanged"] += 1
+                normalized["pages"].append(entry)
+                continue
+            page = document[index]
+            matrix = page.transformation_matrix
+
+            def convert(box: Any) -> list[float] | None:
+                if not box or len(box) != 4:
+                    counts["malformed_boxes"] += 1
+                    return None
+                values = [_finite_or_none(v) for v in box]
+                if any(v is None for v in values):
+                    counts["nonfinite_boxes"] += 1
+                    return None
+                x0, y0, x1, y1 = values
+                user = pymupdf.Rect(x0, top - y1, x1, top - y0)
+                rect = user * matrix
+                rect.normalize()
+                return [round(rect.x0, 3), round(rect.y0, 3),
+                        round(rect.x1, 3), round(rect.y1, 3)]
+
+            paragraphs = []
+            for paragraph in entry.get("paragraphs", []):
+                item = dict(paragraph)
+                box = convert(item.get("box"))
+                if box is None:
+                    counts["dropped_paragraphs"] += 1
+                    continue
+                item["box"] = box
+                if item.get("output_box") is not None:
+                    item["output_box"] = convert(item["output_box"])
+                    if item["output_box"] is None:
+                        counts["dropped_output_boxes"] += 1
+                paragraphs.append(item)
+            layouts = []
+            for layout_item in entry.get("layouts", []):
+                item = dict(layout_item)
+                box = convert(item.get("box"))
+                if box is None:
+                    counts["dropped_layouts"] += 1
+                    continue
+                item["box"] = box
+                layouts.append(item)
+            entry.update({
+                "width": round(page.rect.width, 3),
+                "height": round(page.rect.height, 3),
+                "rotation": int(page.rotation or 0),
+                "paragraphs": paragraphs,
+                "layouts": layouts,
+            })
+            if entry["rotation"]:
+                counts["rotated_pages"] += 1
+            counts["pages_normalized"] += 1
+            normalized["pages"].append(entry)
+    finally:
+        document.close()
+    return normalized, counts
+
+
+def _compose_split_dual(
+    state: dict[str, Any], request_state: dict[str, Any], api_key: str
+) -> dict[str, Any] | None:
+    """在单语链接恢复之后合成分栏双语 PDF。
+
+    必须在 ``_restore_links_after_layout`` 之后调用，中文侧才带有已恢复的链接。
+    任何失败都写结构化日志（脱敏）并保持 ``dual_result`` 为空，插件据此降级导入单语 PDF。
+    """
+    requested, valid = _split_dual_setting()
+    if not valid:
+        _write_job_log(
+            request_state,
+            {"event": "split_dual", "skipped": "invalid_setting", "count": 1},
+            api_key,
+        )
+    if not requested:
+        return None
+    mono_pdf = str(state.get("result") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    layout = request_state.get("split_layout")
+    page_count = len((layout or {}).get("pages") or ())
+    skips = request_state.get("split_layout_skips") or Counter()
+    if skips:
+        _write_job_log(
+            request_state,
+            {"event": "split_layout_export_skips", **dict(skips)},
+            api_key,
+        )
+    if not mono_pdf or not os.path.isfile(mono_pdf) or not source_pdf:
+        _write_job_log(
+            request_state,
+            {"event": "split_dual", "skipped": "missing_path", "pages": page_count},
+            api_key,
+        )
+        return {"error": "missing_path"}
+    if not page_count:
+        _write_job_log(
+            request_state,
+            {"event": "split_dual", "skipped": "missing_layout", "pages": 0},
+            api_key,
+        )
+        return {"error": "missing_layout"}
+    output_pdf = _split_dual_output_path(mono_pdf)
+    try:
+        layout, geometry_counts = _normalize_split_layout_geometry(layout, source_pdf)
+        _write_job_log(
+            request_state,
+            {"event": "split_layout_geometry", **dict(geometry_counts)},
+            api_key,
+        )
+        with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
+            json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
+        plan_helper = _load_helper("ztf_split_plan")
+        compose_helper = _load_helper("ztf_split_compose")
+        plans = [plan_helper.plan_page(page) for page in layout["pages"]]
+        stats = compose_helper.compose_split_document(
+            source_pdf, mono_pdf, plans, output_pdf
+        )
+    except Exception as error:  # noqa: BLE001 - 失败时回退为导入单语 PDF
+        summary = {"error": log_safe_error(error, api_key)}
+        _write_job_log(
+            request_state,
+            {"event": "split_dual_error", "error": summary["error"],
+             "pages": page_count},
+            api_key,
+        )
+        try:
+            if os.path.exists(output_pdf):
+                os.remove(output_pdf)
+        except OSError as cleanup_error:
+            _write_job_log(
+                request_state,
+                {"event": "split_dual_cleanup_error",
+                 "error": log_safe_error(cleanup_error, api_key), "count": 1},
+                api_key,
+            )
+        return summary
+    if not os.path.isfile(output_pdf) or os.path.getsize(output_pdf) <= 0:
+        _write_job_log(
+            request_state,
+            {"event": "split_dual_error", "error": "empty_output", "pages": page_count},
+            api_key,
+        )
+        return {"error": "empty_output"}
+    state["dual_result"] = output_pdf
+    summary = dict(stats or {})
+    summary["pages"] = len(plans)
+    summary["fallback_pages"] = sum(1 for plan in plans if plan.columns == 0)
+    _write_job_log(request_state, {"event": "split_dual", **summary}, api_key)
+    return summary
+
+
+def _dual_after_layout(
+    state: dict[str, Any],
+    request_state: dict[str, Any],
+    link_stats: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any] | None:
+    """生成双语产物：插件请求分栏双语时合成，否则沿用旧的整页并排双语链接恢复。"""
+    requested, valid = _split_dual_setting()
+    if requested or not valid:
+        return _compose_split_dual(state, request_state, api_key)
+    return _restore_dual_links_after_layout(state, request_state, link_stats, api_key)
+
+
 def _link_warning_message(stats: dict[str, Any]) -> str:
     if stats.get("error"):
         return "译文链接恢复失败：" + str(stats["error"]) + "；已记录诊断信息。"
@@ -6269,7 +6588,7 @@ def _finish_degraded_output(
     try:
         link_stats = _restore_links_after_layout(state, request_state, api_key)
         request_state["link_stats"] = link_stats
-        dual_link_stats = _restore_dual_links_after_layout(
+        dual_link_stats = _dual_after_layout(
             state, request_state, link_stats, api_key
         )
     except Exception as error:  # noqa: BLE001 - links are best effort in degraded mode
@@ -6800,7 +7119,7 @@ def main() -> int:
 
     link_stats = _restore_links_after_layout(state, request_state, api_key)
     request_state["link_stats"] = link_stats
-    dual_link_stats = _restore_dual_links_after_layout(
+    dual_link_stats = _dual_after_layout(
         state, request_state, link_stats, api_key
     )
     warning_messages = []

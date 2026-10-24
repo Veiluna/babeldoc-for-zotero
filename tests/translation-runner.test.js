@@ -91,7 +91,8 @@ function makeHarness(options = {}) {
       const outputPath = outputDirectory + "\\paper.zh.mono.pdf";
       if (options.outputSize !== 0) files.set(outputPath, { exists: true, isFile: true, fileSize: 800 });
       const dualPath = outputDirectory + "\\paper.zh.dual.pdf";
-      const wantsDual = !callOptions.arguments.includes("--no-dual");
+      // 模拟 runner：ZTF_SPLIT_DUAL=1 时合成分栏双语 PDF（BabelDOC 本身只出单语）。
+      const wantsDual = (callOptions.environment || {}).ZTF_SPLIT_DUAL === "1";
       if (wantsDual && !options.omitDualOutput) {
         files.set(dualPath, { exists: true, isFile: true, fileSize: 900 });
       }
@@ -454,12 +455,15 @@ async function supportsBilingualOutputs() {
     const harness = makeHarness();
     const result = await harness.runner.translate(harness.item, { outputMode: mode });
     const args = harness.calls[0].arguments;
+    const environment = harness.calls[0].environment;
+    // BabelDOC 两种模式都只出单语；分栏双语由 runner 按 ZTF_SPLIT_DUAL 合成。
+    assert.ok(args.includes("--no-dual"), "BabelDOC never writes its own dual PDF");
     if (mode === "mono") {
-      assert.ok(args.includes("--no-dual"), "mono keeps a single output");
+      assert.equal(environment.ZTF_SPLIT_DUAL, "0", "mono does not compose a split PDF");
       assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "mono");
       assert.match(result.outputPath, /\.zh\.mono\.pdf$/);
     } else {
-      assert.ok(!args.includes("--no-dual"), "dual requests the dual PDF");
+      assert.equal(environment.ZTF_SPLIT_DUAL, "1", "dual asks the runner for the split PDF");
       assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "dual");
       assert.match(result.outputPath, /\.zh\.dual\.pdf$/);
     }
@@ -477,7 +481,7 @@ async function fallsBackToAvailableOutputMode() {
   assert.equal(dualResult.outputPaths.map(entry => entry.kind).join(","), "mono");
   assert.match(dualResult.outputPath, /\.zh\.mono\.pdf$/);
   assert.equal(dualResult.warning.degraded, true);
-  assert.ok(dualResult.warning.message.includes("降级"));
+  assert.ok(dualResult.warning.message.includes("未能生成分栏双语 PDF，已导入单语中文译本"));
   await dualResult.cleanup();
 
   // 两种模式都没有有效 PDF 时仍然失败。

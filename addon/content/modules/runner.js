@@ -205,6 +205,9 @@ var ZoteroTranslateFilesRunner = (function () {
         // 0.6.0 后处理模块：runner 按路径加载，必须与 runner 一起复制到数据目录。
         ["ztf_figure_text.py", "图内文字恢复辅助模块"],
         ["ztf_punctuation_cleanup.py", "重复标点清理辅助模块"],
+        // 0.7.0 分栏双语：规划与合成模块，runner 在双语模式下按路径加载。
+        ["ztf_split_plan.py", "分栏规划辅助模块"],
+        ["ztf_split_compose.py", "分栏合成辅助模块"],
         // 0.7.0 表格翻译封存：4 个表格 helper 已移入 content/python/archive/，
         // 既不再复制也不被子 runner 加载。
       ];
@@ -246,8 +249,9 @@ var ZoteroTranslateFilesRunner = (function () {
         "--report-interval", "0.5",
       ];
 
-      // mono: no dual PDF; dual: BabelDOC writes the side-by-side dual.
-      if (outputMode === "mono") args.push("--no-dual");
+      // BabelDOC 只生成单语中文 PDF；双语模式下由 runner 用原文与单语译文
+      // 合成分栏双语 PDF（ZTF_SPLIT_DUAL=1，见 docs/specs/split-bilingual-layout.md）。
+      args.push("--no-dual");
 
       // The API key is supplied only through the child environment, never the OS command line.
       if (args.some(function (argument) { return argument === apiKey; })) {
@@ -260,6 +264,7 @@ var ZoteroTranslateFilesRunner = (function () {
         environment: {
           ZTF_OPENAI_API_KEY: apiKey,
           ZTF_TRANSLATE_REFERENCES: settings.translateReferences ? "1" : "0",
+          ZTF_SPLIT_DUAL: outputMode === "dual" ? "1" : "0",
           ZTF_TOKEN_PARAM: settings.tokenParam || "max_tokens",
           ZTF_JOB_LOG_PATH: logPath,
           PYTHONUTF8: "1",
@@ -468,7 +473,7 @@ var ZoteroTranslateFilesRunner = (function () {
           artifacts = [{ kind: "mono", path: resultPath }];
           warning = withDegradedWarning(
             warning,
-            "未生成有效的双语对照 PDF，已自动降级导出单语中文译本。",
+            "未能生成分栏双语 PDF，已导入单语中文译本。",
           );
         } else {
           throw new Error(formatFailure(
