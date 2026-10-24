@@ -15,6 +15,7 @@ babeldoc-for-zotero-pref-section-environment = 翻译环境
 babeldoc-for-zotero-pref-translate-references = 翻译参考文献
 babeldoc-for-zotero-log-path = 诊断日志：{ $path }
 babeldoc-for-zotero-progress-elapsed = （已用时 { $elapsed }）
+babeldoc-for-zotero-split-dual-fallback = 未能生成分栏双语 PDF，已导入单语中文译本。
 babeldoc-for-zotero-table-unnumbered = 未编号表
 babeldoc-for-zotero-table-warning-entry = { $table }（第 { $page } 页）
 babeldoc-for-zotero-table-warning-separator = ，

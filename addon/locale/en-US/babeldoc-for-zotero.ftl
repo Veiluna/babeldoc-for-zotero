@@ -15,6 +15,7 @@ babeldoc-for-zotero-pref-section-environment = Translation environment
 babeldoc-for-zotero-pref-translate-references = Translate references
 babeldoc-for-zotero-log-path = Diagnostic log: { $path }
 babeldoc-for-zotero-progress-elapsed = (elapsed { $elapsed })
+babeldoc-for-zotero-split-dual-fallback = Could not generate the split-column bilingual PDF; the monolingual Chinese translation has been imported.
 babeldoc-for-zotero-table-unnumbered = Unnumbered table
 babeldoc-for-zotero-table-warning-entry = { $table } (p. { $page })
 babeldoc-for-zotero-table-warning-separator = ,{" "}

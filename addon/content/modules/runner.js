@@ -453,7 +453,7 @@ var ZoteroTranslateFilesRunner = (function () {
       // 就降级导入已有产物并警告，而不是丢掉整篇结果。
       function withDegradedWarning(currentWarning, message) {
         var base = currentWarning || { failed_paragraphs: 0, message: "", tables: [] };
-        var mergedMessage = base.message ? base.message + "；" + message : message;
+        var mergedMessage = base.message && message ? base.message + "；" + message : base.message || message;
         return {
           failed_paragraphs: base.failed_paragraphs,
           translated_paragraphs: base.translated_paragraphs || 0,
@@ -473,8 +473,9 @@ var ZoteroTranslateFilesRunner = (function () {
           artifacts = [{ kind: "mono", path: resultPath }];
           warning = withDegradedWarning(
             warning,
-            "未能生成分栏双语 PDF，已导入单语中文译本。",
+            "",
           );
+          warning.messageID = "babeldoc-for-zotero-split-dual-fallback";
         } else {
           throw new Error(formatFailure(
             exitCode,

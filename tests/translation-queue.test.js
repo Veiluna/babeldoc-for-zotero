@@ -90,6 +90,7 @@ function makeHarness(options = {}) {
     clearTimeout: id => timers.delete(id),
     Date: class extends Date { static now() { return now; } },
     Zotero: {
+      locale: options.locale || "zh-CN",
       Prefs: {
         get(name) {
           const prefix = "extensions.babeldoc-for-zotero.";
@@ -958,6 +959,113 @@ async function degradedCompletionProgressIsMarked() {
   );
 }
 
+async function splitDualFallbackIsLocalizedInCompletion() {
+  const messageID = "babeldoc-for-zotero-split-dual-fallback";
+  const label = deferred();
+  const harness = makeHarness({
+    formatValue(key) {
+      if (key === "babeldoc-for-zotero-table-header-unreliable") {
+        return Promise.resolve("MOCK table warning");
+      }
+      return key === messageID ? label.promise : Promise.resolve("");
+    },
+    runner: {
+      async translate() {
+        return {
+          outputPaths: [{ kind: "mono", path: "fallback.zh.pdf" }],
+          warning: {
+            degraded: true, failed_paragraphs: 2, messageID,
+            tables: [{ table: "Table 4", page: 3 }],
+          },
+          requestCount: 3,
+          logPath: "C:\\logs\\split.jsonl",
+        };
+      },
+    },
+  });
+  harness.items.set(47, { id: 47 });
+  harness.queue.enqueue([47], "dual");
+  await harness.queue.onIdle();
+  assert.equal(harness.imports[0][1], "fallback.zh.pdf");
+  assert.equal(harness.formatValueCalls.filter(call => call.key === messageID).length, 1,
+    "完成提示通过 Fluent 解析分栏合成降级原因");
+  const window = harness.progressWindows[0];
+  label.resolve("MOCK split PDF fallback");
+  await settleLocalization();
+  assert.ok(window.text.includes("\nMOCK split PDF fallback\n"),
+    "异步本地化提示与已有的完成信息共同显示");
+  assert.ok(window.text.includes("2 段"));
+  assert.ok(window.text.includes("3 次"));
+  assert.ok(window.text.includes("C:\\logs\\split.jsonl"));
+  assert.ok(window.text.includes("MOCK table warning"), "后到的降级提示不覆盖表格提示");
+  assert.ok(!harness.logs.some(line => line.includes('"event":"localization_failed"')),
+    "Fluent 成功时不记录本地化失败诊断");
+  assert.equal(harness.failures.length, 0);
+  assert.equal(harness.activeTimers, 0);
+}
+
+async function splitDualLocalizationFailureKeepsQueueRunning() {
+  const messageID = "babeldoc-for-zotero-split-dual-fallback";
+  for (const [locale, fallback] of [
+    ["zh-CN", "未能生成分栏双语 PDF，已导入单语中文译本。"],
+    ["en-US", "Could not generate the split-column bilingual PDF; the monolingual Chinese translation has been imported."],
+  ]) {
+    for (const value of [new Error("mock l10n failure"), "", null, undefined, "   ", messageID]) {
+      const harness = makeHarness({
+        locale,
+        formatValue(key) {
+          if (key !== messageID) return Promise.resolve("");
+          if (value instanceof Error) return Promise.reject(value);
+          return Promise.resolve(value);
+        },
+        runner: {
+          async translate() {
+            return { outputPath: "fallback.zh.pdf", warning: { degraded: true, messageID } };
+          },
+        },
+      });
+      harness.items.set(48, { id: 48 });
+      harness.items.set(49, { id: 49 });
+      harness.queue.enqueue([48, 49], "dual");
+      await harness.queue.onIdle();
+      await settleLocalization();
+      assert.equal(harness.imports.length, 2, "本地化失败不阻断导入或后续任务");
+      assert.equal(harness.failures.length, 0);
+      for (const window of harness.progressWindows) {
+        assert.ok(window.text.endsWith("\n" + fallback), `${locale} 兜底提示说明分栏双语生成失败且单语译本已导入`);
+        assert.ok(!window.text.includes(messageID), "兜底提示不得显示内部键名");
+      }
+      const prefix = "BabelDOC for Zotero: ";
+      const localizationLogs = harness.logs
+        .filter(line => line.includes('"event":"localization_failed"'))
+        .map(line => {
+          assert.ok(line.startsWith(prefix), "诊断使用统一调试前缀");
+          assert.doesNotMatch(line, /[\r\n]/, "诊断为单行 JSON");
+          return JSON.parse(line.slice(prefix.length));
+        });
+      assert.equal(localizationLogs.length, 2, "每个任务的本地化失败都记录结构化日志");
+      for (const event of localizationLogs) {
+        assert.equal(event.event, "localization_failed");
+        assert.equal(event.messageID, messageID);
+        assert.equal(event.reason, "empty_or_unavailable");
+        assert.equal(event.count, 1);
+      }
+      assert.ok(!harness.logs.join("\n").includes("mock l10n failure"), "不记录原始本地化异常文本");
+      assert.equal(harness.activeTimers, 0);
+    }
+  }
+}
+
+function splitDualFallbackHasBothLocales() {
+  for (const locale of ["zh-CN", "en-US"]) {
+    const resource = fs.readFileSync(
+      path.join(__dirname, `../addon/locale/${locale}/babeldoc-for-zotero.ftl`), "utf8",
+    );
+    assert.match(resource, /^babeldoc-for-zotero-split-dual-fallback = \S.+$/m,
+      `${locale} 提供分栏合成降级提示`);
+  }
+}
+
 async function uncertainTableWarningShowsInCompletionProgress() {
   const runner = {
     async translate() {
@@ -1273,6 +1381,9 @@ async function elapsedFormatComesFromFluent() {
   await cleanupFollowsImportAndProgressShowsQueuePosition();
   await partialFailureWarningShowsInCompletionProgress();
   await degradedCompletionProgressIsMarked();
+  await splitDualFallbackIsLocalizedInCompletion();
+  await splitDualLocalizationFailureKeepsQueueRunning();
+  splitDualFallbackHasBothLocales();
   await uncertainTableWarningShowsInCompletionProgress();
   await cleanupRunsWhenImportFails();
   await maintenanceLockRefusesActiveWorkAndPausesNewJobs();

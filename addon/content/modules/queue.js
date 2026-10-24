@@ -1,6 +1,8 @@
 /* global Zotero, Services, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
 
 var ZoteroTranslateFilesQueue = (function () {
+  const SPLIT_DUAL_FALLBACK_ZH = "未能生成分栏双语 PDF，已导入单语中文译本。";
+  const SPLIT_DUAL_FALLBACK_EN = "Could not generate the split-column bilingual PDF; the monolingual Chinese translation has been imported.";
   var pending = [];
   var queuedIDs = new Set();
   var runner = ZoteroTranslateFilesRunner;
@@ -603,21 +605,41 @@ var ZoteroTranslateFilesQueue = (function () {
         if (Number.isFinite(totalRequests)) {
           completionText += "（共请求 " + Math.floor(totalRequests) + " 次）";
         }
-        // 表头不可靠提示与日志路径都需要异步本地化；两块都就绪后统一写回，
+        // 降级原因、表头不可靠提示与日志路径都需要异步本地化；统一写回，
         // 避免后到的异步结果覆盖先到的内容。
         var tableWarningText = "";
+        var degradedWarningText = "";
         var logPathText = "";
         var applyCompletionText = function () {
           if (!entry.window || entry.window.closed || !entry.itemProgress) return;
           try {
             entry.itemProgress.setText(
-              completionText + tableWarningText + (logPathText ? "\n" + logPathText : "")
+              completionText + tableWarningText
+                + (degradedWarningText ? "\n" + degradedWarningText : "")
+                + (logPathText ? "\n" + logPathText : "")
             );
           } catch (error) {
             // 完成提示刷新失败不得影响导入与队列清理。
           }
         };
         entry.itemProgress.setText(completionText);
+        if (warning && warning.messageID) {
+          formatFluentValue(warning.messageID).then(function (text) {
+            if (text.trim() && text !== warning.messageID) {
+              degradedWarningText = text;
+            } else {
+              degradedWarningText = String(Zotero.locale || "").startsWith("zh")
+                ? SPLIT_DUAL_FALLBACK_ZH : SPLIT_DUAL_FALLBACK_EN;
+              if (typeof Zotero.debug === "function") Zotero.debug("BabelDOC for Zotero: " + JSON.stringify({
+                event: "localization_failed",
+                messageID: warning.messageID,
+                reason: "empty_or_unavailable",
+                count: 1,
+              }));
+            }
+            applyCompletionText();
+          });
+        }
         if (warningTables.length) {
           formatTableWarning(warningTables).then(function (text) {
             tableWarningText = text;

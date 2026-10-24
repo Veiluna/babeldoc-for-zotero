@@ -481,8 +481,27 @@ async function fallsBackToAvailableOutputMode() {
   assert.equal(dualResult.outputPaths.map(entry => entry.kind).join(","), "mono");
   assert.match(dualResult.outputPath, /\.zh\.mono\.pdf$/);
   assert.equal(dualResult.warning.degraded, true);
-  assert.ok(dualResult.warning.message.includes("未能生成分栏双语 PDF，已导入单语中文译本"));
+  assert.equal(dualResult.warning.messageID, "babeldoc-for-zotero-split-dual-fallback");
   await dualResult.cleanup();
+
+  // 合成降级文案改走 Fluent，已有段落失败信息与表格定位仍原样保留。
+  const partialHarness = makeHarness({
+    omitDualOutput: true,
+    warning: {
+      failed_paragraphs: 2,
+      translated_paragraphs: 12,
+      message: "MOCK preserved warning",
+      tables: [{ table: "Table 4", page: 3, reason: "mock" }],
+    },
+  });
+  const partialResult = await partialHarness.runner.translate(partialHarness.item, { outputMode: "dual" });
+  assert.equal(partialResult.warning.messageID, "babeldoc-for-zotero-split-dual-fallback");
+  assert.equal(partialResult.warning.message, "MOCK preserved warning");
+  assert.equal(partialResult.warning.failed_paragraphs, 2);
+  assert.equal(partialResult.warning.translated_paragraphs, 12);
+  assert.equal(partialResult.warning.tables[0].table, "Table 4");
+  assert.equal(partialResult.warning.tables[0].page, 3);
+  await partialResult.cleanup();
 
   // 两种模式都没有有效 PDF 时仍然失败。
   const missingHarness = makeHarness({ omitDualOutput: true, outputSize: 0 });
