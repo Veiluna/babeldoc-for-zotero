@@ -38,6 +38,7 @@ async function startup({ id, version, rootURI }) {
     Services.scriptloader.loadSubScript(rootURI + "content/modules/runner.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/queue.js");
     Services.scriptloader.loadSubScript(rootURI + "content/modules/menu.js");
+    Services.scriptloader.loadSubScript(rootURI + "content/modules/readerSelection.js");
     Services.scriptloader.loadSubScript(rootURI + "content/main.js");
     ZoteroTranslateFiles.init(addonData);
 
