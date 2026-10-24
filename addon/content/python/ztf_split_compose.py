@@ -464,9 +464,371 @@ def _validate_inputs(source, mono, plans):
                     raise ValueError("invalid_span_position")
 
 
+def _navigation_values(value, size):
+    """第三方坐标先检查有限性，再交给 Point / Rect 做运算。"""
+    try:
+        values = tuple(value)
+        return len(values) == size and all(math.isfinite(v) for v in values)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _navigation_index(placements):
+    """按输入文档、源页建立放置索引；hf 只属于原文，span 只属于译文。"""
+    index = {}
+    for placement in placements:
+        index.setdefault((placement.input, placement.src), []).append(placement)
+    return index
+
+
+def _navigation_target(index, source_index, point, side):
+    """返回 (输出页、点、回退原因)；无对应页时返回 (None, None, 原因)。
+
+    point 是相应输入文档的未旋转坐标；英文不借用中文跨栏映射。
+    页眉页脚或空白落点以最近同侧区域选择 A/B，跳到该侧的页顶。
+    """
+    items = index.get(("source" if side == "en" else "mono", source_index), [])
+    body = [p for p in items if p.k in {side, "span"}]
+    if not body:
+        return None, None, "target_page_missing"
+    valid = _navigation_values(point, 2)
+    header = valid and any(p.source_box[1] <= point[1] <= p.source_box[3]
+                           for p in index.get(("source", source_index), []) if p.k == "hf")
+    if valid:
+        point = fitz.Point(point)
+        if not header:
+            # 扩框可能覆盖邻区空白；中文跨栏优先于普通栏。
+            hit = next((p for p in sorted(body, key=lambda p: p.k != "span")
+                        if fitz.Rect(p.source_box).contains(point)), None)
+            if hit is not None:
+                return hit.out, point * fitz.Matrix(hit.matrix), ""
+
+        def distance(p):
+            x0, y0, x1, y1 = p.source_box
+            return max(x0 - point.x, 0, point.x - x1) ** 2 + max(y0 - point.y, 0, point.y - y1) ** 2
+
+        # hf 在 A、B 重复，选择目标 x 所在的正文栏，不固定跳 A。
+        candidates = [p for p in body if p.k == side] if header else body
+        chosen = min(candidates or body, key=lambda p: (distance(p), p.out))
+    else:
+        chosen = min(body, key=lambda p: p.out)
+    # span 仅参与选择目标页；它的左边缘不代表任何语言侧的页顶。
+    same_side = [p for p in items if p.out == chosen.out and p.k == side]
+    if not same_side:
+        # 整页跨栏没有正文侧时，落到跨栏元素本身，而非伪造语言侧页顶。
+        return chosen.out, fitz.Point(chosen.output_box[:2]), "target_unmapped"
+    return chosen.out, fitz.Point(min(p.output_box[0] for p in same_side), 0), (
+        "target_header_footer" if header else "target_unmapped")
+
+
+def _navigation_zoom(zoom):
+    """无效缩放回退为 0，原因固定且独立于目标位置回退。"""
+    try:
+        if isinstance(zoom, (int, float)) and math.isfinite(zoom):
+            return zoom, ""
+    except OverflowError:
+        pass
+    return 0, "invalid_zoom"
+
+
+def _navigation_destination(document, link, index, side):
+    """返回目标、位置回退原因、缩放回退原因；两种回退分别计数。"""
+    kind = link.get("kind")
+    if kind == fitz.LINK_URI:
+        uri = link.get("uri")
+        return ({"kind": kind, "uri": uri}, "", "") if uri else (None, "empty_uri", "")
+    if kind not in {fitz.LINK_GOTO, fitz.LINK_NAMED}:
+        return None, "unsupported_link_kind", ""
+    page, point = link.get("page", -1), link.get("to")
+    name = link.get("nameddest") or (point if isinstance(point, str) else None)
+    if name:
+        # resolve_link 与 get_links 一样返回可视坐标。
+        page, x, y = document.resolve_link("#nameddest=" + name)
+        point = (x, y)
+    if type(page) is not int or not 0 <= page < len(document):
+        return None, "target_page_missing", ""
+    if _navigation_values(point, 2):
+        point = fitz.Point(point) * document[page].derotation_matrix
+    target_page, target_point, reason = _navigation_target(index, page, point, side)
+    if target_page is None:
+        return None, reason, ""
+    zoom, zoom_reason = _navigation_zoom(link.get("zoom", 0))
+    return {"kind": fitz.LINK_GOTO, "page": target_page, "to": target_point, "zoom": zoom}, reason, zoom_reason
+
+
+def _insert_navigation_link(output, page_index, link):
+    """用公开接口插入；URI 单独编码，避免 1.28.2 直接拼接括号造成改值。"""
+    page = output[page_index]
+    if link["kind"] != fitz.LINK_URI:
+        page.insert_link(link)
+        return
+    before = {xref for xref, _, _ in page.annot_xrefs()}
+    page.insert_link({**link, "uri": "https://example.invalid/"})
+    added = [xref for xref, _, _ in page.annot_xrefs() if xref not in before]
+    if len(added) != 1:
+        raise ValueError("link_insertion_failed")
+    output.xref_set_key(added[0], "A/URI", fitz.get_pdf_str(link["uri"]))
+
+
+def _rebuild_split_links(source, mono, output, index):
+    """返回输入链接数、写入注释数、完全未写入的输入链接数、页顶回退数。
+
+    输入数包含 source、mono 两份；跨栏原文/mono 页眉没有可见区域，
+    也计未写入并记录。单个链接可裁成多个注释，hf 可复制到 A、B。
+    """
+    stats = {"links_source": 0, "links_written": 0, "links_unresolved": 0,
+             "links_fallback": 0, "links_zoom_fallback": 0}
+    for document, side, input_name in ((source, "en", "source"), (mono, "zh", "mono")):
+        for source_index in range(len(document)):
+            page = document[source_index]
+            for number, link in enumerate(page.get_links()):
+                stats["links_source"] += 1
+                fields = {"source_index": source_index, "side": side, "link_index": number}
+                reason = "anchor_unmapped"
+                pieces = []
+                if _navigation_values(link.get("from"), 4):
+                    box = fitz.Rect(link["from"]) * page.derotation_matrix
+                    for placement in index.get((input_name, source_index), []):
+                        clipped = box & fitz.Rect(placement.source_box)
+                        if not clipped.is_empty:
+                            pieces.append((placement, clipped))
+                else:
+                    reason = "invalid_link_box"
+                if pieces:
+                    destination, reason, zoom_reason = _navigation_destination(document, link, index, side)
+                    if destination is not None:
+                        if zoom_reason:
+                            stats["links_zoom_fallback"] += 1
+                            _log("split_navigation_fallback", zoom_reason, **fields)
+                        if reason:
+                            stats["links_fallback"] += 1
+                            _log("split_navigation_fallback", reason, **fields)
+                        for placement, clipped in pieces:
+                            rectangle = clipped * fitz.Matrix(placement.matrix)
+                            _insert_navigation_link(output, placement.out, {**destination, "from": rectangle})
+                            stats["links_written"] += 1
+                        continue
+                stats["links_unresolved"] += 1
+                _log("split_navigation_unresolved", reason, **fields)
+    return stats
+
+
+def _rebuild_split_toc(source, output, index):
+    """保留源大纲层级；内部目标按英文侧映射，失败保留无动作条目。"""
+    toc = []
+    external = []
+    stats = {"toc_entries": 0, "toc_unresolved": 0, "toc_zoom_fallback": 0}
+    for number, (level, title, page, destination) in enumerate(source.get_toc(simple=False)):
+        destination = dict(destination)
+        destination.pop("xref", None)
+        if destination.get("kind") in {fitz.LINK_GOTO, fitz.LINK_NAMED}:
+            mapped, reason, zoom_reason = _navigation_destination(source, destination, index, "en")
+            if zoom_reason:
+                stats["toc_zoom_fallback"] += 1
+                _log("split_navigation_fallback", zoom_reason, toc_index=number, side="en")
+            if reason:
+                _log("split_navigation_fallback" if mapped else "split_navigation_unresolved",
+                     reason, toc_index=number, side="en")
+            if mapped:
+                destination = {**destination, **mapped}
+                destination.pop("nameddest", None)
+                page = mapped["page"] + 1
+            else:
+                stats["toc_unresolved"] += 1
+                destination = {"kind": fitz.LINK_NONE}
+                page = -1
+        elif destination.get("kind") == fitz.LINK_NONE:
+            page = -1
+        else:
+            # 1.28.2 set_toc 的 tuple 与 GOTOR 编码要求的 Point 不兼容；
+            # get_toc 对远程命名目标和 LAUNCH 的 kind 也不能可靠往返。
+            # 文件类及未知动作明确停用，保留标题/层级；URI 独立写入。
+            if destination.get("kind") == fitz.LINK_URI:
+                external.append((number, destination))
+            else:
+                stats["toc_unresolved"] += 1
+                _log("split_navigation_unresolved", "unsupported_toc_action",
+                     toc_index=number, side="en")
+            destination = {"kind": fitz.LINK_NONE}
+            page = -1
+        toc.append([level, title, page, destination])
+    if toc:
+        output.set_toc(toc, collapse=0)
+    for number, destination in external:
+        try:
+            output.set_toc_item(number, dest_dict=destination)
+        except Exception as error:
+            stats["toc_unresolved"] += 1
+            _log("split_navigation_unresolved", "toc_action_failed", toc_index=number,
+                 side="en", error_type=type(error).__name__)
+    stats["toc_entries"] = len(toc)
+    return stats
+
+
+def _pdf_label_string(text):
+    """ASCII 按 PDF 字面量转义；非 ASCII 一律使用带 BOM 的 UTF-16BE。"""
+    if not text.isascii():
+        return "<feff" + text.encode("utf-16-be").hex() + ">"
+    return "(" + "".join(
+        "\\" + char if char in "()\\" else
+        f"\\{ord(char):03o}" if ord(char) < 32 or ord(char) == 127 else char
+        for char in text) + ")"
+
+
+def _source_label_rules(source):
+    """读取完整数字树，保留规则对象；不经过丢失字符串转义的 get_label。"""
+    pdf = fitz.mupdf
+    document = pdf.PdfDocument(source.this)
+    catalog = pdf.pdf_load_object(document, source.pdf_catalog())
+    root = pdf.pdf_dict_gets(catalog, "PageLabels")
+    if pdf.pdf_is_null(root):
+        return []  # 缺省页序号是正常情况，不属于读取失败。
+    pending, visited, rules = [root], set(), {}
+    while pending:
+        node = pending.pop()
+        if pdf.pdf_is_indirect(node):
+            xref = pdf.pdf_to_num(node)
+            if xref in visited:
+                raise ValueError("invalid_label_tree")
+            visited.add(xref)
+        if not pdf.pdf_is_dict(node):
+            raise ValueError("invalid_label_tree")
+        nums, kids = (pdf.pdf_dict_gets(node, key) for key in ("Nums", "Kids"))
+        if not pdf.pdf_is_null(nums):
+            if not pdf.pdf_is_null(kids) or not pdf.pdf_is_array(nums) or pdf.pdf_array_len(nums) % 2:
+                raise ValueError("invalid_label_tree")
+            for offset in range(0, pdf.pdf_array_len(nums), 2):
+                key = pdf.pdf_array_get(nums, offset)
+                if not pdf.pdf_is_int(key):
+                    raise ValueError("invalid_label_tree")
+                start = pdf.pdf_to_int(key)
+                if start < 0 or start in rules:
+                    raise ValueError("invalid_label_tree")
+                rules[start] = pdf.pdf_array_get(nums, offset + 1)
+        elif pdf.pdf_is_array(kids) and pdf.pdf_array_len(kids):
+            pending.extend(pdf.pdf_array_get(kids, i) for i in range(pdf.pdf_array_len(kids)))
+        else:
+            raise ValueError("invalid_label_tree")
+    if 0 not in rules:
+        raise ValueError("invalid_label_tree")
+    return sorted(rules.items())
+
+
+def _source_page_label(source, rules, number):
+    """按 PDF 标签规则展开 /S、/P、/St，字母编号为 A…Z、AA、BB…。"""
+    if not rules:
+        return str(number + 1)
+    start, rule = next(item for item in reversed(rules) if item[0] <= number)
+    pdf = fitz.mupdf
+    if not pdf.pdf_is_dict(rule):
+        raise ValueError("invalid_label_rule")
+    prefix_obj, style_obj, first_obj = (pdf.pdf_dict_gets(rule, key) for key in ("P", "S", "St"))
+    prefix, style, first = "", "", 1
+    if not pdf.pdf_is_null(prefix_obj):
+        if not pdf.pdf_is_string(prefix_obj):
+            raise ValueError("invalid_label_prefix")
+        # 与 1.28.2 xref_get_key 的 string 分支使用同一 PDF 字符串解码器。
+        # 直接规则没有 xref；底层解码同时支持字面量、八进制、十六进制及 UTF-16BE。
+        prefix = pdf.pdf_to_text_string(prefix_obj)
+    if not pdf.pdf_is_null(style_obj):
+        if not pdf.pdf_is_name(style_obj):
+            raise ValueError("invalid_label_style")
+        style = pdf.pdf_to_name(style_obj)
+        if style not in {"D", "R", "r", "A", "a"}:
+            raise ValueError("invalid_label_style")
+    if not pdf.pdf_is_null(first_obj):
+        if not pdf.pdf_is_int(first_obj) or pdf.pdf_to_int(first_obj) < 1:
+            raise ValueError("invalid_label_start")
+        first = pdf.pdf_to_int(first_obj)
+    value = first + number - start
+    suffix = ""
+    if style == "D":
+        suffix = str(value)
+    elif style in {"A", "a"}:
+        base = ord("A" if style == "A" else "a")
+        suffix = chr(base + (value - 1) % 26) * ((value - 1) // 26 + 1)
+    elif style in {"R", "r"}:
+        for size, roman in ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+                            (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+                            (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")):
+            count, value = divmod(value, size)
+            suffix += roman * count
+        if style == "r":
+            suffix = suffix.lower()
+    return prefix + suffix
+
+
+def _write_split_labels(source, output, plans, placements):
+    """逐页写固定标签；单项失败写空规则，避免继承相邻页的标签。"""
+    columns = {plan.source_index: plan.columns for plan in plans}
+    pages = {p.out: p for p in placements}
+    nums = []
+    stats = {"labels": 0, "labels_unresolved": 0, "labels_read_fallback": 0}
+    tree_error = None
+    try:
+        rules = _source_label_rules(source)
+    except Exception as error:
+        rules, tree_error = [], type(error).__name__
+    for number in range(len(output)):
+        placement = pages[number]
+        read_error = tree_error
+        label = str(placement.src + 1)
+        if read_error is None:
+            try:
+                label = _source_page_label(source, rules, placement.src) or label
+            except Exception as error:
+                read_error = type(error).__name__
+        if read_error:
+            stats["labels_read_fallback"] += 1
+            stats["labels_unresolved"] += 1
+            _log("split_navigation_fallback", "label_read_failed",
+                 source_index=placement.src, output_index=number, error_type=read_error)
+        try:
+            if columns[placement.src] == 2:
+                label += placement.part
+            # 1.28.2 set_page_labels 不转义 /P；直接写数字树的独立规则对象。
+            # 标签已展开为完整文本，与此前一样不设 /S，/St 默认 1。
+            encoded = _pdf_label_string(label)
+            xref = output.get_new_xref()
+            output.update_object(xref, "<<>>")
+            output.xref_set_key(xref, "P", encoded)
+            # 底层接口按 PDF 字符串规则解码；get_label 的读取缺陷不影响写入。
+            if output.xref_get_key(xref, "P") != ("string", label):
+                raise ValueError("page_label_decode_mismatch")
+            nums.append(f"{number} {xref} 0 R")
+            stats["labels"] += 1
+        except Exception as error:
+            # 不挂入可能已部分写入的对象；空规则也覆盖首项与末项失败。
+            nums.append(f"{number} <<>>")
+            if not read_error:
+                stats["labels_unresolved"] += 1
+            _log("split_navigation_unresolved", "label_write_failed",
+                 source_index=placement.src, output_index=number,
+                 error_type=type(error).__name__)
+    output.xref_set_key(output.pdf_catalog(), "PageLabels", "<</Nums [" + " ".join(nums) + "]>>")
+    return stats
+
+
+def _rebuild_split_navigation(source, mono, output, plans, placements):
+    """保存前独立重建导航，不改变合成区域；异常由公开入口统一脱敏。"""
+    index = _navigation_index(placements)
+    stats = _rebuild_split_links(source, mono, output, index)
+    stats.update(_rebuild_split_toc(source, output, index))
+    stats.update(_write_split_labels(source, output, plans, placements))
+    return stats
+
+
 def compose_split_document(source_pdf: str, mono_pdf: str, plans: "list[PagePlan]",
                            output_pdf: str) -> dict:
     """返回 input_pages、output_pages、regions、fallback_pages（均为整数）。
+
+    导航计数 links_source 含两份输入的全部链接；links_written 是输出注释数，
+    links_unresolved 是完全未写入的输入链接数（含有意省略的区域），
+    links_fallback 是目标回退页顶的输入链接数；toc_entries、labels 是条数。
+    links_zoom_fallback、toc_zoom_fallback 为无效缩放回退数；toc_unresolved
+    为仅保留标题和层级、未能写入动作的目录条数。
+    labels_unresolved 为源标签读取或输出写入失败的输出页数；labels_read_fallback
+    为读取失败后使用源页序号的输出页数。写入失败页使用空标签，不影响其余页。
 
     失败抛 RuntimeError("split_compose_failed")，日志只含固定原因与异常类型。
     原输出在替换成功之前保持完整；所有输入及临时 Document 在 finally 关闭。
@@ -480,6 +842,7 @@ def compose_split_document(source_pdf: str, mono_pdf: str, plans: "list[PagePlan
         _validate_inputs(source, mono, plans)
         placements = _compose_pages(source, mono, plans, output)
         _write_layout(output, plans, placements)
+        navigation = _rebuild_split_navigation(source, mono, output, plans, placements)
         handle = tempfile.NamedTemporaryFile(prefix=".ztf-split-", suffix=".pdf",
                                              dir=os.path.dirname(os.path.abspath(output_pdf)),
                                              delete=False)
@@ -492,7 +855,7 @@ def compose_split_document(source_pdf: str, mono_pdf: str, plans: "list[PagePlan
         temporary_path = None
         return {"input_pages": len(plans), "output_pages": len({p.out for p in placements}),
                 "regions": len(placements),
-                "fallback_pages": sum(plan.columns == 0 for plan in plans)}
+                "fallback_pages": sum(plan.columns == 0 for plan in plans), **navigation}
     except Exception as error:
         # 不把第三方异常中的路径、正文或凭据带进 runner 日志。
         logging.getLogger(__name__).warning(json.dumps({

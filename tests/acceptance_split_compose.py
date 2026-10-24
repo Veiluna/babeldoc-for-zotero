@@ -10,11 +10,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import unittest
+from unittest.mock import patch
 
 import pymupdf as fitz
 
-import test_split_compose as fixtures
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests import test_split_compose as fixtures
+from tests import test_split_links as link_fixtures
 from ztf_split_plan import PagePlan, Region, plan_page
 import ztf_split_compose as compose
 
@@ -203,7 +207,19 @@ try {
                                         "layouts": [], "rotation": page.rotation}))
         finally:
             doc.close()
-        stats = compose.compose_split_document(source, str(mono), plans, str(self.output))
+        placements = []
+        compose_pages = compose._compose_pages
+
+        def capture_placements(*args):
+            result = compose_pages(*args)
+            placements.extend(result)
+            return result
+
+        with patch.object(compose, "_compose_pages", side_effect=capture_placements):
+            with self.assertLogs(compose.__name__, level="WARNING") as captured:
+                stats = compose.compose_split_document(source, str(mono), plans, str(self.output))
+        self.assert_p05_navigation(source, mono, plans, placements, stats,
+                                   [json.loads(r.getMessage()) for r in captured.records])
         result = self.pdfjs_content()
         original = self.pdfjs_content(source)
         translated = self.pdfjs_content(mono)
@@ -296,6 +312,202 @@ try {
                         self.assertNotRegex(page.get_text(clip=rect), r"[\u4e00-\u9fff]")
         finally:
             doc.close()
+
+    def assert_p05_navigation(self, source_path, mono_path, plans, placements, stats, events):
+        """逐条核对实际链接框与同侧落点；所有数量差异必须有可追溯原因。"""
+        with fitz.open(source_path) as source, fitz.open(mono_path) as mono, fitz.open(self.output) as output:
+            available = {p.number: p.get_links() for p in output}
+            total_written = sum(map(len, available.values()))
+            counts = {"en": 0, "zh": 0}
+            changes = []
+            unresolved = 0
+            fallbacks = 0
+
+            def target(document, link):
+                if link.get("nameddest"):
+                    page, x, y = document.resolve_link("#nameddest=" + link["nameddest"])
+                    return page, fitz.Point(x, y) * document[page].derotation_matrix
+                page = link["page"]
+                return page, link["to"] * document[page].derotation_matrix
+
+            def assert_destination(document, link, written, side):
+                if link["kind"] == fitz.LINK_URI:
+                    self.assertEqual(written["uri"], link["uri"])
+                    return False
+                page, point = target(document, link)
+                body = [p for p in placements if p.src == page and
+                        p.input == ("source" if side == "en" else "mono") and p.k in {side, "span"}]
+                header = any(p.src == page and p.k == "hf" and
+                             p.source_box[1] <= point.y <= p.source_box[3] for p in placements)
+                hits = [p for p in body if fitz.Rect(p.source_box).contains(point)]
+                hits.sort(key=lambda p: p.k != "span")
+                self.assertEqual(written["kind"], fitz.LINK_GOTO)
+                if hits and not header:
+                    hit = hits[0]
+                    self.assertEqual(written["page"], hit.out)
+                    expected = point * fitz.Matrix(hit.matrix)
+                    self.assertLess(abs(written["to"] - expected), .03)
+                    self.assertTrue(fitz.Rect(hit.output_box).contains(written["to"]))
+                    return False
+                self.assertEqual(written["to"].y, 0)
+                self.assertIn(written["page"], {p.out for p in body})
+                # 只从目标页同语言正文推导侧边界；span 的左边缘不属于中文侧。
+                candidates = [p for p in body if p.out == written["page"] and p.k == side]
+                self.assertTrue(candidates, "页顶回退缺少目标语言侧")
+                boundary = min(p.output_box[0] for p in candidates)
+                self.assertAlmostEqual(written["to"].x, boundary, delta=.03)
+                midpoint = output[written["page"]].rect.width / 2
+                if side == "zh":
+                    self.assertGreater(written["to"].x, midpoint)
+                else:
+                    self.assertLess(written["to"].x, midpoint)
+                return True
+
+            for document, side, input_name in ((source, "en", "source"), (mono, "zh", "mono")):
+                for page in document:
+                    for number, link in enumerate(page.get_links()):
+                        counts[side] += 1
+                        box = link["from"] * page.derotation_matrix
+                        pieces = [(p, box & fitz.Rect(p.source_box)) for p in placements
+                                  if p.src == page.number and p.input == input_name
+                                  and box.intersects(fitz.Rect(p.source_box))]
+                        identity = {"页": page.number + 1, "侧": side, "链接序号": number}
+                        if len(pieces) != 1:
+                            if not pieces:
+                                unresolved += 1
+                                # 验收不接受未解释的丢失，必须能定位到已被省略的区域。
+                                omitted = any(p.src == page.number and
+                                              p.k == ("span" if side == "en" else "hf") and
+                                              box.intersects(fitz.Rect(p.source_box)) for p in placements)
+                                self.assertTrue(omitted, identity)
+                                self.assertTrue(any(e.get("event") == "split_navigation_unresolved" and
+                                                    e.get("reason") == "anchor_unmapped" and
+                                                    e.get("source_index") == page.number and
+                                                    e.get("side") == side and e.get("link_index") == number
+                                                    for e in events), identity)
+                            changes.append({**identity, "数量变化": len(pieces) - 1,
+                                            "原因": "仅保留中文跨栏/原文页眉" if not pieces else "裁框分片或页眉复制"})
+                        fallback = False
+                        for placement, clipped in pieces:
+                            expected = clipped * fitz.Matrix(placement.matrix)
+                            candidates = available[placement.out]
+                            match = next((i for i, item in enumerate(candidates)
+                                          if max(abs(a - b) for a, b in zip(item["from"], expected)) < .03), None)
+                            self.assertIsNotNone(match, identity)
+                            written = candidates.pop(match)
+                            fallback |= assert_destination(document, link, written, side)
+                        fallbacks += fallback
+            self.assertTrue(all(not links for links in available.values()), "存在无输入来源的多余链接")
+            expected_count = sum(counts.values()) + sum(item["数量变化"] for item in changes)
+            self.assertEqual(total_written, expected_count, changes)
+            self.assertEqual(stats["links_source"], sum(counts.values()))
+            self.assertEqual(stats["links_written"], total_written)
+            self.assertEqual(stats["links_unresolved"], unresolved)
+            self.assertEqual(stats["links_fallback"], fallbacks)
+            self.assertEqual(len(source.get_toc()), len(output.get_toc()))
+            self.assertEqual(stats["toc_entries"], len(source.get_toc()))
+            for original, written in zip(source.get_toc(False), output.get_toc(False)):
+                self.assertEqual(original[:2], written[:2])
+                assert_destination(source, original[3], written[3], "en")
+            expected_labels = [source[p.source_index].get_label() or str(p.source_index + 1)
+                               for p in plans for _ in range(max(1, p.columns))]
+            cursor = 0
+            for plan in plans:
+                if plan.columns == 2:
+                    expected_labels[cursor] += "a"
+                    expected_labels[cursor + 1] += "b"
+                cursor += max(1, plan.columns)
+            self.assertEqual([p.get_label() for p in output], expected_labels)
+            self.assertEqual(stats["labels"], len(output))
+            # 既有 mono 夹具已经少了部分源链接，逐条引用其恢复记录解释。
+            upstream = []
+            if counts["en"] != counts["zh"]:
+                mapping = Path(str(mono_path) + ".links.json")
+                self.assertTrue(mapping.is_file(), "缺少 mono 链接差异的既有恢复记录")
+                payload = json.loads(mapping.read_text(encoding="utf-8"))
+                for number, record in enumerate(payload["links"]):
+                    if record["status"] != "restored":
+                        upstream.append({"页": record["source_page"] + 1, "链接序号": number,
+                                         "原因": record["reason"]})
+                self.assertEqual(counts["en"] - counts["zh"], len(upstream))
+            print("P05 链接核对：", json.dumps({"原文输入": counts["en"], "单语输入": counts["zh"],
+                  "合成输出": total_written, "页顶回退": fallbacks, "目录": stats["toc_entries"],
+                  "标签": expected_labels}, ensure_ascii=False))
+            for change in changes:
+                print("P05 合成链接数量差异：", json.dumps(change, ensure_ascii=False))
+            for record in upstream:
+                print("P05 既有单语链接缺失：", json.dumps(record, ensure_ascii=False))
+
+
+class SplitLabelsAcceptance(link_fixtures.SplitLinksFixture, unittest.TestCase):
+    def setUp(self):
+        self.pdfjs_base = (Path(__file__).resolve().parents[1] /
+                           "build/research/omni/resource/reader/pdf/build")
+        missing = [str(self.pdfjs_base / name) for name in ("pdf.mjs", "pdf.worker.mjs")
+                   if not (self.pdfjs_base / name).is_file()]
+        if missing:
+            self.skipTest("缺少本机 Zotero pdf.js 验收资源（未跟踪文件）：" + ", ".join(missing))
+        self.node = shutil.which("node")
+        if not self.node:
+            self.skipTest("缺少 Node，无法运行 Zotero pdf.js getPageLabels 交叉验证")
+        super().setUp()
+
+    def pdfjs_labels(self, path):
+        # 沿用 proto/pdfjs_order.mjs 的 Node 桩，实际加载 Zotero 打包的 pdf.js。
+        script = r"""
+if (!Uint8Array.prototype.toHex) {
+  Uint8Array.prototype.toHex = function() { return Buffer.from(this).toString('hex'); };
+  Uint8Array.prototype.toBase64 = function() { return Buffer.from(this).toString('base64'); };
+  Uint8Array.fromBase64 = s => new Uint8Array(Buffer.from(s, 'base64'));
+  Uint8Array.fromHex = s => new Uint8Array(Buffer.from(s, 'hex'));
+}
+globalThis.DOMMatrix = class { constructor() {
+  this.a=1; this.b=0; this.c=0; this.d=1; this.e=0; this.f=0;
+} };
+globalThis.Path2D = class {};
+globalThis.ImageData = class {};
+const fs = await import('node:fs');
+const pdfjs = await import(process.argv[1] + '/pdf.mjs');
+pdfjs.GlobalWorkerOptions.workerSrc = process.argv[1] + '/pdf.worker.mjs';
+const task = pdfjs.getDocument({
+  data: new Uint8Array(fs.readFileSync(process.argv[2])), useSystemFonts: false
+});
+try {
+  const doc = await task.promise;
+  console.log('ZTFRESULT:' + JSON.stringify(await doc.getPageLabels()));
+} finally { await task.destroy(); }
+"""
+        result = subprocess.run([self.node, "--input-type=module", "-e", script,
+                                 self.pdfjs_base.as_uri(), str(path)], capture_output=True,
+                                encoding="utf-8", timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        values = [line.removeprefix("ZTFRESULT:") for line in result.stdout.splitlines()
+                  if line.startswith("ZTFRESULT:")]
+        self.assertEqual(len(values), 1, result.stdout)
+        return json.loads(values[0])
+
+    def test_special_label_prefixes_match_zotero_pdfjs(self):
+        for prefix, encoded in link_fixtures.SPECIAL_LABEL_PREFIX_CASES:
+            with self.subTest(prefix=prefix, encoded=encoded):
+                plans = self.make_special_label_case(encoded)
+                self.assertEqual(self.pdfjs_labels(self.source), ["第一页", prefix, ""])
+                stats, _ = self.run_navigation(plans)
+                base = prefix or "2"
+                self.assertEqual(self.pdfjs_labels(self.output),
+                                 ["第一页", base + "a", base + "b", "3"])
+                self.assertEqual(stats["labels_unresolved"], 0)
+
+    def test_nested_label_tree_styles_and_start_offsets_match_zotero_pdfjs(self):
+        for style, start, numbers in link_fixtures.LABEL_STYLE_CASES:
+            with self.subTest(style=style):
+                plans = self.make_nested_label_case(style, start)
+                self.assertEqual(self.pdfjs_labels(self.source),
+                                 ["S-" + numbers[0], "S-" + numbers[1], "end-1"])
+                stats, _ = self.run_navigation(plans)
+                self.assertEqual(self.pdfjs_labels(self.output),
+                                 ["S-" + numbers[0], "S-" + numbers[1] + "a",
+                                  "S-" + numbers[1] + "b", "end-1"])
+                self.assertEqual(stats["labels_unresolved"], 0)
 
 
 if __name__ == "__main__":
