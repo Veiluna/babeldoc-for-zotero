@@ -1,4 +1,5 @@
-"""Classify table cells as translatable headers or protected body text.
+"""封存（0.7.0 起不启用；见 docs/archive/table-translation.md）。
+Classify table cells as translatable headers or table-body content.
 
 BabelDOC 0.6.4 has no table model: a table is one 'table' layout box and its
 cells are ordinary 'fallback_line' paragraphs.  The layout box alone cannot
@@ -10,11 +11,16 @@ table:
 
 * top row bands are column-header candidates;
 * the leftmost column is a row-header candidate;
-* a cell is only sent for translation when its own wording has general table
-  meaning (Method, Precision, Recall, ...), never when it is a method name,
-  dataset, abbreviation, number, symbol, YES/NO or ordinary table body;
-* when the table has no data row (so header and body cannot be told apart) the
-  whole table is protected and reported as uncertain.
+* a cell is only marked as a table header when its own wording has general
+  table meaning (Method, Precision, Recall, ...), never when it is a method
+  name, dataset, abbreviation, number, symbol or YES/NO;
+* table-body cells are not decided here: they are returned as body material and
+  the runner applies the table content rules (identifiers/numbers/URLs/code are
+  kept, other ordinary text is sent for translation);
+* when header and body roles cannot be told apart (no data row, generic labels,
+  ...) the table is reported as uncertain: no headers are marked and every cell
+  goes to the body list, so it follows the same content rules. 0.7.0 起不再是
+  “整表保留原文”（见 ADR 0006）。
 
 The module has no BabelDOC imports and accepts either attribute objects (the
 real BabelDOC IR) or dictionaries (tests and debug JSON).
@@ -687,8 +693,8 @@ def _plan(page, table, page_index, table_index):
     body_cells = [cell for cell in cells if cell.role == "body"]
 
     if not header_cells:
-        # A table of names, numbers and symbols has no translatable header; it
-        # is still protected, but there is nothing to warn about.
+        # 名称/数字/符号表没有可翻译表头；这些单元格进入 body 由内容规则处理，
+        # 不单独告警。
         if any(_is_generic_label(cell.text) for cell in cells):
             base["status"] = "uncertain"
             base["reason"] = "存在通用标签，但无法确定它属于表头还是表体"
@@ -715,7 +721,7 @@ def _plan(page, table, page_index, table_index):
 
 def _finish(base):
     if base["status"] == "uncertain":
-        # An uncertain table keeps every cell, including the header candidates.
+        # 不确定表不标记任何表头：整表单元格进入 body，由内容规则决定保留还是送译。
         base["body"] = [
             {"paragraph": cell.paragraph, "text": cell.text}
             for row in base["rows"]

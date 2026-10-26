@@ -333,43 +333,43 @@
   "page": 3,
   "index": 9,
   "preview": "Year",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 10,
   "preview": "Published Flows",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 11,
   "preview": "Cleaned Flows",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 12,
   "preview": "CSV Volume",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 13,
   "preview": "PCAP Traffic",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 14,
   "preview": "Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
   "index": 15,
   "preview": "Count",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -519,7 +519,7 @@
   "page": 3,
   "index": 40,
   "preview": "Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -729,7 +729,7 @@
   "page": 3,
   "index": 75,
   "preview": "FTP Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -759,7 +759,7 @@
   "page": 3,
   "index": 80,
   "preview": "Heartbleed",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -789,7 +789,7 @@
   "page": 3,
   "index": 85,
   "preview": "Infiltration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -819,7 +819,7 @@
   "page": 3,
   "index": 90,
   "preview": "Port Scan",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -849,7 +849,7 @@
   "page": 3,
   "index": 95,
   "preview": "SSH Patator",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -879,7 +879,7 @@
   "page": 3,
   "index": 100,
   "preview": "Web Brute Force",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -909,7 +909,7 @@
   "page": 3,
   "index": 105,
   "preview": "Web SQL Injection",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -939,7 +939,7 @@
   "page": 3,
   "index": 110,
   "preview": "Web XSS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -969,7 +969,7 @@
   "page": 3,
   "index": 115,
   "preview": "* Values with reference ",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 3,
@@ -1029,7 +1029,7 @@
   "page": 4,
   "index": 1,
   "preview": "Year",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1113,7 +1113,7 @@
   "page": 4,
   "index": 15,
   "preview": "down).",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1305,7 +1305,7 @@
   "page": 4,
   "index": 47,
   "preview": "Web - Brute Force",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1341,7 +1341,7 @@
   "page": 4,
   "index": 53,
   "preview": "Web Attack - XSS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1407,7 +1407,7 @@
   "page": 4,
   "index": 64,
   "preview": "Web - Brute Force",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1449,13 +1449,13 @@
   "page": 4,
   "index": 71,
   "preview": "in the context of a sing",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 72,
   "preview": "Web - Brute Force",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1485,7 +1485,7 @@
   "page": 4,
   "index": 77,
   "preview": "Web Attack - XSS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1743,13 +1743,13 @@
   "page": 4,
   "index": 120,
   "preview": "host/port are responded ",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 121,
   "preview": "Infiltration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1779,13 +1779,13 @@
   "page": 4,
   "index": 126,
   "preview": "due to time-based labell",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 127,
   "preview": "SQL Injection",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 4,
@@ -1844,72 +1844,66 @@
  {
   "page": 4,
   "index": 137,
-  "preview": "*",
+  "preview": "* Values accurate at tim",
   "decision": "kept"
  },
  {
   "page": 4,
   "index": 138,
-  "preview": "Values accurate at time ",
+  "preview": "publicat",
   "decision": "kept"
  },
  {
   "page": 4,
   "index": 139,
-  "preview": "publicat",
-  "decision": "translated"
+  "preview": "ion. For the full table ",
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 140,
-  "preview": "ion. For the full table ",
-  "decision": "translated"
- },
- {
-  "page": 4,
-  "index": 141,
   "preview": ".",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 142,
+  "index": 141,
   "preview": "distrinet-research.be/CN",
-  "decision": "translated"
+  "decision": "kept"
+ },
+ {
+  "page": 4,
+  "index": 142,
+  "preview": "/. There may be minor re",
+  "decision": "kept"
  },
  {
   "page": 4,
   "index": 143,
-  "preview": "/. There may be minor re",
-  "decision": "translated"
- },
- {
-  "page": 4,
-  "index": 144,
   "preview": "2022 IEEE Conference on ",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 145,
+  "index": 144,
   "preview": "257",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 146,
+  "index": 145,
   "preview": "Authorized licensed use ",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 147,
+  "index": 146,
   "preview": "zhou University. Downloa",
   "decision": "kept"
  },
  {
   "page": 4,
-  "index": 148,
+  "index": 147,
   "preview": "UTC from IEEE Xplore. Re",
   "decision": "kept"
  },
@@ -1959,25 +1953,25 @@
   "page": 5,
   "index": 7,
   "preview": "Year",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 8,
   "preview": "Attack",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 9,
   "preview": "Overlap Class",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
   "index": 10,
   "preview": "# Overlap",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2043,7 +2037,7 @@
   "page": 5,
   "index": 21,
   "preview": "Portscan",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2085,7 +2079,7 @@
   "page": 5,
   "index": 28,
   "preview": "Web - Brute Force",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2103,7 +2097,7 @@
   "page": 5,
   "index": 31,
   "preview": "Web Attack - XSS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2121,7 +2115,7 @@
   "page": 5,
   "index": 34,
   "preview": "Web Attack - XSS",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -2229,7 +2223,7 @@
   "page": 5,
   "index": 52,
   "preview": "Infiltration",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 5,
@@ -4677,7 +4671,7 @@
   "page": 8,
   "index": 142,
   "preview": "Total Flows",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -4695,7 +4689,7 @@
   "page": 8,
   "index": 145,
   "preview": "Incorrectly labeled",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,
@@ -4725,7 +4719,7 @@
   "page": 8,
   "index": 150,
   "preview": "Published Version (Basel",
-  "decision": "translated"
+  "decision": "kept"
  },
  {
   "page": 8,

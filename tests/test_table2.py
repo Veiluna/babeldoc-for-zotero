@@ -12,8 +12,10 @@ from pathlib import Path
 import pymupdf
 
 
+# 0.7.0 表格翻译封存：只验证封存实现的旋转表头契约，不依赖生产接线。
 HELPER_PATH = (
-    Path(__file__).parents[1] / "addon" / "content" / "python" / "ztf_table2.py"
+    Path(__file__).parents[1]
+    / "addon" / "content" / "python" / "archive" / "ztf_table2.py"
 )
 SPEC = importlib.util.spec_from_file_location("ztf_table2", HELPER_PATH)
 assert SPEC is not None and SPEC.loader is not None

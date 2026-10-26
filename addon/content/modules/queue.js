@@ -1,6 +1,8 @@
 /* global Zotero, Services, ZoteroTranslateFiles, ZoteroTranslateFilesAttachments, ZoteroTranslateFilesConfig, ZoteroTranslateFilesRunner */
 
 var ZoteroTranslateFilesQueue = (function () {
+  const SPLIT_DUAL_FALLBACK_ZH = "未能生成分栏双语 PDF，已导入单语中文译本。";
+  const SPLIT_DUAL_FALLBACK_EN = "Could not generate the split-column bilingual PDF; the monolingual Chinese translation has been imported.";
   var pending = [];
   var queuedIDs = new Set();
   var runner = ZoteroTranslateFilesRunner;
@@ -208,6 +210,64 @@ var ZoteroTranslateFilesQueue = (function () {
       // Keep the local path useful when localization is unavailable.
     }
     return fallback;
+  }
+
+  async function formatFluentValue(key, args) {
+    try {
+      var mainWindow = typeof Zotero.getMainWindow === "function"
+        ? Zotero.getMainWindow()
+        : null;
+      var document = mainWindow && !mainWindow.closed && mainWindow.document;
+      if (document && document.l10n && typeof document.l10n.formatValue === "function") {
+        if (mainWindow.MozXULElement &&
+            typeof mainWindow.MozXULElement.insertFTLIfNeeded === "function") {
+          mainWindow.MozXULElement.insertFTLIfNeeded("babeldoc-for-zotero.ftl");
+        }
+        return String(await document.l10n.formatValue(key, args) || "");
+      }
+    } catch (error) {
+      // 本地化不可用时返回空串，由调用方退化为只用数据本身。
+    }
+    return "";
+  }
+
+  async function formatTableWarning(tables) {
+    var labels = [];
+    for (var table of tables) {
+      var name = String(table && table.table ? table.table : "");
+      if (!name) {
+        // 未编号表的名称也要本地化，en-US 不能出现中文“未编号表”。
+        name = (await formatFluentValue(
+          "babeldoc-for-zotero-table-unnumbered",
+          {},
+        )) || "未编号表";
+      }
+      var rawPage = table && table.page;
+      var page = Number(rawPage);
+      if (rawPage == null || rawPage === "" || !Number.isFinite(page)) {
+        // 页码缺失时只显示表名；表名是数据本身，无需本地化。
+        labels.push(name);
+        continue;
+      }
+      // "表名（第 N 页）"/"Table (p. N)" 随界面语言本地化，en-US 不混排中文。
+      var entry = await formatFluentValue("babeldoc-for-zotero-table-warning-entry", {
+        table: name,
+        page: String(Math.floor(page)),
+      });
+      // 本地化失败时安全降级：保留表名与页码，避免丢失定位信息。
+      labels.push(entry || name + " (" + Math.floor(page) + ")");
+    }
+    var separator = (await formatFluentValue(
+      "babeldoc-for-zotero-table-warning-separator",
+      {},
+    )) || "，";
+    var joined = labels.join(separator);
+    var warning = await formatFluentValue(
+      "babeldoc-for-zotero-table-header-unreliable",
+      { tables: joined },
+    );
+    // 本地化不可用时退化为纯表名列表；完成提示不得因此中断。
+    return warning || "（" + joined + "）";
   }
 
   function showNotice(descriptions) {
@@ -424,11 +484,13 @@ var ZoteroTranslateFilesQueue = (function () {
     if (entry.popupWindow) {
       try {
         entry.popupWindow.removeEventListener("unload", entry.onPopupUnload);
+        entry.popupWindow.removeEventListener("load", entry.onPopupLoad);
       } catch (error) {
         // The native window may already have been destroyed.
       }
       entry.popupWindow = null;
       entry.onPopupUnload = null;
+      entry.onPopupLoad = null;
     }
   }
 
@@ -441,7 +503,16 @@ var ZoteroTranslateFilesQueue = (function () {
       var result = add.apply(this, arguments);
       if (instance === entry.window) {
         entry.popupWindow = popupWindow;
-        entry.onPopupUnload = function () { stopProgressTimer(entry); };
+        entry.popupLoaded = false;
+        entry.onPopupLoad = function () { entry.popupLoaded = true; };
+        entry.onPopupUnload = function () {
+          // Zotero 在 show() 之后会把弹窗从 about:blank 切换到 chrome 文档：
+          // 初次文档的 unload 先于 "load" 触发。只有 load 之后的 unload 才表示
+          // 用户真的关闭了窗口；加载早期的 unload 必须忽略，否则会误停计时器。
+          if (!entry.popupLoaded) return;
+          stopProgressTimer(entry);
+        };
+        popupWindow.addEventListener("load", entry.onPopupLoad);
         popupWindow.addEventListener("unload", entry.onPopupUnload);
       }
       return result;
@@ -472,7 +543,8 @@ var ZoteroTranslateFilesQueue = (function () {
     }
 
     var entry = { job: job, window: null, itemProgress: null,
-      timer: null, active: true, sequence: 0, stageStartedAt: Date.now(), lastProgress: {
+      timer: null, active: true, sequence: 0, popupLoaded: false,
+      stageStartedAt: Date.now(), lastProgress: {
       overall: 0,
       stage: "正在准备 BabelDOC",
     } };
@@ -529,24 +601,55 @@ var ZoteroTranslateFilesQueue = (function () {
           completionText += "（有 " + Math.floor(failedParagraphs) + " 段翻译失败，保留原文）";
         }
         var warningTables = warning && Array.isArray(warning.tables) ? warning.tables : [];
-        if (warningTables.length) {
-          var tableLabels = warningTables.map(function (table) {
-            var label = String(table && table.table ? table.table : "未编号表");
-            var page = Number(table && table.page);
-            return Number.isFinite(page) ? label + "（第 " + Math.floor(page) + " 页）" : label;
-          });
-          completionText += "（" + tableLabels.join("，") + "未能可靠识别表头，已整表保留原文）";
-        }
         var totalRequests = requestCount == null ? NaN : Number(requestCount);
         if (Number.isFinite(totalRequests)) {
           completionText += "（共请求 " + Math.floor(totalRequests) + " 次）";
         }
+        // 降级原因、表头不可靠提示与日志路径都需要异步本地化；统一写回，
+        // 避免后到的异步结果覆盖先到的内容。
+        var tableWarningText = "";
+        var degradedWarningText = "";
+        var logPathText = "";
+        var applyCompletionText = function () {
+          if (!entry.window || entry.window.closed || !entry.itemProgress) return;
+          try {
+            entry.itemProgress.setText(
+              completionText + tableWarningText
+                + (degradedWarningText ? "\n" + degradedWarningText : "")
+                + (logPathText ? "\n" + logPathText : "")
+            );
+          } catch (error) {
+            // 完成提示刷新失败不得影响导入与队列清理。
+          }
+        };
         entry.itemProgress.setText(completionText);
+        if (warning && warning.messageID) {
+          formatFluentValue(warning.messageID).then(function (text) {
+            if (text.trim() && text !== warning.messageID) {
+              degradedWarningText = text;
+            } else {
+              degradedWarningText = String(Zotero.locale || "").startsWith("zh")
+                ? SPLIT_DUAL_FALLBACK_ZH : SPLIT_DUAL_FALLBACK_EN;
+              if (typeof Zotero.debug === "function") Zotero.debug("BabelDOC for Zotero: " + JSON.stringify({
+                event: "localization_failed",
+                messageID: warning.messageID,
+                reason: "empty_or_unavailable",
+                count: 1,
+              }));
+            }
+            applyCompletionText();
+          });
+        }
+        if (warningTables.length) {
+          formatTableWarning(warningTables).then(function (text) {
+            tableWarningText = text;
+            applyCompletionText();
+          });
+        }
         if (logPath) {
           formatLogPath(logPath).then(function (label) {
-            if (!entry.window.closed && entry.itemProgress) {
-              entry.itemProgress.setText(completionText + "\n" + label);
-            }
+            logPathText = label;
+            applyCompletionText();
           });
         }
       } else if (aborted) {

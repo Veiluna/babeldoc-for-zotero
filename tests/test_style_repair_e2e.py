@@ -226,7 +226,7 @@ class StyleRepairIntegrationTest(unittest.TestCase):
         shutil.copyfile(RUNNER, deployed / RUNNER.name)
         for helper in (
             "ztf_inline_formulas.py", "ztf_style_guards.py",
-            "ztf_links.py", "ztf_table_headers.py",
+            "ztf_links.py",
         ):
             source = ROOT / "addon/content/python" / helper
             if source.is_file():

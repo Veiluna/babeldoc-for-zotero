@@ -91,7 +91,8 @@ function makeHarness(options = {}) {
       const outputPath = outputDirectory + "\\paper.zh.mono.pdf";
       if (options.outputSize !== 0) files.set(outputPath, { exists: true, isFile: true, fileSize: 800 });
       const dualPath = outputDirectory + "\\paper.zh.dual.pdf";
-      const wantsDual = !callOptions.arguments.includes("--no-dual");
+      // 模拟 runner：ZTF_SPLIT_DUAL=1 时合成分栏双语 PDF（BabelDOC 本身只出单语）。
+      const wantsDual = (callOptions.environment || {}).ZTF_SPLIT_DUAL === "1";
       if (wantsDual && !options.omitDualOutput) {
         files.set(dualPath, { exists: true, isFile: true, fileSize: 900 });
       }
@@ -218,7 +219,7 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   const runnerDirectory = path.win32.dirname(harness.calls[0].arguments[0]);
   for (const helperName of [
     "ztf_inline_formulas.py", "ztf_style_guards.py",
-    "ztf_links.py", "ztf_table_headers.py",
+    "ztf_links.py",
   ]) {
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
       entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
@@ -454,12 +455,15 @@ async function supportsBilingualOutputs() {
     const harness = makeHarness();
     const result = await harness.runner.translate(harness.item, { outputMode: mode });
     const args = harness.calls[0].arguments;
+    const environment = harness.calls[0].environment;
+    // BabelDOC 两种模式都只出单语；分栏双语由 runner 按 ZTF_SPLIT_DUAL 合成。
+    assert.ok(args.includes("--no-dual"), "BabelDOC never writes its own dual PDF");
     if (mode === "mono") {
-      assert.ok(args.includes("--no-dual"), "mono keeps a single output");
+      assert.equal(environment.ZTF_SPLIT_DUAL, "0", "mono does not compose a split PDF");
       assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "mono");
       assert.match(result.outputPath, /\.zh\.mono\.pdf$/);
     } else {
-      assert.ok(!args.includes("--no-dual"), "dual requests the dual PDF");
+      assert.equal(environment.ZTF_SPLIT_DUAL, "1", "dual asks the runner for the split PDF");
       assert.equal(result.outputPaths.map(entry => entry.kind).join(","), "dual");
       assert.match(result.outputPath, /\.zh\.dual\.pdf$/);
     }
@@ -477,8 +481,27 @@ async function fallsBackToAvailableOutputMode() {
   assert.equal(dualResult.outputPaths.map(entry => entry.kind).join(","), "mono");
   assert.match(dualResult.outputPath, /\.zh\.mono\.pdf$/);
   assert.equal(dualResult.warning.degraded, true);
-  assert.ok(dualResult.warning.message.includes("降级"));
+  assert.equal(dualResult.warning.messageID, "babeldoc-for-zotero-split-dual-fallback");
   await dualResult.cleanup();
+
+  // 合成降级文案改走 Fluent，已有段落失败信息与表格定位仍原样保留。
+  const partialHarness = makeHarness({
+    omitDualOutput: true,
+    warning: {
+      failed_paragraphs: 2,
+      translated_paragraphs: 12,
+      message: "MOCK preserved warning",
+      tables: [{ table: "Table 4", page: 3, reason: "mock" }],
+    },
+  });
+  const partialResult = await partialHarness.runner.translate(partialHarness.item, { outputMode: "dual" });
+  assert.equal(partialResult.warning.messageID, "babeldoc-for-zotero-split-dual-fallback");
+  assert.equal(partialResult.warning.message, "MOCK preserved warning");
+  assert.equal(partialResult.warning.failed_paragraphs, 2);
+  assert.equal(partialResult.warning.translated_paragraphs, 12);
+  assert.equal(partialResult.warning.tables[0].table, "Table 4");
+  assert.equal(partialResult.warning.tables[0].page, 3);
+  await partialResult.cleanup();
 
   // 两种模式都没有有效 PDF 时仍然失败。
   const missingHarness = makeHarness({ omitDualOutput: true, outputSize: 0 });

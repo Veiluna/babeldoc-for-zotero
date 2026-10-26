@@ -37,7 +37,12 @@ SAMPLES_DIR = Path(
 )
 _PYTHON_CANDIDATES = [
     Path(os.environ["ZTF_BABELDOC_PYTHON"]) if os.environ.get("ZTF_BABELDOC_PYTHON") else Path(""),
+    # handoff 检出目录：...\codex\Projects\zotero-connectors\babeldoc-for-zotero-handoff
+    # BabelDOC 环境：G:\ProgramData\zotero-translate-files\babeldoc-env。
+    REPO_ROOT / "babeldoc-env" / "python.exe",
+    REPO_ROOT.parents[3] / "zotero-translate-files" / "babeldoc-env" / "python.exe",
     REPO_ROOT.parents[2] / "zotero-translate-files" / "babeldoc-env" / "python.exe",
+    Path(r"G:\ProgramData\zotero-translate-files\babeldoc-env\python.exe"),
 ]
 BABELDOC_PYTHON = next((path for path in _PYTHON_CANDIDATES if path.is_file()), None)
 UPDATE_BASELINE = os.environ.get("ZTF_UPDATE_REPLAY_BASELINE") == "1"

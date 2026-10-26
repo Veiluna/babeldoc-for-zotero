@@ -2,23 +2,36 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// The runner loads every helper by path from the Zotero data directory, so the
-// plugin must copy each helper next to the runner. A missing entry only shows up
-// as a silent "helper is missing" warning in production, so pin the contract here.
-
+// 0.7.0 表格翻译封存：4 个表格 helper 移到 addon/content/python/archive/，
+// 既不复制到 Zotero 数据目录，也不再被 runner 的 _load_helper 加载。本测试
+// 固定“实际部署 helper 清单 = runner.js pythonHelpers = runner._load_helper”。
 const runnerSource = fs.readFileSync(
   path.join(__dirname, "../addon/content/modules/runner.js"),
   "utf8"
 );
 const pythonDirectory = path.join(__dirname, "../addon/content/python");
+const archiveDirectory = path.join(pythonDirectory, "archive");
 const runnerFile = "ztf_babeldoc_runner.py";
 
 const helperFiles = fs
   .readdirSync(pythonDirectory)
   .filter(name => name.endsWith(".py") && name !== runnerFile)
   .sort();
-
-assert.ok(helperFiles.length >= 6, "expected the python helper modules on disk");
+const expectedHelpers = [
+  "ztf_figure_text.py",
+  "ztf_inline_formulas.py",
+  "ztf_links.py",
+  "ztf_punctuation_cleanup.py",
+  "ztf_split_compose.py",
+  "ztf_split_plan.py",
+  "ztf_style_guards.py",
+].sort();
+assert.deepEqual(
+  helperFiles,
+  expectedHelpers,
+  "0.7.0 部署清单只包含保留的 Python helper（含分栏双语规划与合成），封存表格模块不得部署"
+);
+assert.ok(helperFiles.length >= 5, "expected the remaining python helper modules on disk");
 
 const missing = helperFiles.filter(
   name => runnerSource.indexOf('["' + name + '"') === -1
@@ -36,7 +49,26 @@ for (const name of helperFiles) {
   );
 }
 
-// Every helper module loaded by the runner has to be in that copy list too.
+// 封存模块只存在于 archive/，既不部署也不由 runner 加载。
+const archivedHelpers = [
+  "ztf_table_text.py",
+  "ztf_table_headers.py",
+  "ztf_table2.py",
+  "ztf_table_layout.py",
+];
+for (const name of archivedHelpers) {
+  assert.ok(!helperFiles.includes(name), name + " 已封存，不应出现在部署目录");
+  assert.ok(
+    fs.statSync(path.join(archiveDirectory, name)).isFile(),
+    name + " 必须保存在 archive/ 中"
+  );
+  assert.equal(
+    runnerSource.indexOf('["' + name + '"'),
+    -1,
+    name + " 已封存，runner.js 不得复制"
+  );
+}
+
 const runnerPythonSource = fs.readFileSync(
   path.join(pythonDirectory, runnerFile),
   "utf8"
@@ -44,12 +76,31 @@ const runnerPythonSource = fs.readFileSync(
 const loadedModules = Array.from(
   runnerPythonSource.matchAll(/_load_helper\("([a-z0-9_]+)"\)/g),
   match => match[1] + ".py"
+).sort();
+assert.deepEqual(
+  loadedModules,
+  [
+    "ztf_figure_text.py",
+    "ztf_links.py",
+    "ztf_punctuation_cleanup.py",
+    "ztf_split_compose.py",
+    "ztf_split_plan.py",
+    "ztf_style_guards.py",
+  ],
+  "runner 只能加载未封存的 helper 模块"
 );
-assert.ok(loadedModules.length >= 6, "runner should load the helper modules by name");
 for (const name of loadedModules) {
   assert.ok(
     helperFiles.includes(name),
-    "runner loads " + name + " but it is not a helper file"
+    "runner loads " + name + " but it is not a deployed helper file"
+  );
+}
+for (const name of archivedHelpers) {
+  const moduleName = name.replace(/\.py$/, "");
+  assert.equal(
+    runnerPythonSource.indexOf(moduleName),
+    -1,
+    name + " 已封存，runner 源码不得再引用 " + moduleName
   );
 }
 
