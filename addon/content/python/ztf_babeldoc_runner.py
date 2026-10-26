@@ -274,6 +274,23 @@ def _paragraph_layout_snapshot(
     return snapshots
 
 
+def _split_source_snapshot(document: Any) -> dict[int, dict[str, Any]]:
+    """在排版改写段落框之前，记录全部段落的原文框（供分栏规划使用）。
+
+    与 _paragraph_layout_snapshot 不同，这里不跳过 Form XObject 中的段落：
+    有些 PDF（例如整页正文都放在 XObject 里的期刊排版）若跳过它们，版面 JSON
+    将没有任何正文段落，规划只能整页回退。BabelDOC IL 中这些段落的框同样是
+    页面坐标，因此按同一方式换算。
+    """
+    snapshots: dict[int, dict[str, Any]] = {}
+    for page in getattr(document, "page", ()) or ():
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            box = _il_box_to_text_box(getattr(paragraph, "box", None), page)
+            if box is not None:
+                snapshots[id(paragraph)] = {"source_box": box}
+    return snapshots
+
+
 def _link_paragraph_map(
     document: Any, snapshots: dict[int, dict[str, Any]], page_offset: int = 0
 ) -> dict[str, Any]:
@@ -4097,6 +4114,10 @@ def _install_min_request_patches(
         link_snapshots = _paragraph_layout_snapshot(
             document, request_state.get("source_paragraph_text")
         )
+        # 分栏规划需要全部段落的原文框（含 Form XObject 内的段落），链接快照会跳过它们。
+        split_snapshots = (
+            _split_source_snapshot(document) if _split_dual_requested() else {}
+        )
         result = typesetting_document_two_phase(instance, document)
         page_offset = int(request_state.get("link_page_offset", 0) or 0)
         link_map = _link_paragraph_map(document, link_snapshots, page_offset)
@@ -4110,7 +4131,7 @@ def _install_min_request_patches(
             )
             split_layout["pages"].extend(_split_layout_pages(
                 document,
-                link_snapshots,
+                split_snapshots,
                 set(request_state.get("preserved_paragraph_ids") or ()),
                 page_offset,
                 set(request_state.get("repeated_marginal_ids") or ()),
@@ -6343,7 +6364,7 @@ def _compose_split_dual(
     state["dual_result"] = output_pdf
     summary = dict(stats or {})
     summary["pages"] = len(plans)
-    summary["fallback_pages"] = sum(1 for plan in plans if plan.columns == 0)
+    summary.setdefault("fallback_pages", sum(1 for plan in plans if plan.columns == 0))
     _write_job_log(request_state, {"event": "split_dual", **summary}, api_key)
     return summary
 

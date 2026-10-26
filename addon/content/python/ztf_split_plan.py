@@ -5,9 +5,12 @@ paragraphs[{box, output_box, label, translated, marginal, author}]、layouts[{bo
 box 是原文框，左上原点、单位 pt；可选 output_box 是单语译文排版框，
 本模块只按 box 规划，output_box 留给合成模块处理。
 rotation 非零时整页回退；无效值（非 JSON 数值、布尔值或非有限值）按
-invalid_geometry 整页回退。marginal=true 的段落不参与正文聚类；只有其自身
-纵向带与全部非 marginal 段落及独立 layouts 框均无重叠时才归为 header_footer，
+invalid_geometry 整页回退。marginal=true 的段落不参与正文聚类；与其相交的
+文本版面框一并候选，完整纵向带与其他段落及独立 layouts 框均无重叠时才归为 header_footer，
 否则按横向位置随栏放置（含与栏内图表重叠的版权/许可块）。
+独立小型 abandon 版面框仅在全部正文上下边缘之外且不在正文栏框内时补作页眉页脚；
+宽不超过页宽 10%、高不超过页高 2%，且整带不能有非 marginal 段落。
+普通 text/title/fallback_line 框不能仅凭尺寸或边缘位置推断 marginal 身份。
 缺少 marginal 或 marginal=false 的保留段落均按普通内容处理。
 两栏页的跨栏种子只有栏间隙水平重叠宽度严格超过 min(4pt, 间隙宽 25%)
 的元素，以及 author=true 的段落；0.027pt 这类擦边不算跨栏。author 块不参与
@@ -341,6 +344,43 @@ def _column_regions(boxes, bands, column):
     return regions
 
 
+def _header_footer_bands(page, layouts, body, groups):
+    """吸收 marginal 的文本框或无正文的边缘 abandon 小框；整带不得切开其他元素。"""
+    marginal_boxes = [tuple(item["box"]) for item in page["paragraphs"]
+                      if item.get("marginal") is True]
+    related = [layout for layout in page["layouts"]
+               if layout.get("class") in _TEXT_LAYOUT_CLASSES
+               and any(max(layout["box"][0], box[0]) < min(layout["box"][2], box[2])
+                       and max(layout["box"][1], box[1]) < min(layout["box"][3], box[3])
+                       for box in marginal_boxes)]
+    body_bounds = _bounds(body)
+    frames = [_bounds(group) for group in groups if group]
+    for layout in page["layouts"]:
+        box = layout["box"]
+        # 无段落页码只接受模型明确标为 abandon 的小框；普通标题/文本不是边缘证据。
+        # 下方 blockers 同时排除任何与该带相交的非 marginal 段落和独立版面框。
+        if (layout not in related and layout.get("class") == "abandon"
+                and box[2] - box[0] <= page["width"] * 0.1
+                and box[3] - box[1] <= page["height"] * 0.02
+                and (box[3] <= body_bounds[1] or box[1] >= body_bounds[3])
+                and not any(frame[0] <= box[0] and frame[1] <= box[1]
+                            and box[2] <= frame[2] and box[3] <= frame[3] for frame in frames)):
+            related.append(layout)
+    candidates = marginal_boxes + [tuple(layout["box"]) for layout in related]
+    blockers = [tuple(item["box"]) for item in page["paragraphs"]
+                if item.get("marginal") is not True]
+    blockers += [tuple(layout["box"]) for layout in layouts if layout not in related]
+    # 扩框若碰到正文，连同与其相交的页眉候选一起留在栏内，不能裁切任一框。
+    while True:
+        blocked = [box for box in candidates
+                   if any(box[1] < other[3] and other[1] < box[3] for other in blockers)]
+        if not blocked:
+            break
+        candidates = [box for box in candidates if box not in blocked]
+        blockers.extend(blocked)
+    return _merge_bands([(box[1], box[3]) for box in candidates], gap=0)
+
+
 def plan_page(page: dict) -> PagePlan:
     """将规格 §1 的单页 dict 转为规格 §2 的分栏计划。
 
@@ -404,28 +444,8 @@ def plan_page(page: dict) -> PagePlan:
         groups = [body]
     body_groups = groups
     body_box = _bounds([box for group in body_groups for box in group] or original_body)
-    groups = _supplement_columns(groups, paragraphs + layouts, page["width"])
-    if len(groups) > 2:
-        return _fallback(page, "too_many_columns")
-    non_marginal_boxes = [tuple(item["box"]) for item in page["paragraphs"]
-                          if item.get("marginal") is not True]
-    non_marginal_boxes += [tuple(item["box"]) for item in layouts]
-    header_boxes = [tuple(item["box"]) for item in page["paragraphs"]
-                    if item.get("marginal") is True
-                    and not any(item["box"][1] < box[3] and box[1] < item["box"][3]
-                                for box in non_marginal_boxes)]
-    # 不能让候选页眉带切开必须随栏的另一 marginal 框；阻挡沿重叠链传播。
-    marginal_boxes = [tuple(item["box"]) for item in page["paragraphs"]
-                      if item.get("marginal") is True]
-    while True:
-        blocked = [box for box in marginal_boxes if box not in header_boxes]
-        remaining = [box for box in header_boxes
-                     if not any(box[1] < other[3] and other[1] < box[3] for other in blocked)]
-        if remaining == header_boxes:
-            break
-        header_boxes = remaining
     # 不跨过空隙合并页眉页脚，空隙中可能存在非 marginal 元素。
-    header_bands = _merge_bands([(box[1], box[3]) for box in header_boxes], gap=0)
+    header_bands = _header_footer_bands(page, layouts, original_body, body_groups)
     headers = [Region("header_footer", (0, start, page["width"], end))
                for start, end in header_bands]
     spanning = []
@@ -437,6 +457,9 @@ def plan_page(page: dict) -> PagePlan:
     evidence = [item for item in paragraphs + layouts
                 if not any(start <= item["box"][1] and item["box"][3] <= end
                            for start, end in header_bands)]
+    groups = _supplement_columns(groups, evidence, page["width"])
+    if len(groups) > 2:
+        return _fallback(page, "too_many_columns")
     if len(groups) == 2:
         # 正文优先确定边界；没有正文的一侧使用该侧全部窄元素。
         boundaries = (body_groups if len(body_groups) == 2 else

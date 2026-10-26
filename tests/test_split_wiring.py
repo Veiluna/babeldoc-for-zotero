@@ -40,7 +40,10 @@ def _fake_helpers(compose):
 
 class SplitWiringTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        # Windows 沙箱令牌不兼容 Python 3.12 的 0700 专用 ACL，夹具沿用父目录 ACL。
+        mkdir = os.mkdir
+        with mock.patch("tempfile._os.mkdir", side_effect=lambda path, mode: mkdir(path, 0o777)):
+            self.tmp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
         self.addCleanup(self.tmp.cleanup)
         self.mono = os.path.join(self.tmp.name, "input.no_watermark.zh.mono.pdf")
         Path(self.mono).write_bytes(b"%PDF-1.7 mono")
@@ -133,6 +136,21 @@ class SplitWiringTests(unittest.TestCase):
         events = [entry["event"] for entry in self.logs]
         self.assertIn("split_layout_geometry", events)
         self.assertEqual(self.logs[-1]["event"], "split_dual")
+
+    def test_compose_fallback_count_is_preserved_in_result_and_log(self):
+        for fallback_pages in (0, 2):
+            with self.subTest(fallback_pages=fallback_pages):
+                def compose(source, mono, plans, output):
+                    Path(output).write_bytes(b"%PDF-1.7 split")
+                    return {"output_pages": 2, "fallback_pages": fallback_pages}
+
+                with self._with_env("1"), mock.patch.dict(
+                    runner._HELPER_MODULES, _fake_helpers(compose)
+                ):
+                    result = runner._dual_after_layout(self.state, self.request_state, {}, "")
+                self.assertEqual(result["fallback_pages"], fallback_pages)
+                self.assertEqual(self.logs[-1]["event"], "split_dual")
+                self.assertEqual(self.logs[-1]["fallback_pages"], fallback_pages)
 
     def test_compose_error_falls_back_without_dual(self):
         def compose(source, mono, plans, output):
@@ -260,6 +278,109 @@ class SplitWiringTests(unittest.TestCase):
         self.assertTrue(author[0]["paragraphs"][0]["author"])
         later = runner._split_layout_pages(document, snapshots, {id(paragraph)}, page_offset=1)
         self.assertFalse(later[0]["paragraphs"][0]["author"], "只有文档首页的作者块")
+
+    def test_typesetting_hook_exports_original_xobject_boxes(self):
+        """通过实际安装的 runner hook，验证 XObject 原文框在排版后仍保留。"""
+        def box(x, y, x2, y2):
+            return types.SimpleNamespace(x=x, y=y, x2=x2, y2=y2)
+
+        paragraphs = [
+            types.SimpleNamespace(
+                box=box(60 + column * 260, 500, 290 + column * 260, 560),
+                layout_label="text", xobj_id=xobj_id,
+                unicode="Synthetic body paragraph", pdf_paragraph_composition=[],
+            )
+            for column, xobj_id in enumerate((0, 7))
+        ]
+        page = types.SimpleNamespace(
+            cropbox=types.SimpleNamespace(box=box(0, 0, 612, 792)),
+            mediabox=types.SimpleNamespace(box=box(0, 0, 612, 792)),
+            pdf_paragraph=paragraphs, page_layout=[],
+        )
+        document = types.SimpleNamespace(page=[page])
+        rendered = []
+
+        def unused(*args, **kwargs):
+            return None
+
+        class Typesetting:
+            _layout_typesetting_units = unused
+            _get_optimal_scale = unused
+            preprocess_document = unused
+            typesetting_document = unused
+
+            def render_page(self, owner):
+                # 模拟 BabelDOC 原地调整段落框，再进入 runner 的延迟渲染阶段。
+                for paragraph in owner.pdf_paragraph:
+                    paragraph.box.y = 480
+                    paragraph.box.y2 = 550
+                    self.render_paragraph(paragraph, owner, {})
+
+            def render_paragraph(self, paragraph, owner, fonts):
+                rendered.append(paragraph.xobj_id)
+
+        # 仅替换外部 BabelDOC/OpenAI 接口；安装和执行的 wrapper 均来自真实 runner。
+        # 使用独立模块树，安装器的其他补丁不会污染后续测试或创建翻译缓存。
+        modules = {}
+        module_attributes = {
+            "openai": {"OpenAI": unused},
+            "babeldoc.format.pdf.document_il.midend.il_translator": {
+                "ILTranslator": type("ILTranslator", (), {
+                    "post_translate_paragraph": unused, "pre_translate_paragraph": unused,
+                }),
+            },
+            "babeldoc.format.pdf.document_il.midend.il_translator_llm_only": {
+                "ILTranslatorLLMOnly": type("ILTranslatorLLMOnly", (), {}),
+            },
+            "babeldoc.format.pdf.document_il.midend.layout_parser": {
+                "LayoutParser": type("LayoutParser", (), {
+                    "generate_fallback_line_layout_for_page": unused,
+                }),
+            },
+            "babeldoc.format.pdf.document_il.midend.typesetting": {"Typesetting": Typesetting},
+            "babeldoc.format.pdf.document_il.midend.styles_and_formulas": {
+                "StylesAndFormulas": type("StylesAndFormulas", (), {
+                    "_classify_characters_in_composition": unused,
+                }),
+            },
+            "babeldoc.translator.translator": {
+                "OpenAITranslator": type("OpenAITranslator", (), {}),
+            },
+        }
+        for name, attributes in module_attributes.items():
+            parts = name.split(".")
+            for end in range(1, len(parts) + 1):
+                full_name = ".".join(parts[:end])
+                module = modules.setdefault(full_name, types.ModuleType(full_name))
+                module.__path__ = []
+                if end > 1:
+                    setattr(modules[".".join(parts[:end - 1])], parts[end - 1], module)
+            vars(module).update(attributes)
+
+        request_state = {}
+        instance = Typesetting()
+        instance.translation_config = types.SimpleNamespace(
+            progress_monitor=None, raise_if_cancelled=unused,
+        )
+        with self._with_env("1"), mock.patch.dict(sys.modules, modules), mock.patch.object(
+            runner, "_install_pdf_unicode_patch"
+        ):
+            runner._install_min_request_patches(
+                runner.TranslationPolicy(), runner.RequestBudget(20, unused),
+                request_state, 8192, True, False, "mock-key",
+            )
+            instance.typesetting_document(document)
+
+        self.assertEqual(rendered, [0, 7], "必须实际经过排版和延迟渲染")
+        exported = request_state["split_layout"]["pages"][0]["paragraphs"]
+        self.assertEqual(len(exported), 2, "Form XObject 段落也必须进入版面导出")
+        self.assertEqual([paragraph["box"] for paragraph in exported], [
+            [60.0, 232.0, 290.0, 292.0], [320.0, 232.0, 550.0, 292.0],
+        ])
+        self.assertEqual([paragraph["output_box"] for paragraph in exported], [
+            [60.0, 242.0, 290.0, 312.0], [320.0, 242.0, 550.0, 312.0],
+        ])
+        self.assertFalse(request_state["split_layout_skips"])
 
     def test_layout_export_counts_skipped_elements(self):
         class Box:

@@ -13,7 +13,7 @@ import subprocess
 import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "addon/content/python"))
-from ztf_split_plan import PagePlan, Region
+from ztf_split_plan import PagePlan, Region, plan_page
 import ztf_split_compose as compose
 
 
@@ -227,7 +227,7 @@ class SplitComposeTests(SplitComposeFixture, unittest.TestCase):
             "count": 1, "source_index": 0})
         self.assertFalse(self.output.exists())
 
-    def test_downward_collision_overflow_fails_without_partial_output(self):
+    def test_downward_collision_overflow_falls_back_only_affected_source_page(self):
         self.make_pdf(self.source, [(30, 490, "LEFT_EN"), (230, 490, "RIGHT_EN")])
         self.make_pdf(self.mono, [(100, 115, "TITLE_ZH"), (100, 130, "AUTHOR_ONE"),
                                  (30, 490, "左栏末行。"), (230, 490, "右栏末行。")])
@@ -235,13 +235,86 @@ class SplitComposeTests(SplitComposeFixture, unittest.TestCase):
             Region("spanning", (0, 95, 400, 115), "top"),
             Region("column", (25, 115, 170, 495), column=0),
             Region("column", (225, 115, 370, 495), column=1)))
+        # 在 A 页溢出的源页前后各插一页，核对回退后的页号和导航。
+        for path, text in ((self.source, "NEXT_EN"), (self.mono, "下一页")):
+            doc = fitz.open(path)
+            try:
+                doc.new_page(pno=0, width=400, height=500).insert_text(
+                    (30, 120), text, fontname="china-s")
+                doc.new_page(width=400, height=500).insert_text((30, 120), text, fontname="china-s")
+                doc.set_page_labels([{"startpage": 0, "style": "D", "firstpagenum": 1}])
+                doc[0].insert_link({"kind": fitz.LINK_GOTO, "from": fitz.Rect(25, 100, 170, 150),
+                                    "page": 1, "to": fitz.Point(30, 490)})
+                doc.saveIncr()
+            finally:
+                doc.close()
+        def regular(index):
+            return PagePlan(index, 2, (
+                Region("column", (25, 100, 170, 200), column=0),
+                Region("column", (225, 100, 370, 200), column=1)))
+
+        plan = PagePlan(1, plan.columns, plan.regions)
+        plans = [regular(0), plan, regular(2)]
+        original = list(plans)
         with self.assertLogs(compose.__name__, level="WARNING") as logs:
-            with self.assertRaisesRegex(RuntimeError, "^split_compose_failed$"):
-                self.run_compose([plan])
-        self.assertEqual(json.loads(logs.records[0].message), {
-            "event": "split_compose_collision", "reason": "column_layout_overflow",
-            "count": 1, "source_index": 0})
-        self.assertFalse(self.output.exists())
+            stats = self.run_compose(plans)
+        self.assertEqual(plans, original)
+        self.assertEqual((stats["output_pages"], stats["fallback_pages"]), (5, 1))
+        self.assertIn({"event": "split_compose_fallback", "reason": "column_layout_overflow",
+                       "count": 1, "source_index": 1},
+                      [json.loads(record.message) for record in logs.records])
+        with fitz.open(self.output) as doc:
+            self.assertEqual([p.rect.width for p in doc], [400, 400, 800, 400, 400])
+            layout = self.layout(doc)["pages"]
+            self.assertEqual([(p["src"], p["part"], p.get("fallback", False)) for p in layout],
+                             [(0, "a", False), (0, "b", False), (1, "a", True),
+                              (2, "a", False), (2, "b", False)])
+            self.assertEqual([p.get_label() for p in doc], ["1a", "1b", "2", "3a", "3b"])
+            fallback_text = doc[2].get_text()
+            for text in ("LEFT_EN", "RIGHT_EN", "TITLE_ZH", "AUTHOR_ONE", "左栏末行。", "右栏末行。"):
+                self.assertEqual(fallback_text.count(text), 1, text)
+            self.assertEqual([link["page"] for link in doc[0].get_links()], [2, 2])
+            self.assert_region_invariants(doc)
+
+    def test_b_overflow_discards_completed_a_and_falls_back_when_output_becomes_empty(self):
+        self.make_pdf(self.source, [(30, 120, "LEFT_EN"), (230, 490, "RIGHT_EN"),
+                                   (100, 460, "BOTTOM_EN")])
+        self.make_pdf(self.mono, [(30, 120, "左栏"), (230, 490, "右栏"),
+                                 (100, 465, "BOTTOM_ZH"), (100, 480, "CONTINUED")])
+        plan = PagePlan(0, 2, (
+            Region("column", (25, 100, 170, 200), column=0),
+            Region("column", (225, 470, 370, 495), column=1),
+            Region("spanning", (0, 450, 400, 470), "bottom")))
+        with self.assertLogs(compose.__name__, level="WARNING") as logs:
+            stats = self.run_compose([plan])
+        self.assertEqual((stats["output_pages"], stats["fallback_pages"]), (1, 1))
+        self.assertIn({"event": "split_compose_fallback", "reason": "column_layout_overflow",
+                       "count": 1, "source_index": 0},
+                      [json.loads(record.message) for record in logs.records])
+        with fitz.open(self.output) as doc:
+            self.assertEqual(len(doc), 1)
+            self.assertTrue(self.layout(doc)["pages"][0]["fallback"])
+            self.assertEqual(doc[0].rect.width, 800)
+            for text in ("LEFT_EN", "RIGHT_EN", "BOTTOM_EN", "左栏", "右栏", "BOTTOM_ZH", "CONTINUED"):
+                self.assertEqual(doc[0].get_text().count(text), 1)
+            self.assert_region_invariants(doc)
+
+    def test_page_number_wrapper_keeps_one_source_number_on_both_split_pages(self):
+        for path, texts in ((self.source, ("LEFT_EN", "RIGHT_EN")),
+                            (self.mono, ("左栏", "右栏"))):
+            self.make_pdf(path, [(54, 200, texts[0]), (318, 200, texts[1]), (300, 762, "41")],
+                          width=612, height=792)
+        plan = plan_page({"index": 0, "width": 612, "height": 792, "paragraphs": [
+            {"box": [51, 164, 296, 711], "label": "text", "translated": True},
+            {"box": [316, 165, 560, 704], "label": "text", "translated": True},
+            {"box": [300, 757, 309, 763], "label": "abandon", "translated": False, "marginal": True},
+        ], "layouts": [{"box": [298, 755, 310, 765], "class": "abandon"}]})
+        stats = self.run_compose([plan])
+        self.assertEqual((stats["output_pages"], stats["fallback_pages"]), (2, 0))
+        with fitz.open(self.output) as doc:
+            for page in doc:
+                self.assertEqual(page.get_text().count("41"), 1)
+            self.assert_region_invariants(doc)
 
     def test_expanded_span_is_not_mistaken_for_neighbor_column_start(self):
         plan = self.make_expanded_span_gutter_case()

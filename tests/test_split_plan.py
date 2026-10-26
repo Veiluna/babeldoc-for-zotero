@@ -153,13 +153,105 @@ def p05_page(blocks, index):
     return page(paragraphs, index=index, width=612, height=792)
 
 
+# 20261025T013526-19600/{P01,P05}/out/*.layout.json 前两页的原始几何与标签；
+# 仅保留每栏一个正文锚点、页码段落和外围 abandon/fallback_line 框。
+# 不读取 build 产物；这是实际 mock 导出的版面，未调用真实翻译接口。
+S7_PAGE_NUMBER_SHAPES = (
+    ("P01", 0, 595.276, 841.89,
+     (73.772, 475.664, 286.384, 623.755), (309.03, 452.203, 521.402, 520.087),
+     (74.798, 746.984, 88.088, 753.858), (73.0, 744.89, 90.0, 756.89)),
+    ("P01", 1, 595.276, 841.89,
+     (73.732, 94.639, 286.236, 231.475), (309.129, 94.639, 521.653, 231.47),
+     (507.749, 746.984, 521.179, 753.938), (505.0, 745.89, 522.0, 755.89)),
+    ("P05", 0, 612.0, 792.0,
+     (53.53, 179.004, 295.429, 387.365), (318.027, 165.306, 559.294, 252.047),
+     (300.108, 756.916, 308.046, 763.0), (298.0, 756.0, 310.0, 765.0)),
+    ("P05", 1, 612.0, 792.0,
+     (53.995, 84.683, 298.189, 149.488), (318.027, 84.683, 561.957, 204.301),
+     (300.108, 756.916, 308.775, 763.0), (298.0, 755.0, 310.0, 765.0)),
+)
+
+
 class SplitPlanTests(unittest.TestCase):
+    def test_mock_page_number_shapes_keep_header_band_and_clean_gutter(self):
+        for document, index, width, height, left, right, number, wrapper in S7_PAGE_NUMBER_SHAPES:
+            for has_paragraph in (True, False):
+                with self.subTest(document=document, index=index, has_paragraph=has_paragraph):
+                    paragraphs = [paragraph(left), paragraph(right)]
+                    layouts = [{"box": list(wrapper), "class": "abandon"}]
+                    if has_paragraph:
+                        paragraphs.append(paragraph(number, "abandon", True, True))
+                        layouts.append({"box": list(number), "class": "fallback_line"})
+                    # 缺段落分支仅保留外围 abandon 框，模拟无可导出文字的页码。
+                    source = page(paragraphs, layouts, index=index, width=width, height=height)
+                    result = self.assert_planned_page(source, PagePlan(index, 2, (
+                        Region("header_footer", (0, wrapper[1], width, wrapper[3])),
+                        Region("column", left, column=0),
+                        Region("column", right, column=1))))
+                    for region in result.regions:
+                        if region.kind == "column":
+                            self.assertTrue(region.box[2] <= left[2]
+                                            or region.box[0] >= right[0])
+
+    def test_small_ordinary_layout_above_body_is_not_a_header(self):
+        # S7 审查反例：小型段落标题即便没有段落对象，也应随左栏而非复制到 A/B 页。
+        for label in ("paragraph_title", "title", "text", "plain text", "fallback_line"):
+            with self.subTest(label=label):
+                source = page([
+                    paragraph((51, 164, 296, 711)),
+                    paragraph((316, 165, 560, 704)),
+                ], [{"box": [60, 140, 110, 150], "class": label}], width=612, height=792)
+                self.assert_planned_page(source, PagePlan(7, 2, (
+                    Region("column", (51, 140, 296, 711), column=0),
+                    Region("column", (316, 165, 560, 704), column=1))))
+
+    def test_page_number_layout_wrappers_join_header_footer_without_column_fragments(self):
+        # P05/P01 mock-run2 的页码及外围框形状；正文缩减为两框。
+        for number, wrapper in (
+                ((300, 757, 309, 763), (298, 755, 310, 765)),
+                ((74.798, 746.984, 88.088, 753.858), (73, 744.89, 90, 756.89))):
+            for label in ("abandon", "fallback_line"):
+                with self.subTest(number=number, label=label):
+                    source = page([
+                        paragraph((51, 164, 296, 711)),
+                        paragraph((316, 165, 560, 704)),
+                        paragraph(number, "abandon", False, True),
+                    ], [{"box": list(wrapper), "class": label}], width=612, height=792)
+                    self.assert_planned_page(source, PagePlan(7, 2, (
+                        Region("header_footer", (0, wrapper[1], 612, wrapper[3])),
+                        Region("column", (51, 164, 296, 711), column=0),
+                        Region("column", (316, 165, 560, 704), column=1))))
+
     def plan(self, source):
         """所有成功规划的新旧夹具都必须通过完整框不变量。"""
         result = plan_page(source)
         if result.columns:
             self.assert_content_covered(source, result)
         return result
+
+    def test_small_edge_layouts_without_paragraphs_do_not_supply_column_evidence(self):
+        for box in ((298, 755, 310, 765), (300, 25, 309, 35)):
+            with self.subTest(box=box):
+                source = page([
+                    paragraph((51, 164, 296, 711)),
+                    paragraph((316, 165, 560, 704)),
+                ], [{"box": list(box), "class": "abandon"}], width=612, height=792)
+                self.assert_planned_page(source, PagePlan(7, 2, (
+                    Region("header_footer", (0, box[1], 612, box[3])),
+                    Region("column", (51, 164, 296, 711), column=0),
+                    Region("column", (316, 165, 560, 704), column=1))))
+
+    def test_small_body_paragraph_at_page_edge_is_not_inferred_as_footer(self):
+        for translated in (False, True):
+            with self.subTest(translated=translated):
+                source = two_column_page(
+                    paragraph((60, 755, 70, 765), translated=translated),
+                    layouts=[{"box": [58, 753, 72, 767], "class": "abandon"}])
+                result = self.plan(source)
+                self.assertFalse(any(r.kind == "header_footer" for r in result.regions))
+                self.assert_unique_ownership(source, result,
+                                             [("column", 0)] * 2 + [("column", 1)] * 2
+                                             + [("column", 0)] * 2)
 
     def assert_planned_page(self, source, expected):
         """用显式期望计划校验区域，并逐元素核对类别、唯一归属和完整覆盖。"""

@@ -1,7 +1,8 @@
 """离线合成分栏双语 PDF，不发起网络请求。
 
 输入源 PDF、同页单语 PDF 和冻结的 PagePlan；输出原子替换的 PDF 与计数 dict。
-任何合成或写入失败均抛出异常，由 runner 记录脱敏日志并降级交付单语译本。
+栏排版超出页面时，仅该源页回退整页并排并记录计数；其他合成或写入失败
+抛出异常，由 runner 记录脱敏日志并降级交付单语译本。
 """
 
 from dataclasses import dataclass
@@ -20,6 +21,10 @@ if TYPE_CHECKING:
 
 
 MARGIN = 12.0
+
+
+class _ColumnLayoutOverflow(ValueError):
+    """可局部恢复的栏高度溢出，与第三方嵌入或写入异常分开处理。"""
 
 
 def _log(event, reason, **fields):
@@ -153,69 +158,85 @@ def _embed(output_page, document, index, box, destination, selected=None):
 
 
 def _compose_pages(source, mono, plans, output):
-    """填充输出文档并返回区域变换；S4 在此后、保存前重建导航。"""
+    """逐源页合成；局部回退同步更新内部计划，供元数据、导航与计数使用。"""
     placements = []
-    for plan in plans:
+    for index, plan in enumerate(plans):
         bounds = source[plan.source_index].rect
+        reason = "page_plan"
+        if plan.columns:
+            first_page, first_placement = len(output), len(placements)
+            try:
+                _compose_columns(source, mono, plan, output, placements)
+                continue
+            except _ColumnLayoutOverflow:
+                # A、B 页中任何一页溢出，均撤销该源页的全部输出和区域变换。
+                output.delete_pages(from_page=first_page, to_page=len(output) - 1)
+                del placements[first_placement:]
+                plan = type(plan)(plan.source_index, 0, (
+                    type(plan.regions[0])("fallback", tuple(bounds)),))
+                plans[index] = plan
+                reason = "column_layout_overflow"
         if plan.columns == 0:
             page = output.new_page(width=2 * bounds.width, height=bounds.height)
             for document, kind, x in ((source, "en", 0), (mono, "zh", bounds.width)):
                 input_page = document[plan.source_index]
                 _place(page, document, plan, 0, input_page.rect * input_page.derotation_matrix,
                        fitz.Rect(x, 0, x + bounds.width, bounds.height), kind, placements)
-            logging.getLogger(__name__).warning(json.dumps({
-                "event": "split_compose_fallback", "reason": "page_plan", "count": 1,
-                "source_index": plan.source_index}))
-            continue
-        source_page, mono_page = source[plan.source_index], mono[plan.source_index]
-        headers, _, source_columns = _partition_content(source_page, plan, False)
-        _, spans, mono_columns = _partition_content(mono_page, plan, True)
-        # 两套裁框独立：原文只扣源计划中的跨栏带，译文扣扩展、合并后的跨栏带。
-        # 不以译文的高度涂黑原文；输出发生碰撞时下移栏内容，保持原字号。
-        columns = {"en": source_columns, "zh": mono_columns}
-        column_bounds = {}
-        for regions in columns.values():
-            for region, box, _ in regions:
-                column_bounds[region.column] = column_bounds.get(region.column, fitz.Rect(box)) | box
-        width = max(bounds.width, 2 * max(b.width for b in column_bounds.values()) + 3 * MARGIN)
-        for column in range(plan.columns):
-            page = output.new_page(width=width, height=bounds.height)
-            page_spans = [(r, b, ids) for r, b, ids in spans if (
-                (r.position != "bottom" and column == 0)
-                or (r.position == "bottom" and column == plan.columns - 1))]
-            for region, box, selected in headers + page_spans:
-                document = source if region.kind == "header_footer" else mono
-                dest = fitz.Rect((width - box.width) / 2, box.y0,
-                                 (width + box.width) / 2, box.y1)
-                _place(page, document, plan, column, box, dest,
-                       "hf" if region.kind == "header_footer" else "span", placements, selected)
-            obstacles = _merge_intervals([(b.y0, b.y1) for _, b, _ in headers + page_spans])
-            for document, kind in ((source, "en"), (mono, "zh")):
-                middle = _merge_intervals(
-                    [(r.box[1], r.box[3]) for r in plan.regions
-                     if r.kind == "spanning" and r.position == "middle"] if kind == "en" else
-                    [(b.y0, b.y1) for r, b, _ in spans if r.position == "middle"])
-                regions = sorted([(r, b, ids) for r, b, ids in columns[kind] if r.column == column],
-                                 key=lambda item: item[1].y0)
-                down = 0
-                previous_end = 0
-                for region, box, selected in regions:
-                    frame = column_bounds[column]
-                    x = (width / 2 - MARGIN / 2 - frame.width if kind == "en"
-                         else width / 2 + MARGIN / 2) + box.x0 - frame.x0
-                    shift = sum(end - start for start, end in middle if end <= box.y0) if column == 1 else 0
-                    y = max(box.y0 - shift + down, previous_end)
-                    for start, end in obstacles:
-                        if y < end and start < y + box.height:
-                            y = end
-                    down = y - (box.y0 - shift)
-                    previous_end = y + box.height
-                    if previous_end > bounds.height + 0.01:
-                        _log("split_compose_collision", "column_layout_overflow", source_index=plan.source_index)
-                        raise ValueError("column_layout_overflow")
-                    dest = fitz.Rect(x, y, x + box.width, previous_end)
-                    _place(page, document, plan, column, box, dest, kind, placements, selected)
+            _log("split_compose_fallback", reason, source_index=plan.source_index)
     return placements
+
+
+def _compose_columns(source, mono, plan, output, placements):
+    """合成一个源页的各栏；高度溢出交由逐页调度恢复。"""
+    bounds = source[plan.source_index].rect
+    source_page, mono_page = source[plan.source_index], mono[plan.source_index]
+    headers, _, source_columns = _partition_content(source_page, plan, False)
+    _, spans, mono_columns = _partition_content(mono_page, plan, True)
+    # 两套裁框独立：原文只扣源计划中的跨栏带，译文扣扩展、合并后的跨栏带。
+    # 不以译文的高度涂黑原文；输出发生碰撞时下移栏内容，保持原字号。
+    columns = {"en": source_columns, "zh": mono_columns}
+    column_bounds = {}
+    for regions in columns.values():
+        for region, box, _ in regions:
+            column_bounds[region.column] = column_bounds.get(region.column, fitz.Rect(box)) | box
+    width = max(bounds.width, 2 * max(b.width for b in column_bounds.values()) + 3 * MARGIN)
+    for column in range(plan.columns):
+        page = output.new_page(width=width, height=bounds.height)
+        page_spans = [(r, b, ids) for r, b, ids in spans if (
+            (r.position != "bottom" and column == 0)
+            or (r.position == "bottom" and column == plan.columns - 1))]
+        for region, box, selected in headers + page_spans:
+            document = source if region.kind == "header_footer" else mono
+            dest = fitz.Rect((width - box.width) / 2, box.y0,
+                             (width + box.width) / 2, box.y1)
+            _place(page, document, plan, column, box, dest,
+                   "hf" if region.kind == "header_footer" else "span", placements, selected)
+        obstacles = _merge_intervals([(b.y0, b.y1) for _, b, _ in headers + page_spans])
+        for document, kind in ((source, "en"), (mono, "zh")):
+            middle = _merge_intervals(
+                [(r.box[1], r.box[3]) for r in plan.regions
+                 if r.kind == "spanning" and r.position == "middle"] if kind == "en" else
+                [(b.y0, b.y1) for r, b, _ in spans if r.position == "middle"])
+            regions = sorted([(r, b, ids) for r, b, ids in columns[kind] if r.column == column],
+                             key=lambda item: item[1].y0)
+            down = 0
+            previous_end = 0
+            for region, box, selected in regions:
+                frame = column_bounds[column]
+                x = (width / 2 - MARGIN / 2 - frame.width if kind == "en"
+                     else width / 2 + MARGIN / 2) + box.x0 - frame.x0
+                shift = sum(end - start for start, end in middle if end <= box.y0) if column == 1 else 0
+                y = max(box.y0 - shift + down, previous_end)
+                for start, end in obstacles:
+                    if y < end and start < y + box.height:
+                        y = end
+                down = y - (box.y0 - shift)
+                previous_end = y + box.height
+                if previous_end > bounds.height + 0.01:
+                    _log("split_compose_collision", "column_layout_overflow", source_index=plan.source_index)
+                    raise _ColumnLayoutOverflow("column_layout_overflow")
+                dest = fitz.Rect(x, y, x + box.width, previous_end)
+                _place(page, document, plan, column, box, dest, kind, placements, selected)
 
 
 def _partition_content(page, plan, translated):
@@ -840,6 +861,7 @@ def compose_split_document(source_pdf: str, mono_pdf: str, plans: "list[PagePlan
         mono = fitz.open(mono_pdf)
         output = fitz.open()
         _validate_inputs(source, mono, plans)
+        plans = list(plans)  # 局部回退只修改本次合成计划，不改变调用方输入。
         placements = _compose_pages(source, mono, plans, output)
         _write_layout(output, plans, placements)
         navigation = _rebuild_split_navigation(source, mono, output, plans, placements)
