@@ -2,15 +2,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-// 0.7.0 表格翻译封存：4 个表格 helper 移到 addon/content/python/archive/，
-// 既不复制到 Zotero 数据目录，也不再被 runner 的 _load_helper 加载。本测试
+// 0.8.0 已删除 4 个历史表格 helper，既不复制到 Zotero 数据目录，
+// 也不再被 runner 的 _load_helper 加载。本测试
 // 固定“实际部署 helper 清单 = runner.js pythonHelpers = runner._load_helper”。
 const runnerSource = fs.readFileSync(
   path.join(__dirname, "../addon/content/modules/runner.js"),
   "utf8"
 );
 const pythonDirectory = path.join(__dirname, "../addon/content/python");
-const archiveDirectory = path.join(pythonDirectory, "archive");
 const runnerFile = "ztf_babeldoc_runner.py";
 
 const helperFiles = fs
@@ -49,7 +48,7 @@ for (const name of helperFiles) {
   );
 }
 
-// 封存模块只存在于 archive/，既不部署也不由 runner 加载。
+// 已删除的表格模块既不部署也不由 runner 加载。
 const archivedHelpers = [
   "ztf_table_text.py",
   "ztf_table_headers.py",
@@ -58,10 +57,6 @@ const archivedHelpers = [
 ];
 for (const name of archivedHelpers) {
   assert.ok(!helperFiles.includes(name), name + " 已封存，不应出现在部署目录");
-  assert.ok(
-    fs.statSync(path.join(archiveDirectory, name)).isFile(),
-    name + " 必须保存在 archive/ 中"
-  );
   assert.equal(
     runnerSource.indexOf('["' + name + '"'),
     -1,

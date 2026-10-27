@@ -208,8 +208,7 @@ var ZoteroTranslateFilesRunner = (function () {
         // 0.7.0 分栏双语：规划与合成模块，runner 在双语模式下按路径加载。
         ["ztf_split_plan.py", "分栏规划辅助模块"],
         ["ztf_split_compose.py", "分栏合成辅助模块"],
-        // 0.7.0 表格翻译封存：4 个表格 helper 已移入 content/python/archive/，
-        // 既不再复制也不被子 runner 加载。
+        // 表格 helper 已于 0.8.0 删除，见 git 历史。
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
         var helperName = pythonHelpers[helperIndex][0];

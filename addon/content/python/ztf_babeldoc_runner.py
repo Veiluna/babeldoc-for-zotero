@@ -2236,9 +2236,6 @@ _TABLE_NOTE_WORD_RE = re.compile(
 )
 
 
-def _is_table_note_start(value: str) -> bool:
-    text = str(value or "").strip()
-    return bool(_TABLE_NOTE_START_RE.match(text) or _TABLE_NOTE_WORD_RE.match(text))
 _TABLE_NOTE_LAYOUT_LABELS = {"fallback_line", "table_footnote", "table_footnotes"}
 
 
@@ -3494,19 +3491,6 @@ def _configure_logging(api_key: str, policy: TranslationPolicy) -> None:
     babeldoc_logger = logging.getLogger("babeldoc")
     babeldoc_logger.handlers.clear()
     babeldoc_logger.propagate = True
-
-
-def _read_integer_setting(name: str, default: int, minimum: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        value = int(raw)
-    except ValueError as error:
-        raise ValueError(f"{name} must be an integer.") from error
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}.")
-    return value
 
 
 def _read_boolean_setting(name: str, default: bool) -> bool:

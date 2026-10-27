@@ -14,7 +14,7 @@
 
 1. **插件 JS**：右键菜单、队列、进度窗口、子进程边界、附件导入。不直接解析 PDF。
 2. **runner**（`ztf_babeldoc_runner.py`）：BabelDOC 编排、请求预算、翻译验证、后处理调度、`ZTF_*` stdout 协议。唯一允许发起模型请求的模块。
-3. **helper 模块**：单一职责、无网络。现有：figure_text、table2、links、punctuation_cleanup、table_text、table_headers、inline_formulas、style_guards。
+3. **helper 模块**：单一职责、无网络。现有：figure_text、links、punctuation_cleanup、inline_formulas、style_guards、split_plan、split_compose（表格 helper 已于 0.8.0 删除，见 ADR 0007）。
 4. **测试与夹具**：质量夹具 `tests/pdf_quality_check.py` 属于验收门，不是产品代码。
 
 规则：
@@ -91,7 +91,7 @@
 ## 11. 版本与兼容性
 
 - 0.7.0 新增"分栏双语"输出模式；保留 0.6.0 单语/双语输出与后处理链。
-- 分栏双语：每输出页左半=英文、右半=中文；双栏源页拆 2 个输出页；单栏源页输出 1 页；跨栏元素（标题/作者/摘要/图/表/公式）只保留译文版本并**横跨整页替换**（无英文对照、无留白）；链接/引用/页码按页数翻倍重映射。
+- 分栏双语：每输出页左半=英文、右半=中文；双栏源页拆 2 个输出页；单栏源页输出 1 页（0.8.0 起改为原文整页 + 中文整页 2 页，见 ADR 0009）；跨栏元素（标题/作者/摘要/图/表/公式）只保留译文版本并**横跨整页替换**（无英文对照、无留白）；链接/引用/页码按页数翻倍重映射。
 - 不得破坏 0.6.0 已发布行为（除非 spec 明确变更并有 ADR）。
 
 ## 12. 禁止事项
@@ -102,7 +102,7 @@
 - 静默吞异常、静默回退、静默跳过。
 - 日志/参数中出现 API key。
 
-## 13. 执行方式（Team Agents，0.7.0 详细）
+## 13. 执行方式（Team Agents，0.8.0 起）
 
 ### 13.1 角色与职责
 
@@ -124,15 +124,20 @@
 - 并行前先冻结接口（函数签名、数据结构、错误码），写入票描述。
 - 写冲突：遇到 FS_STALE 先读后改；不得覆盖他人改动；Lead 合并前检查完整 diff。
 
-### 13.4 审查流程（严格执行）
+### 13.4 审查流程（0.8.0 起）
 
-- 每票完成后：Lead 组织审查 → **新开 2 个独立子代理**（Standards、Spec）。
+- 每票完成后：Lead 组织审查 → **新开 2 个独立子代理**：规范轴（Standards）、规格轴（Spec），互不共享上下文。
 - 审查输入：`git diff <固定点>...HEAD`（或该票 diff）、对应 issue、spec 路径、测试命令与输出证据。
 - 审查者只读：不修改文件、不提交、不跑真实 API。
-- 输出：`VERDICT: PASS` 或 `VERDICT: CHANGES` + 必须修复项清单（引用文件行号/规范条款）。
-- Lead 归档到 `docs/reviews/0.7.0/<ticket>-<round>.md`，并同步 PR 评论。
-- CHANGES：**由原实现 teammate 修改** → 重新提交 → **再新开 2 个子代理复审**（同样不得复用）。
-- 同一审查意见连续 3 轮未解决 → 暂停并升级给用户裁决。
+- **阻塞项只有三类**：
+  1. 主路径错误：正常输入下结果错误、崩溃或丢内容；
+  2. 与 spec 或 issue 验收标准不符；
+  3. 样本实测问题：已知样本（Chen 2026、FoBa、P01、P05 等）的 mock 或重放结果不达标。
+- **边界问题不阻塞**：罕见输入、假设性组合、风格偏好等列为"建议"，Lead 记 GitHub issue（标签 needs-triage），不要求本票修改。
+- 输出：`VERDICT: PASS` 或 `VERDICT: CHANGES` + 阻塞项清单（引用文件行号、规范条款或 spec 段落）+ 建议清单。只有建议时结论为 PASS。
+- Lead 归档到 `docs/reviews/<版本>/<ticket>-<round>.md`，并同步 PR 评论。
+- CHANGES：由原实现者修改 → 再新开 2 个子代理复审（不得复用）。
+- **每票最多 2 轮审查**。第 2 轮仍有阻塞项时，Lead 暂停该票，把剩余阻塞项和选项交用户裁决。
 - 两轴均 PASS 才可合并进入下一票。
 
 ### 13.5 提交与发布
@@ -164,5 +169,7 @@
 ### 13.9 上下文与技能路线
 
 - 每票实现与每轮审查都使用独立上下文（teammate fresh / 子代理 fresh）。
-- 技能路线：`/diagnosing-bugs`（两个 bug）→ `/grill-with-docs`（补细节）→ `/to-spec` → `/to-tickets` → 逐票 `/tdd` 实现 → 每轮 `/code-review`（新审查者）→ `/pr` → 发布 → `/retro`。
-- 划词可行性先走 `/research` + `/prototype`，结论回填 spec。
+- 技能路线（Matt Pocock 技能，需读 SKILL.md 照做）：`/grill-with-docs`（补细节）→ `/to-spec` → `/to-tickets` → 逐票 `/implement`（内含 `/tdd` 与 `/code-review`）→ `/pr` → 发布 → `/retro`。
+- bug 定位走 `/diagnosing-bugs`：先有复现，再修代码。
+- 历史代码清理与模块重构走 `/improve-codebase-architecture`。
+- 可行性不明的方案先走 `/research` + `/prototype`，结论回填 spec。
