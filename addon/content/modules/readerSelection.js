@@ -118,7 +118,10 @@ var ZoteroTranslateFilesReaderSelection = (function () {
   }
 
   function classOfChar(record, state, index, char) {
-    return remember(state, char).value ? "zotero-isolated" : classOfRect(record, index, char.rect);
+    var kind = classOfRect(record, index, char.rect);
+    // 原生隔离标记不能抹掉版面类别，否则两侧被原生隔离的字符会互相开放。
+    // 保留原生隔离组，同时继续按本页冻结区域约束英文、中文和跨栏元素。
+    return remember(state, char).value ? "zotero-isolated:" + kind : kind;
   }
 
   function matchesStart(record, state, index, char) {
@@ -518,7 +521,7 @@ var ZoteroTranslateFilesReaderSelection = (function () {
               kind = region ? region.k : null;
             }
             // Zotero 原有隔离组独立保留，但不能借异类最近字符改变版面类别。
-            if (remember(state, nearest).value) kind = "zotero-isolated";
+            kind = classOfChar(record, state, position.pageIndex, nearest);
             state.start = { pageIndex: position.pageIndex, offset: page.chars.indexOf(nearest),
               caret: caretOffset(page, nearest, rect) };
             if (event.detail === 2 || event.detail === 3) {

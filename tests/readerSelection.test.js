@@ -1509,6 +1509,103 @@ function nativeSelectionDriver(view, throttled = false) {
   };
 }
 
+test("T7：两侧存在原生隔离字符时，英文跨页仍隔离本页中文", async () => {
+  const f = fixture();
+  const view = f.internal._primaryView;
+  const driver = nativeSelectionDriver(view);
+  // 最小复现：直接保留 worker 的原生标记，排除页面合并和页高的影响。
+  for (const index of [0, 1]) {
+    view._pdfPages[index].chars = view._pdfPages[index].chars.filter(char =>
+      char.c === "E" || char.c === "中");
+    view._pdfPages[index].chars.forEach((char, offset) => {
+      char.offset = offset;
+      char.isolated = true;
+      char.wordBreakAfter = char.lineBreakAfter = true;
+    });
+  }
+  await f.module.attachToReader(f.reader);
+  driver.down(0, 51, 205);
+  driver.move(1, 59, 205);
+  assert.ok(view._pdfPages[0].chars.filter(char => char.kind === "zh")
+    .every(char => char.isolated), "从第 N 页英文拖到 N+1 页英文，本页中文必须保持 isolated");
+  driver.check("en", "E|E");
+  assert.deepEqual(f.logs, [], "复现不依赖钩子回退");
+  f.module.shutdown();
+});
+
+for (const heights of [[800, 800], [800, 1200], [1200, 800]]) {
+  for (const kind of ["en", "zh"]) {
+    for (const reverse of [false, true]) {
+      for (const timing of ["起拖前", "起点页先迟到", "终点页先迟到"]) {
+        test(`T7：${kind} ${reverse ? "反向" : "正向"}跨页，页高 ${heights.join("/")}，原生隔离${timing}`, async () => {
+          const metadataLayout = layout();
+          for (const index of [0, 1]) {
+            for (const region of metadataLayout.pages[index].regions) {
+              region.r[1] += heights[index] - 800;
+              region.r[3] += heights[index] - 800;
+            }
+          }
+          const f = fixture({ info: { Custom: { ZTFSplitLayout: JSON.stringify(metadataLayout) } } });
+          const view = f.internal._primaryView;
+          const driver = nativeSelectionDriver(view);
+          // 加高页的字符和元数据一起移入增加的高度，不能只改未用到的 viewBox。
+          for (const index of [0, 1]) {
+            const page = view._pdfPages[index];
+            page.viewBox[3] = heights[index];
+            for (const char of page.chars) {
+              for (const rect of [char.rect, char.inlineRect]) {
+                rect[1] += heights[index] - 800;
+                rect[3] += heights[index] - 800;
+              }
+            }
+          }
+          const originalPages = structuredClone(view._pdfPages);
+          // 使用原生合并入口；覆盖复用字符与 {...char, isolated: true} 的复制路径。
+          const mergeNativeIsolation = index => {
+            view._processedPageIsolatedCharIndexes[index] = [0, 1, 2, 3, 4, 5, 6, 7];
+            view._pdfPages[index] = view._mergeProcessedPageData(index, view._pdfPages[index]);
+          };
+          if (timing === "起拖前") for (const index of [0, 1]) mergeNativeIsolation(index);
+          await f.module.attachToReader(f.reader);
+          const startPage = reverse ? 1 : 0;
+          const headPage = 1 - startPage;
+          const x = kind === "en" ? 50 : 350;
+          driver.down(startPage, x + (reverse ? 19 : 1), heights[startPage] - 595);
+          driver.move(headPage, x + (reverse ? 1 : 19), heights[headPage] - 595);
+          const assertOtherRegionsIsolated = () => {
+            for (const index of [0, 1]) {
+              assert.ok(view._pdfPages[index].chars.filter(char => char.kind !== kind)
+                .every(char => char.isolated), "另一侧、跨栏和页眉页脚不能被开放");
+            }
+          };
+          assertOtherRegionsIsolated();
+          if (timing !== "起拖前") {
+            const order = timing === "起点页先迟到" ? [startPage, headPage] : [headPage, startPage];
+            for (const index of order) {
+              mergeNativeIsolation(index);
+              assertOtherRegionsIsolated();
+            }
+          }
+          const text = kind === "en" ? "Ee|Ee" : "中译|中译";
+          const rects = [0, 1].map(index => [x, heights[index] - 600, x + 20, heights[index] - 590]);
+          driver.check(kind, text, rects);
+          driver.up();
+          driver.check(kind, text, rects);
+          driver.released(text.replaceAll("|", " "));
+          checkPopupMatchesCopy(driver, view, text.replaceAll("|", " "));
+          assert.deepEqual(f.logs, [], "整条路径无 fallback");
+          f.module.shutdown();
+          for (const index of [0, 1]) {
+            assert.deepEqual(view._pdfPages[index], { ...originalPages[index],
+              chars: originalPages[index].chars.map(char => ({ ...char, isolated: true })) },
+            "卸载保留原生隔离，不残留插件按侧改写的标记");
+          }
+        });
+      }
+    }
+  }
+}
+
 test("原生夹具可复现原实现的三个错误分组", () => {
   for (const [start, end, kind] of [
     [[0, 69, 205], [1, 69, 205], "en"],
