@@ -6082,6 +6082,12 @@ def _install_min_request_patches(
 
     llm_module.PriorityThreadPoolExecutor = DeferredTranslationExecutor
 
+    if _split_dual_requested():
+        # T4 挂接，T5 接入合成
+        _load_helper("ztf_split_variants").install(
+            lambda event: _write_job_log(request_state, event, api_key)
+        )
+
 
 def babeldoc_version_error() -> str | None:
     try:

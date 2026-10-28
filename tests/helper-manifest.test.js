@@ -21,14 +21,19 @@ const expectedHelpers = [
   "ztf_inline_formulas.py",
   "ztf_links.py",
   "ztf_punctuation_cleanup.py",
+  "ztf_split_columns.py",
   "ztf_split_compose.py",
+  "ztf_split_lines.py",
+  "ztf_split_margins.py",
   "ztf_split_plan.py",
+  "ztf_split_types.py",
+  "ztf_split_variants.py",
   "ztf_style_guards.py",
 ].sort();
 assert.deepEqual(
   helperFiles,
   expectedHelpers,
-  "0.7.0 部署清单只包含保留的 Python helper（含分栏双语规划与合成），封存表格模块不得部署"
+  "部署清单只包含保留的 Python helper（含 0.8.0 分栏模块），已删除的表格模块不得部署"
 );
 assert.ok(helperFiles.length >= 5, "expected the remaining python helper modules on disk");
 
@@ -80,6 +85,7 @@ assert.deepEqual(
     "ztf_punctuation_cleanup.py",
     "ztf_split_compose.py",
     "ztf_split_plan.py",
+    "ztf_split_variants.py",
     "ztf_style_guards.py",
   ],
   "runner 只能加载未封存的 helper 模块"

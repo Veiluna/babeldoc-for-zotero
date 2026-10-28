@@ -208,6 +208,12 @@ var ZoteroTranslateFilesRunner = (function () {
         // 0.7.0 分栏双语：规划与合成模块，runner 在双语模式下按路径加载。
         ["ztf_split_plan.py", "分栏规划辅助模块"],
         ["ztf_split_compose.py", "分栏合成辅助模块"],
+        // 0.8.0 分栏双语：底层数据认栏与中文排版变体（ADR 0009）。
+        ["ztf_split_types.py", "分栏共享数据结构"],
+        ["ztf_split_lines.py", "分栏切行辅助模块"],
+        ["ztf_split_columns.py", "分栏认栏辅助模块"],
+        ["ztf_split_margins.py", "页眉页脚判定辅助模块"],
+        ["ztf_split_variants.py", "中文排版变体辅助模块"],
         // 表格 helper 已于 0.8.0 删除，见 git 历史。
       ];
       for (var helperIndex = 0; helperIndex < pythonHelpers.length; helperIndex++) {
