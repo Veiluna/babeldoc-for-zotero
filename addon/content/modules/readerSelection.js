@@ -17,11 +17,13 @@ var ZoteroTranslateFilesReaderSelection = (function () {
     if (!condition) throw new Error("阅读器内部接口不可用");
   }
 
-  function diagnose(record, reason) {
+  function diagnose(record, reason, event) {
+    event = event || "reader_selection_fallback";
     if (!record.loggedReasons) record.loggedReasons = new Set();
-    if (record.loggedReasons.has(reason)) return;
-    record.loggedReasons.add(reason);
-    var line = JSON.stringify({ event: "reader_selection_fallback", reason: reason, count: 1 });
+    var key = event + ":" + reason;
+    if (record.loggedReasons.has(key)) return;
+    record.loggedReasons.add(key);
+    var line = JSON.stringify({ event: event, reason: reason, count: 1 });
     // 不记录 PDF 内容、路径或异常消息；日志接收方失效也不能影响阅读器。
     try {
       if (dependencies && typeof dependencies.log === "function") dependencies.log(line);
@@ -109,6 +111,9 @@ var ZoteroTranslateFilesReaderSelection = (function () {
     requireValue(Array.isArray(page.chars));
     var layoutPage = record.layout.pages[index];
     if (state.startClass === null || !layoutPage || !layoutPage.regions.length) {
+      if (state.startClass !== null) {
+        diagnose(record, layoutPage ? "layout_regions_empty" : "layout_page_missing");
+      }
       restorePage(state, page);
       return;
     }
@@ -495,6 +500,7 @@ var ZoteroTranslateFilesReaderSelection = (function () {
         state.nativeStep = null;
         state.startClass = null;
         if (!position) {
+          diagnose(record, "selection_position_missing");
           for (var key of Object.keys(view._pdfPages)) restorePage(state, view._pdfPages[key]);
           return;
         }
@@ -504,6 +510,9 @@ var ZoteroTranslateFilesReaderSelection = (function () {
         var region = regionOfRect(record, position.pageIndex, rect);
         var kind = region ? region.k : null;
         var layoutPage = record.layout.pages[position.pageIndex];
+        if (!layoutPage || !layoutPage.regions.length) {
+          diagnose(record, layoutPage ? "layout_regions_empty" : "layout_page_missing");
+        }
         if (layoutPage && layoutPage.regions.length) {
           var page = view._pdfPages[position.pageIndex];
           // 区域内空白仍属于该区域；仅在区域外才按全页最近字符回退。
@@ -542,6 +551,12 @@ var ZoteroTranslateFilesReaderSelection = (function () {
         requireValue(view._pdfPages);
         for (var key of Object.keys(view._pdfPages)) {
           applyPage(record, state, Number(key), view._pdfPages[key]);
+        }
+        if (state.start && state.startClass === null && !state.start.empty) {
+          diagnose(record, "selection_class_missing");
+        }
+        if (state.start && !state.start.empty && state.startClass !== null) {
+          diagnose(state, "selection_applied", "reader_selection_hook");
         }
       } catch (error) { fail(record, "selection_unavailable"); }
     };
@@ -738,6 +753,8 @@ var ZoteroTranslateFilesReaderSelection = (function () {
     var onUnload = function () { removeView(record, state); };
     state.undo.push(function () { window.removeEventListener("unload", onUnload, true); });
     window.addEventListener("unload", onUnload, true);
+    // 独立于故障日志，明确证明本视图已完成挂载；不含正文、路径或账号信息。
+    diagnose(state, "view_attached", "reader_selection_hook");
   }
 
   async function attach(record) {
@@ -775,12 +792,13 @@ var ZoteroTranslateFilesReaderSelection = (function () {
         var custom = metadata && metadata.info && metadata.info.Custom;
         record.checked = true;
         if (!custom || !Object.prototype.hasOwnProperty.call(custom, "ZTFSplitLayout")) {
+          diagnose(record, "layout_metadata_missing");
           release(record);
           return false;
         }
         record.layout = parseLayout(custom.ZTFSplitLayout);
       }
-      if (!record.layout) return false;
+      if (!record.layout) return fail(record, "layout_unavailable");
       if (!record.createHooked) {
         // 分屏在打开之后才创建：保持同步返回值，只在其初始化完成后安装钩子。
         var create = internal._createView;
@@ -794,8 +812,12 @@ var ZoteroTranslateFilesReaderSelection = (function () {
         }));
         record.createHooked = true;
       }
-      await attachView(record, primary);
+      // getMetadata 等待期间主视图可能被重建，不能继续给旧快照挂钩并误报成功。
+      await attachView(record, internal._primaryView);
       if (internal._secondaryView) await attachView(record, internal._secondaryView);
+      if (record.active && !record.views.has(unwrap(internal._primaryView))) {
+        return fail(record, "primary_view_not_hooked");
+      }
       return record.active;
     } catch (error) { return fail(record, "reader_internals_unavailable"); }
   }
@@ -807,7 +829,8 @@ var ZoteroTranslateFilesReaderSelection = (function () {
    *   仅在未提供 log 时调用其可选 debug(line) 方法。
    * @param {function(string): void} [options.log] 可选同步日志函数；log(line) 每次
    *   接收一行已脱敏 JSON 字符串（不含换行、PDF 文本、路径或异常详情），返回值忽略，
-   *   抛错被吞掉；每个 reader 的每种 reason 最多记录一次。优先于 Zotero.debug。
+   *   抛错被吞掉；fallback 每个 reader/reason 最多一次，hook 每个 view/reason 最多一次。
+   *   reader_selection_hook 区分 view_attached 与 selection_applied。优先于 Zotero.debug。
    * @returns {void}
    */
   function init(options) {
