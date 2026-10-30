@@ -52,8 +52,8 @@ class Line:
 MarginReason = Literal["tagged", "repeated"]
 """页眉页脚判定依据：PDF 标签、跨页重复。追加内容流只作辅证，不是独立依据。"""
 
-ColumnBasis = Literal["jump", "gap", "single"]
-"""认栏依据：内容流回跳点、同基线空隙交集、一栏。"""
+ColumnBasis = Literal["jump", "tag", "single"]
+"""全文认栏依据（2026-10-30 修订）：内容流回跳点、ColumnCount 结构标签、一栏。"""
 
 SPANNING = -2
 """Line / 段落归属：跨栏。"""
@@ -66,11 +66,12 @@ MARGIN = -1
 class PageColumns:
     """单页认栏结果（ztf_split_columns.detect_columns 产出）。
 
-    columns ≥ 1，不存在"认不出"。gutters 按 x 从左到右，长度 columns - 1，
-    每项为 (左栏最大结束 x, 右栏最小起始 x)。
+    columns 为 1 或 2，不存在"认不出"。双栏时 gutters == ((页面中线 x, 页面中线 x),)，
+    单栏时为空（2026-10-30 修订：双栏一律以页面中线为分界）。
     line_column[i] 对应 lines[i]：0..columns-1、SPANNING 或 MARGIN。
     paragraph_column 为 (段落下标, 栏号或 SPANNING) 的元组，按段落下标升序。
-    split_paragraphs 为字符跨两组的段落下标（跨栏断句，由 BabelDOC 已有断句处理）。
+    split_paragraphs 为字符同时落在中线左右两侧、且不含跨栏行的段落下标（BabelDOC
+    跨栏断句未拆开时出现），由调用方按片段处理，不猜归属。
     reasons 为固定原因码，写入任务日志，不含正文。
     """
 
@@ -81,4 +82,18 @@ class PageColumns:
     line_column: tuple[int, ...]
     paragraph_column: tuple[tuple[int, int], ...]
     split_paragraphs: tuple[int, ...] = ()
+    reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DocumentColumns:
+    """全文认栏结果（ztf_split_columns.detect_document_columns 产出）。
+
+    columns 为 1 或 2；basis 为 jump / tag / single；page 为判定所依据的源页号
+    （0 起算，single 时为 None）。reasons 为固定原因码，不含正文。
+    """
+
+    columns: int
+    basis: ColumnBasis
+    page: int | None = None
     reasons: tuple[str, ...] = ()
