@@ -138,8 +138,9 @@ class PdfEvidenceTests(unittest.TestCase):
         """合成独立内容流；临时文件 finally 清理，源文件须保持字节不变。"""
         # Windows 受限令牌不能进入 Python 3.12 以 mode=700 创建的临时目录；
         # 用临时文件仍有唯一名称与 finally 清理，不需要扩大沙箱权限。
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False,
-                                         dir=Path(__file__).parent / "fixtures/split080_margins") as handle:
+        temporary = Path(__file__).resolve().parents[1] / "build/t62/margins"
+        temporary.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False, dir=temporary) as handle:
             path = Path(handle.name)
         try:
             document = pymupdf.open()

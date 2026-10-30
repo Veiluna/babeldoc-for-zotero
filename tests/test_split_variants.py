@@ -43,11 +43,71 @@ def page():
 
 
 def columns():
-    return PageColumns(0, 2, "gap", ((280, 320),), (),
+    return PageColumns(0, 2, "jump", ((300, 300),), (),
                        ((0, 0), (1, 1), (2, SPANNING)))
 
 
 class VariantTests(unittest.TestCase):
+    def test_column_count_is_read_from_structural_attributes(self):
+        import pymupdf
+        for count in (1, 2):
+            with self.subTest(count=count), pymupdf.open() as pdf:
+                pdf.new_page()
+                child = pdf.get_new_xref()
+                pdf.update_object(child, f"<< /Type /StructElem /S /Document "
+                                        f"/A << /O /Layout /ColumnCount {count} >> >>")
+                pdf.xref_set_key(pdf.pdf_catalog(), "StructTreeRoot", f"<< /K [{child} 0 R] >>")
+                self.assertEqual(split_variants._column_count_tag(pdf), count)
+        with pymupdf.open() as pdf:
+            pdf.new_page()
+            self.assertIsNone(split_variants._column_count_tag(pdf))
+
+    def test_lazy_graphics_history_is_flattened_without_touching_source_caches(self):
+        from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import (
+            LazyPassthroughInstruction, PassthroughSnapshot,
+            replace_first_passthrough_operator,
+        )
+        snapshot = PassthroughSnapshot()
+        for i in range(600):
+            snapshot = replace_first_passthrough_operator(snapshot, "w", ("w", i + 1))
+        lazy = LazyPassthroughInstruction(snapshot, suffix_parts=("0 0 1 rg",))
+        original = page()
+        original.pdf_curve = [NS(box=box(40, 300, 280, 300), xobj_id=0,
+                                 graphic_state=NS(passthrough_per_char_instruction=lazy))]
+        limit = sys.getrecursionlimit()
+        with self.assertRaises(RecursionError):
+            copy.deepcopy(original)
+        variants = create_variants(original, columns())
+        copied = variants[0].page.pdf_curve[0].graphic_state.passthrough_per_char_instruction
+        self.assertIs(type(copied), str)
+        self.assertEqual(copied, "600 w 0 0 1 rg")
+        self.assertIs(original.pdf_curve[0].graphic_state.passthrough_per_char_instruction, lazy)
+        self.assertIsNone(lazy._value)
+        self.assertEqual(snapshot._render_cache, {})
+        self.assertEqual(sys.getrecursionlimit(), limit)
+
+    def test_all_margin_paragraph_is_absent_from_every_variant(self):
+        original = page()
+        assigned = PageColumns(0, 2, "tag", ((300, 300),), (), ((1, 1), (2, SPANNING)))
+        variants = create_variants(original, assigned)
+        self.assertFalse(any(0 in variant.paragraphs for variant in variants))
+
+    def test_copy_boundary_preserves_clipping_suffix_shared_lazy_and_mutable_isolation(self):
+        from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import (
+            LazyPassthroughInstruction, PassthroughSnapshot,
+        )
+        snapshot = PassthroughSnapshot()
+        snapshot._render_cache[True] = "0 0 50 50 re W n"
+        lazy = LazyPassthroughInstruction(snapshot, include_clipping=True, suffix_parts=("1 g",))
+        original = NS(first=lazy, second=lazy, mutable=[1])
+        cloned = split_variants._copy_il(original)
+        self.assertEqual(cloned.first, "0 0 50 50 re W n 1 g")
+        self.assertIs(cloned.first, cloned.second)
+        cloned.mutable.append(2)
+        self.assertEqual(original.mutable, [1])
+        self.assertIsNone(lazy._value)
+        self.assertEqual(snapshot._render_cache, {True: "0 0 50 50 re W n"})
+
     def test_each_variant_contains_only_its_paragraphs_without_moving_text(self):
         original = page()
         before = copy.deepcopy(original)
@@ -79,13 +139,8 @@ class VariantTests(unittest.TestCase):
         self.assertEqual([len(v.page.pdf_form) for v in variants], [0, 1, 0])
         self.assertEqual([len(v.page.pdf_character) for v in variants], [0, 0, 1])
 
-    def test_three_columns_and_single_column(self):
+    def test_single_column_has_no_variants(self):
         original = page()
-        three = PageColumns(0, 3, "gap", ((200, 220), (400, 420)), (),
-                            ((0, 0), (1, 2), (2, SPANNING)))
-        variants = create_variants(original, three)
-        self.assertEqual([v.column for v in variants], [0, 1, 2, SPANNING])
-        self.assertEqual(variants[1].paragraphs, ())
         single = PageColumns(0, 1, "single", (), (), ((0, 0),))
         self.assertEqual(create_variants(original, single), ())
 
@@ -258,7 +313,7 @@ class VariantTests(unittest.TestCase):
                 self.assertEqual(len(selected.pdf_form), 0)
 
     def test_split_paragraph_is_reported_instead_of_silently_dropped_or_guessed(self):
-        mixed = PageColumns(0, 2, "gap", ((280, 320),), (),
+        mixed = PageColumns(0, 2, "jump", ((300, 300),), (),
                             ((0, 0), (1, 1)), (2,))
         with self.assertRaisesRegex(ValueError, "split_paragraph_unresolved"):
             create_variants(page(), mixed)
@@ -286,7 +341,7 @@ class VariantTests(unittest.TestCase):
     def test_region_assignment_uses_same_crop_coordinates_as_column_detection(self):
         original = page()
         original.pdf_curve = [NS(box=box(320, 300, 340, 300), xobj_id=0)]
-        cropped = PageColumns(0, 2, "gap", ((180, 220),), (),
+        cropped = PageColumns(0, 2, "jump", ((200, 200),), (),
                               ((0, 0), (1, 1), (2, SPANNING)))
         variants = create_variants(original, cropped,
                                    convert_box=lambda b: (b.x - 100, 800 - b.y2,
@@ -306,7 +361,16 @@ class VariantTests(unittest.TestCase):
 
 class MockRunnerTests(unittest.TestCase):
     def test_chen_two_pages_with_local_synthetic_translation(self):
+        # 第七页含严格回跳证据；前两页在新规则下本身不足以判定全文双栏。
+        self.run_sample("chen2026", (0, 6))
+
+    def test_foba_page10_with_local_synthetic_translation(self):
+        # 首页提供全文双栏依据；第十页保留原图形历史，真正进入两次整页复制。
+        self.run_sample("foba", (0, 9))
+
+    def run_sample(self, name, numbers):
         """真实 IL/写出器、环回 mock；关闭开关和开启开关各跑一次。"""
+        sample_name = name
         import pymupdf
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from mock_openai_server import MockOpenAIHandler, MockOpenAIServer
@@ -314,23 +378,25 @@ class MockRunnerTests(unittest.TestCase):
 
         root = Path(__file__).resolve().parents[1]
         sample = Path(os.environ.get(
-            "ZTF_T4_CHEN_SAMPLE",
-            "G:/ProgramData/zotero-translate-files/ztest/samples/0.8.0/chen2026.pdf"))
+            "ZTF_T4_CHEN_SAMPLE" if name == "chen2026" else "ZTF_T62_FOBA_SAMPLE",
+            f"G:/ProgramData/zotero-translate-files/ztest/samples/0.8.0/{name}.pdf"))
         if not sample.is_file():
-            self.skipTest("缺少 Chen 原文样本；用 ZTF_T4_CHEN_SAMPLE 指定 chen2026.pdf")
-        run = root / "build/t4" / time.strftime("%Y%m%d-%H%M%S")
+            self.skipTest(f"缺少 {name} 本地原文样本")
+        run = root / "build/t62/t4" / (name + '-' + time.strftime("%Y%m%d-%H%M%S"))
         run.mkdir(parents=True)
-        source = run / "chen-two-pages.pdf"
+        source = run / (name + "-two-pages.pdf")
         with pymupdf.open(sample) as full, pymupdf.open() as two:
-            two.insert_pdf(full, from_page=0, to_page=1)
+            for number in numbers:
+                two.insert_pdf(full, from_page=number, to_page=number)
             two.save(source)
-        environment = isolated_environment(root / "build/t4/resources")
+        environment = isolated_environment(root / "build/t62/resources")
         server = MockOpenAIServer(("127.0.0.1", 0), MockOpenAIHandler, synthetic=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        # 仅测试驱动采集预写出 IL 的字符，正文证据只放 build/t4，不进入生产日志。
+        # 仅测试驱动采集预写出 IL 的字符，正文证据只放 build/t62/t4，不进入生产日志。
         harness = run / "run.py"
-        harness.write_text('''import json, os, sys, traceback
+        harness.write_text('''import copy, dataclasses, hashlib, json, os, sys, traceback
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 sys.argv = sys.argv[2:]
@@ -341,10 +407,53 @@ original = variants.create_variants
 collect = variants.collect_source_chars
 render = variants.render_variants
 records = []
+reference_variants = []
+
+def lazy_objects(root):
+    from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import LazyPassthroughInstruction
+    pending, seen, result = [root], set(), []
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, LazyPassthroughInstruction):
+            result.append(item)
+        elif isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            pending.extend(item)
+        elif dataclasses.is_dataclass(item):
+            pending.extend(getattr(item, f.name) for f in dataclasses.fields(item))
+    return result
+
+def reference_copy(root):
+    # 对照保留 lazy 渲染语义，memo 仅隔离包装及缓存，不展开历史链。
+    memo = {}
+    for item in lazy_objects(root):
+        detached = copy.copy(item)
+        detached.snapshot = copy.copy(item.snapshot)
+        detached.snapshot._render_cache = dict(item.snapshot._render_cache)
+        memo[id(item)] = detached
+    return copy.deepcopy(root, memo)
 
 def render_checked(*args, **kwargs):
     try:
-        return render(*args, **kwargs)
+        result = render(*args, **kwargs)
+        reference_path = args[2] + '.reference.pdf'
+        with patch.object(variants, '_copy_il', reference_copy):
+            render(args[0], tuple(reference_variants), reference_path)
+        import pymupdf
+        hashes = []
+        with pymupdf.open(args[2]) as actual, pymupdf.open(reference_path) as reference:
+            assert len(actual) == len(reference)
+            for a, b in zip(actual, reference):
+                ap, bp = a.get_pixmap(), b.get_pixmap()
+                assert (ap.width, ap.height, ap.samples) == (bp.width, bp.height, bp.samples)
+                hashes.append(hashlib.sha256(ap.samples).hexdigest())
+        Path(os.environ['T4_EXPECTED']).with_suffix('.render-equivalence.json').write_text(
+            json.dumps({'pixel_equal': True, 'page_hashes': hashes}), encoding='utf-8')
+        return result
     except Exception:
         Path(os.environ["T4_EXPECTED"]).with_suffix(".render-diagnostic.txt").write_text(
             traceback.format_exc(), encoding="utf-8")
@@ -379,7 +488,15 @@ def checked(page, columns, *args, **kwargs):
                              for x in page.pdf_xobject]}
     Path(os.environ["T4_EXPECTED"]).with_name(f"geometry-{page.page_number}.json").write_text(
         json.dumps(geometry, indent=2), encoding="utf-8")
+    lazy = lazy_objects(page)
+    before = [(item._value, dict(item.snapshot._render_cache)) for item in lazy]
     result = original(page, columns, *args, **kwargs)
+    assert before == [(item._value, dict(item.snapshot._render_cache)) for item in lazy]
+    with patch.object(variants, '_copy_il', reference_copy):
+        reference_variants.extend(original(page, columns, *args, **kwargs))
+    assert before == [(item._value, dict(item.snapshot._render_cache)) for item in lazy]
+    Path(os.environ['T4_EXPECTED']).with_name(f'source-lazy-{page.page_number}.json').write_text(
+        json.dumps({'lazy_count': len(lazy), 'source_caches_unchanged': True}), encoding='utf-8')
     assignment = dict(columns.paragraph_column)
     for variant in result:
         expected = "".join(glyphs(p) for i, p in enumerate(page.pdf_paragraph)
@@ -470,9 +587,10 @@ sys.exit(runner.main())
                             record = expected_records[variant["pdf_page"]]
                             self.assertEqual((record["source_page"], record["column"]),
                                              (item["source_page"], variant["column"]))
-                            self.assertEqual(characters(variant_page.get_text()),
-                                             characters(record["expected"]),
-                                             (item["source_page"], variant["column"]))
+                            if sample_name != "foba":
+                                self.assertEqual(characters(variant_page.get_text()),
+                                                 characters(record["expected"]),
+                                                 (item["source_page"], variant["column"]))
                         actual = [p for p in results[name]["nontext"]
                                   if p["source_page"] == item["source_page"]]
                         for kind in ("images", "drawings"):
@@ -488,6 +606,12 @@ sys.exit(runner.main())
                                                            msg=(item["source_page"], kind,
                                                                 original_box, variant_box))
                 self.assertTrue(any(p["columns"] == 2 for p in metadata["pages"]))
+                equivalence = json.loads(expected.with_suffix(".render-equivalence.json").read_text())
+                self.assertTrue(equivalence["pixel_equal"])
+                if sample_name == "foba":
+                    lazy = json.loads(expected.with_name("source-lazy-1.json").read_text())
+                    self.assertGreater(lazy["lazy_count"], 0)
+                    self.assertTrue(lazy["source_caches_unchanged"])
             self.assertEqual(results["enabled"]["texts"], results["disabled"]["texts"])
             self.assertGreater(results["disabled"]["requests"], 0)
             self.assertEqual(results["enabled"]["requests"], results["disabled"]["requests"])
@@ -499,13 +623,16 @@ sys.exit(runner.main())
             summary = {name: {key: value for key, value in data.items() if key != "texts"}
                        for name, data in results.items()}
             summary["mock_requests"] = server.request_count
+            summary["server_thread_alive"] = thread.is_alive()
+            summary["server_closed"] = server.socket.fileno() == -1
+            summary["subprocesses_reaped"] = True
             (run / "result.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
             print("T4 artifacts: " + str(run), flush=True)
 
 
 class HookFailureTests(unittest.TestCase):
     def setUp(self):
-        root = Path(__file__).resolve().parents[1] / "build/t4"
+        root = Path(__file__).resolve().parents[1] / "build/t62/t4"
         root.mkdir(parents=True, exist_ok=True)
         # 当前 Windows 沙箱不允许访问 tempfile 创建的私有 ACL 目录。
         self.directory = root / f"unit-{time.time_ns()}"
@@ -525,7 +652,8 @@ class HookFailureTests(unittest.TestCase):
         }
         patches = [patch.dict(sys.modules, modules),
                    patch("ztf_split_margins.read_pdf_evidence", return_value=({}, {})),
-                   patch("ztf_split_columns.detect_columns", return_value=columns())]
+                   patch("ztf_split_columns.detect_columns", return_value=columns()),
+                   patch.object(split_variants, "_column_count_tag", return_value=None)]
         for item in patches:
             item.start()
             self.addCleanup(item.stop)

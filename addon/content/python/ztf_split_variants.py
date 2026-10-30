@@ -10,7 +10,7 @@ import json
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ _DIRECTORY = str(Path(__file__).resolve().parent)
 if _DIRECTORY not in sys.path:
     sys.path.insert(0, _DIRECTORY)
 
-from ztf_split_types import SPANNING, Char, PageColumns
+from ztf_split_types import MARGIN, SPANNING, Char, PageColumns
 
 
 @dataclass(frozen=True)
@@ -123,6 +123,65 @@ def _form_carriers(page, forms=None):
     return carriers
 
 
+def _copy_il(value):
+    """复制边界将 0.6.4 lazy 图形历史替换为有效指令，不改原对象及缓存。"""
+    from babeldoc.format.pdf.document_il.frontend.il_creater_active_support import (
+        LazyPassthroughInstruction,
+    )
+
+    memo, seen, pending = {}, set(), [value]
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, LazyPassthroughInstruction):
+            detached = copy.copy(item)
+            detached.snapshot = copy.copy(item.snapshot)
+            detached.snapshot._render_cache = dict(item.snapshot._render_cache)
+            memo[id(item)] = detached.materialize()
+        elif isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            pending.extend(item)
+        elif is_dataclass(item) and not isinstance(item, type):
+            pending.extend(getattr(item, field.name) for field in fields(item))
+        elif hasattr(item, "__dict__") and not isinstance(item, type):
+            pending.extend(vars(item).values())
+    return copy.deepcopy(value, memo)
+
+
+def _column_count_tag(pdf):
+    """读取结构树内的 ColumnCount；不从正文或页面字典猜测标签。"""
+    import pymupdf
+
+    native = pymupdf.mupdf
+    document = native.pdf_document_from_fz_document(pdf.this)
+    tree = native.pdf_dict_getp(native.pdf_trailer(document), "Root/StructTreeRoot")
+    pending, seen = [tree], set()
+    while pending:
+        item = pending.pop()
+        xref = native.pdf_to_num(item)
+        if xref:
+            if xref in seen:
+                continue
+            seen.add(xref)
+        if native.pdf_is_array(item):
+            pending.extend(native.pdf_array_get(item, i)
+                           for i in reversed(range(native.pdf_array_len(item))))
+        elif native.pdf_is_dict(item):
+            count = native.pdf_dict_gets(item, "ColumnCount")
+            if native.pdf_is_int(count) and native.pdf_to_int(count) in (1, 2):
+                return native.pdf_to_int(count)
+            # /P、/Pg 是父级和源页反向引用，不属于子结构或布局属性。
+            for i in reversed(range(native.pdf_dict_len(item))):
+                key = native.pdf_to_name(native.pdf_dict_get_key(item, i))
+                if key not in ("P", "Pg"):
+                    pending.append(native.pdf_dict_get_val(item, i))
+    return None
+
+
 def create_variants(
     page: Any, columns: PageColumns,
     char_columns: Mapping[tuple[int, int, int | None], int] | None = None,
@@ -168,7 +227,7 @@ def create_variants(
     for column in (*range(columns.columns), SPANNING):
         indices = tuple(index for index in range(len(page.pdf_paragraph))
                         if assignments.get(index) == column)
-        variant = copy.deepcopy(page)
+        variant = _copy_il(page)
         variant.pdf_paragraph = [variant.pdf_paragraph[index] for index in indices]
         variant.pdf_character = [char for char in variant.pdf_character
                                  if char_columns.get((char.render_order, char.sub_render_order,
@@ -197,7 +256,7 @@ def create_variants(
                 break
             for index in selected:
                 form = (variant.pdf_form[index] if index < len(page.pdf_form)
-                        else copy.deepcopy(all_forms[index]))
+                        else _copy_il(all_forms[index]))
                 if id(all_forms[index]) not in selected_formula_forms:
                     forms.append((index, form))
                 active.add(form.xobj_id)
@@ -270,7 +329,7 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
         for variant in variants:
             config.raise_if_cancelled()
             # FontMapper.add_font 会往 IL 中追加字体，副本不得污染待交付的 IL。
-            document = il.Document(page=[copy.deepcopy(variant.page)], total_pages=1)
+            document = il.Document(page=[_copy_il(variant.page)], total_pages=1)
             with pymupdf.open(creator.original_pdf_path) as pdf:
                 _isolate_form_streams(document.page[0], pdf)
                 writer = PDFCreater(creator.original_pdf_path, document, config,
@@ -296,7 +355,7 @@ def install(log: Callable[[dict], None]) -> None:
     from babeldoc.format.pdf.document_il.midend.il_translator_llm_only import (
         ILTranslatorLLMOnly,
     )
-    from ztf_split_columns import detect_columns
+    from ztf_split_columns import detect_columns, detect_document_columns
     from ztf_split_lines import build_lines
     from ztf_split_margins import classify_margins, read_pdf_evidence
 
@@ -308,6 +367,7 @@ def install(log: Callable[[dict], None]) -> None:
         tagged, appended = read_pdf_evidence(str(source_pdf))
         entries = []
         with pymupdf.open(source_pdf) as source:
+            column_count_tag = _column_count_tag(source)
             for page in document.page:
                 number = page.page_number
                 original = source[number]
@@ -335,11 +395,19 @@ def install(log: Callable[[dict], None]) -> None:
             {i: tagged.get(entry[0].page_number, ()) for i, entry in enumerate(entries)},
             {i: appended.get(entry[0].page_number, ()) for i, entry in enumerate(entries)},
         )
+        document_columns = detect_document_columns(
+            [e[2] for e in entries], [e[5] for e in entries], [e[6] for e in entries],
+            margins, {i: e[4] for i, e in enumerate(entries)},
+            column_count_tag,
+        )
         for index, (page, chars, lines, convert, figures, width, height) in enumerate(entries):
             columns = detect_columns(page.page_number, width, height, lines,
-                                     margins[index], figures)
+                                     margins[index], document_columns, figures)
+            mid = width / 2
             groups = {char_id: group for line, group in zip(lines, columns.line_column)
-                      for char_id in line.char_ids}
+                      if group in (MARGIN, SPANNING) for char_id in line.char_ids}
+            groups.update({char.id: (0 if columns.columns == 1 or char.x1 <= mid else 1)
+                           for char in chars if char.id not in groups})
             owners = {(char.order, char.sub_order, char.xobj): groups[char.id] for char in chars}
             snapshots[id(page)] = (columns, owners, convert,
                                    tuple(id(p) for p in page.pdf_paragraph))

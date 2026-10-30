@@ -5,57 +5,100 @@
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from math import isfinite
 
 from ztf_split_types import Char, Line
 
 
+@dataclass(frozen=True)
+class _WritingLine(Line):
+    # 冻结 Line 接口仍可直接使用；保留字符框以区分中线上的字和空白。
+    chars: tuple[Char, ...] = field(repr=False)
+
+
+def _characters(line: Line) -> tuple[Char, ...]:
+    """build_lines 保留逐字数据；手工构造的 Line 视为单个连续字符框。"""
+    if isinstance(line, _WritingLine):
+        return line.chars
+    return tuple(Char(line.char_ids[0] if line.char_ids else -1,
+                      line.order_start, 0, line.x0, line.y0, line.x1, line.y1,
+                      line.text, paragraph)
+                 for paragraph in (line.paragraphs or (-1,)))
+
+
 def build_lines(page: int, chars: Sequence[Char]) -> tuple[Line, ...]:
     """按 (order, sub_order) 切行；输入字符和顺序容器均不修改。
 
-    同基线或整组字符框有共同纵向交集时，向右连续写入。
-    向左重写另起一行。先确定整行基线，再将每个正宽空隙两侧拆为不同
-    Line，所有段沿用整行基线，供认栏读取空隙；不以字符宽度作阈值。
-    baseline 取整行最常见的 y1（并列时取最先出现者），不受上标改变。
+    同主基线或与主基线字符框纵向重叠时，向右连续写入。
+    向左重写另起一行；任何正宽空隙都不切行。
+    分组锚框固定，不被上下标缩窄或随上下标字数漂移。
+    baseline 摘要沿用整行最常见的 y1（并列时取最先出现者）。
     """
     groups: list[list[Char]] = []
-    overlap_top = overlap_bottom = 0.0
+    anchor_top = anchor_baseline = None
     for char in sorted(chars, key=lambda char: (char.order, char.sub_order)):
         if (not all(isfinite(value) for value in (char.x0, char.y0, char.x1, char.y1))
                 or char.x1 < char.x0 or char.y1 < char.y0):
             raise ValueError("invalid_char_box")
         previous = groups[-1][-1] if groups else None
         same_row = previous is not None and (
-            previous.y1 == char.y1
-            or max(overlap_top, char.y0) < min(overlap_bottom, char.y1))
+            anchor_baseline == char.y1
+            or max(anchor_top, char.y0) < min(anchor_baseline, char.y1))
         continuous = previous is not None and char.x0 >= previous.x0
         if not same_row or not continuous:
             groups.append([])
-            overlap_top, overlap_bottom = char.y0, char.y1
-        else:
-            overlap_top = max(overlap_top, char.y0)
-            overlap_bottom = min(overlap_bottom, char.y1)
+            anchor_top, anchor_baseline = char.y0, char.y1
         groups[-1].append(char)
-    segments: list[list[Char]] = []
     baselines = []
     for group in groups:
         counts: dict[float, int] = {}
         for char in group:
             counts[char.y1] = counts.get(char.y1, 0) + 1
         baseline = max(counts, key=counts.get)
-        right = None
-        for char in group:
-            if right is None or char.x0 > right:
-                segments.append([])
-                baselines.append(baseline)
-            segments[-1].append(char)
-            right = char.x1 if right is None else max(right, char.x1)
+        baselines.append(baseline)
     return tuple(
-        Line(page, index, tuple(char.id for char in group),
+        _WritingLine(page, index, tuple(char.id for char in group),
              group[0].order, group[-1].order,
              min(char.x0 for char in group), max(char.x1 for char in group),
              min(char.y0 for char in group), max(char.y1 for char in group),
              baselines[index], "".join(char.text for char in group),
-             tuple(sorted({char.paragraph for char in group if char.paragraph > -1})))
-        for index, group in enumerate(segments)
+             tuple(sorted({char.paragraph for char in group if char.paragraph > -1})),
+             tuple(group))
+        for index, group in enumerate(groups)
     )
+
+
+def build_rows(lines: Sequence[Line]) -> tuple[tuple[int, ...], ...]:
+    """同基线或字符框纵向重叠的书写行合并为视觉行，返回输入位置。
+
+    按纵向区间的连通分量合并；不要求内容流相邻，不设坐标容差。
+    """
+    parents = list(range(len(lines)))
+
+    def root(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    baselines = {}
+    intervals = []
+    for index, line in enumerate(lines):
+        if line.baseline in baselines:
+            parents[root(index)] = root(baselines[line.baseline])
+        baselines[line.baseline] = index
+        intervals.extend((char.y0, char.y1, index) for char in _characters(line)
+                         if char.y0 < char.y1)
+    end = None
+    anchor = None
+    for top, bottom, index in sorted(intervals):
+        if end is not None and top < end:
+            parents[root(index)] = root(anchor)
+            end = max(end, bottom)
+        else:
+            anchor, end = index, bottom
+    rows = {}
+    for index in range(len(lines)):
+        rows.setdefault(root(index), []).append(index)
+    return tuple(tuple(row) for row in sorted(rows.values(), key=lambda row: row[0]))
