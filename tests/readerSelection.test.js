@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const nodeTest = require("node:test");
 
 // 仅测试用：逐函数复制 Zotero 10.0.6 打包源码，不依赖 build/research 在运行时存在。
 
@@ -896,6 +897,9 @@ function fixture(metadata = { info: { Custom: { ZTFSplitLayout: JSON.stringify(l
   const clones = new WeakSet();
   const cloneCalls = [];
   const logs = [];
+  const hookLogs = [];
+  // 保留原有故障断言；生命周期事件单独收集，并在 T7 用例中明确验证。
+  const collectLog = line => (JSON.parse(line).event === "reader_selection_hook" ? hookLogs : logs).push(line);
   const outer = windowMock();
   const pdfDocument = {
     calls: 0,
@@ -958,8 +962,8 @@ function fixture(metadata = { info: { Custom: { ZTFSplitLayout: JSON.stringify(l
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,
     "../addon/content/modules/readerSelection.js"), "utf8"), context);
   const module = context.ZoteroTranslateFilesReaderSelection;
-  module.init({ Zotero: { debug: line => logs.push(line) }, log: line => logs.push(line) });
-  return { module, reader, internal, outer, makeView, logs, pdfDocument, cloneCalls, context };
+  module.init({ Zotero: { debug: collectLog }, log: collectLog });
+  return { module, reader, internal, outer, makeView, logs, hookLogs, pdfDocument, cloneCalls, context };
 }
 
 function flags(view, index = 0) { return view._pdfPages[index].chars.map(char => !!char.isolated); }
@@ -998,7 +1002,9 @@ test("普通 PDF 完全不挂钩、不包装方法", async () => {
   assert.equal(v._mergeProcessedPageData, merge);
   assert.equal(f.internal._createView, create);
   assert.deepEqual(flags(v), [false, false, false, false, true]);
-  assert.equal(f.logs.length, 0);
+  assert.deepEqual(f.logs.map(JSON.parse), [
+    { event: "reader_selection_fallback", reason: "layout_metadata_missing", count: 1 },
+  ]);
   f.module.shutdown();
 });
 
@@ -1158,7 +1164,10 @@ test("空区域回退页不改变原生隔离；点击正文外恢复原标记",
   down(v, 655, 205);
   assert.deepEqual(flags(v), [false, false, false, false, true]);
   down(v, -1, 205);
-  assert.equal(f.logs.length, 0);
+  assert.deepEqual(f.logs.map(JSON.parse), [
+    { event: "reader_selection_fallback", reason: "layout_regions_empty", count: 1 },
+    { event: "reader_selection_fallback", reason: "selection_position_missing", count: 1 },
+  ]);
   f.module.shutdown();
 });
 
@@ -1507,6 +1516,426 @@ function nativeSelectionDriver(view, throttled = false) {
           Math.min(range.anchorOffset, range.headOffset), Math.max(range.anchorOffset, range.headOffset)))));
     },
   };
+}
+
+test("T7：两侧存在原生隔离字符时，英文跨页仍隔离本页中文", async () => {
+  const f = fixture();
+  const view = f.internal._primaryView;
+  const driver = nativeSelectionDriver(view);
+  // 最小复现：直接保留 worker 的原生标记，排除页面合并和页高的影响。
+  for (const index of [0, 1]) {
+    view._pdfPages[index].chars = view._pdfPages[index].chars.filter(char =>
+      char.c === "E" || char.c === "中");
+    view._pdfPages[index].chars.forEach((char, offset) => {
+      char.offset = offset;
+      char.isolated = true;
+      char.wordBreakAfter = char.lineBreakAfter = true;
+    });
+  }
+  await f.module.attachToReader(f.reader);
+  driver.down(0, 51, 205);
+  driver.move(1, 59, 205);
+  assert.ok(view._pdfPages[0].chars.filter(char => char.kind === "zh")
+    .every(char => char.isolated), "从第 N 页英文拖到 N+1 页英文，本页中文必须保持 isolated");
+  driver.check("en", "E|E");
+  assert.deepEqual(f.logs, [], "复现不依赖钩子回退");
+  f.module.shutdown();
+});
+
+// 来源：Zotero 10.0.6 omni.ja/resource/reader/pdf/build/pdf.worker.mjs:59917–60030。
+// 完整复制原生页尺寸分段和内容范围计算；7 段路径在读取行之前返回。
+function getPageSizeIntervals(pages) {
+  let intervals = [];
+  let currentInterval = [];
+  for (let i = 0; i < pages.length; i++) {
+    let {
+      view
+    } = pages[i];
+    let width = view[2] - view[0];
+    let height = view[3] - view[1];
+    if (currentInterval.length === 0) {
+      currentInterval.push(i);
+    } else {
+      let lastPageIndex = currentInterval[currentInterval.length - 1];
+      let {
+        view: lastView
+      } = pages[lastPageIndex];
+      let lastWidth = lastView[2] - lastView[0];
+      let lastHeight = lastView[3] - lastView[1];
+      if (width === lastWidth && height === lastHeight) {
+        currentInterval.push(i);
+      } else {
+        intervals.push(currentInterval);
+        currentInterval = [i];
+      }
+    }
+  }
+  if (currentInterval.length > 0) {
+    intervals.push(currentInterval);
+  }
+  return intervals;
+}
+async function getContentRects(pdfDocument, structuredCharsProvider, pageLabels) {
+  let contentRects = [];
+  let {
+    numPages
+  } = pdfDocument.catalog;
+  let pages = [];
+  for (let i = 0; i < numPages; i++) {
+    let page = await pdfDocument.getPage(i);
+    pages.push(page);
+  }
+  for (let i = 0; i < numPages; i++) {
+    let {
+      view
+    } = pages[i];
+    contentRects.push(view.slice());
+  }
+  if (numPages > 100) {
+    return contentRects;
+  }
+  let intervals = getPageSizeIntervals(pages);
+  let maxInterval = intervals.reduce((a, b) => a.length > b.length ? a : b);
+  if (intervals.length > 3) {
+    return contentRects;
+  }
+  let pageLines = [];
+  for (let i = 0; i < numPages; i++) {
+    let {
+      view
+    } = pages[i];
+    let chars = await structuredCharsProvider(i);
+    let lines = getLinesFromChars(chars, view);
+    pageLines.push(lines);
+  }
+  for (let i = 0; i < numPages; i++) {
+    let pageIndex = i;
+    let startPage = Math.max(pageIndex - 2, 0);
+    let endPage = Math.min(pageIndex + 2, numPages - 1);
+    let combinedLines = [];
+    for (let i = startPage; i <= endPage; i++) {
+      let lines = pageLines[i];
+      combinedLines.push(...lines);
+    }
+    let clusters = getClusters(combinedLines, 'centerY', 0.2);
+    let removeLines = new Set();
+    for (let cluster of clusters) {
+      if (cluster.length < 2 || cluster.length > 10) {
+        continue;
+      }
+      for (let i = 0; i < cluster.length; i++) {
+        let currentLine = cluster[i];
+        if (currentLine.pageIndex !== pageIndex) {
+          continue;
+        }
+        for (let j = 0; j < cluster.length; j++) {
+          let otherLine = cluster[j];
+          if (otherLine.pageIndex === pageIndex) {
+            continue;
+          }
+          let min = Math.min(currentLine.text.length, otherLine.text.length);
+          let max = Math.max(currentLine.text.length, otherLine.text.length);
+          if (i === j || removeLines.has(currentLine) || (max - min) / max > 0.2) {
+            continue;
+          }
+          let dist = distance(currentLine.text, otherLine.text);
+          let stringsEqual = dist / currentLine.text.length <= 0.2;
+          if (stringsEqual) {
+            removeLines.add(currentLine);
+          }
+        }
+      }
+    }
+    let currentPageLines = [];
+    for (let line of combinedLines) {
+      let pageLabel = pageLabels[pageIndex];
+      if (!removeLines.has(line) && line.pageIndex === pageIndex && !(line.text === pageLabel || pageLabel.length >= 2 && line.text.includes(pageLabel)) && intersectRects(line.rect, contentRects[pageIndex])) {
+        currentPageLines.push(line);
+      }
+    }
+    let eps = 0.1;
+    contentRects[i] = [Math.min(...currentPageLines.map(x => x.rect[0])) + eps, Math.min(...currentPageLines.map(x => x.rect[1])) + eps, Math.max(...currentPageLines.map(x => x.rect[2])) - eps, Math.max(...currentPageLines.map(x => x.rect[3])) - eps];
+  }
+  return contentRects;
+}
+
+
+// foba_1.pdf（PyMuPDF 1.28.2 只读提取）：35 页，连续尺寸共 7 段。
+const fobaSizeRuns = [[1, 1224, 792], [12, 612, 792], [2, 1095.35986328125, 792],
+  [16, 612, 792], [1, 1224, 792], [2, 612, 792], [1, 1224, 792]];
+
+async function variedSizeFixture(raised = false, metadata = true) {
+  const sizes = fobaSizeRuns.flatMap(([count, width, height]) =>
+    Array.from({ length: count }, () => [width, height]));
+  if (raised) for (const index of [2, 4, 6, 8]) sizes[index][1] += 400;
+  const data = layout();
+  data.pages = sizes.map((size, index) => ({ ...structuredClone(data.pages[1]), src: index }));
+  const f = fixture();
+  const view = f.internal._primaryView;
+  const driver = nativeSelectionDriver(view);
+  view._pdfPages = Object.fromEntries(sizes.map(([width, height], index) => {
+    const page = selectionPage(index);
+    page.viewBox = [0, 0, width, height];
+    // 原生 isolated 为 0；字符和冻结区域均跟随加高页移动。
+    page.chars = page.chars.filter(char => ["en", "zh"].includes(char.kind));
+    for (const [offset, char] of page.chars.entries()) {
+      char.offset = offset;
+      for (const rect of [char.rect, char.inlineRect]) {
+        rect[1] += height - 792;
+        rect[3] += height - 792;
+      }
+    }
+    for (const region of data.pages[index].regions) {
+      region.r[1] += height - 792;
+      region.r[3] += height - 792;
+    }
+    return [index, page];
+  }));
+  f.pdfDocument.getMetadata = async () => metadata
+    ? { info: { Custom: { ZTFSplitLayout: JSON.stringify(data) } } } : {};
+  const pages = Object.values(view._pdfPages).map(page => ({ view: page.viewBox }));
+  let providerCalls = 0;
+  const contentRects = await getContentRects({ catalog: { numPages: pages.length },
+    async getPage(index) { return pages[index]; } }, async () => {
+    providerCalls++;
+    throw new Error("超过 3 段应在字符/行分析前返回");
+  }, []);
+  assert.equal(providerCalls, 0);
+  assert.deepEqual(contentRects, pages.map(page => page.view));
+  assert.equal(getPageSizeIntervals(pages).length, raised ? 15 : 7);
+  // worker:61253–61259 -> reader.js:75776–75823：内容框决定原生隔离索引，
+  // 再经过真实合并入口；不能仅修改 viewBox 来冒充覆盖 worker 分支。
+  const nativePages = structuredClone(view._pdfPages);
+  const mergeProcessed = index => {
+    const page = structuredClone(nativePages[index]);
+    for (const char of page.chars) {
+      // worker:58477–58479 的原生矩形相交判断。
+      const r1 = contentRects[index];
+      const r2 = char.rect;
+      if (r2[0] > r1[2] || r2[2] < r1[0] || r2[1] > r1[3] || r2[3] < r1[1]) {
+        char.isolated = true;
+      }
+    }
+    const isolated = page.chars.flatMap((char, offset) => char.isolated ? [offset] : []);
+    if (isolated.length) view._processedPageIsolatedCharIndexes[index] = isolated;
+    else delete view._processedPageIsolatedCharIndexes[index];
+    view._pdfPages[index] = view._mergeProcessedPageData(index, page);
+  };
+  for (let index = 0; index < pages.length; index++) mergeProcessed(index);
+  assert.ok(Object.values(view._pdfPages).every(page => page.chars.every(char => !char.isolated)));
+  return { ...f, view, driver, sizes, mergeProcessed };
+}
+
+test("T7 尺寸分段对照：未挂钩时 7 段页面英文跨页会选入中文", async () => {
+  const f = await variedSizeFixture();
+  f.driver.down(1, 51, 205);
+  f.driver.move(2, 69, 205);
+  assert.match(f.view._selectionRanges.map(range => range.text).join("|"), /中译/);
+  assert.match(f.driver.copy().data.get("text/plain"), /中译/);
+  f.module.shutdown();
+});
+
+for (const raised of [false, true]) {
+  for (const reverse of [false, true]) {
+    for (const kind of ["en", "zh"]) {
+    test(`T7 尺寸分段：${raised ? "加高页" : "FoBa 7 段"}${reverse ? "反向" : "正向"}${kind}不会绕过已挂钩选区`, async () => {
+      const f = await variedSizeFixture(raised);
+      assert.equal(await f.module.attachToReader(f.reader), true);
+      assert.equal(await f.module.attachToReader(f.reader), true);
+      assert.deepEqual(f.hookLogs.map(JSON.parse), [
+        { event: "reader_selection_hook", reason: "view_attached", count: 1 },
+      ], "重复 attach 不得重复安装或重复报告成功");
+      const start = reverse ? 2 : 1;
+      const end = reverse ? 1 : 2;
+      const x = kind === "en" ? 50 : 350;
+      const text = kind === "en" ? "Ee" : "中译";
+      f.driver.down(start, x + (reverse ? 19 : 1), 205 + f.sizes[start][1] - 792);
+      f.driver.move(end, x + (reverse ? 1 : 19), 205 + f.sizes[end][1] - 792);
+      f.driver.check(kind, `${text}|${text}`);
+      f.mergeProcessed(start);
+      f.mergeProcessed(end);
+      f.driver.check(kind, `${text}|${text}`);
+      f.driver.up();
+      f.driver.check(kind, `${text}|${text}`);
+      f.driver.released(`${text} ${text}`);
+      checkPopupMatchesCopy(f.driver, f.view, `${text} ${text}`);
+      assert.equal(f.logs.length, 0);
+      assert.deepEqual(f.hookLogs.map(JSON.parse), [
+        { event: "reader_selection_hook", reason: "view_attached", count: 1 },
+        { event: "reader_selection_hook", reason: "selection_applied", count: 1 },
+      ], "挂载成功与实际处理过起点是两个独立证据");
+      f.module.shutdown();
+    });
+    }
+  }
+}
+
+test("T7 诊断：缺少冻结元数据不得静默放弃挂钩", async () => {
+  const f = await variedSizeFixture(false, false);
+  assert.equal(await f.module.attachToReader(f.reader), false);
+  assert.equal(await f.module.attachToReader(f.reader), false);
+  assert.deepEqual(f.logs.map(JSON.parse), [
+    { event: "reader_selection_fallback", reason: "layout_metadata_missing", count: 1 },
+  ]);
+  assert.deepEqual(f.hookLogs, []);
+  f.module.shutdown();
+});
+
+test("T7 诊断：元数据等待期间替换主视图，必须挂到当前视图", async () => {
+  const f = fixture();
+  const old = f.internal._primaryView;
+  let finishMetadata;
+  let metadataStarted;
+  const started = new Promise(resolve => { metadataStarted = resolve; });
+  f.pdfDocument.getMetadata = () => {
+    metadataStarted();
+    return new Promise(resolve => { finishMetadata = resolve; });
+  };
+  const pending = f.module.attachToReader(f.reader);
+  await started;
+  const current = f.internal._primaryView = f.makeView();
+  const driver = nativeSelectionDriver(current);
+  finishMetadata({ info: { Custom: { ZTFSplitLayout: JSON.stringify(layout()) } } });
+  assert.equal(await pending, true);
+  driver.down(0, 51, 205);
+  driver.move(1, 69, 205);
+  driver.check("en", "Ee|Ee");
+  assert.equal(old._iframeWindow.count("pointerdown"), 0);
+  assert.equal(current._iframeWindow.count("pointerdown"), 2,
+    "原生与插件各一个监听，不能返回 true 却跳过当前主视图");
+  assert.equal(f.hookLogs.length, 2);
+  f.module.shutdown();
+});
+
+test("T7 诊断：挂载初始化期间主视图再次被替换，不得误报成功", async () => {
+  const f = fixture();
+  let finishMetadata;
+  let started;
+  const metadataStarted = new Promise(resolve => { started = resolve; });
+  f.pdfDocument.getMetadata = () => {
+    started();
+    return new Promise(resolve => { finishMetadata = resolve; });
+  };
+  const pending = f.module.attachToReader(f.reader);
+  await metadataStarted;
+  const waiting = f.internal._primaryView = f.makeView();
+  let finishView;
+  let viewStarted;
+  const initializing = new Promise(resolve => { viewStarted = resolve; });
+  // thenable 精确锁定 attachView 已开始等待的时刻，无定时竞态。
+  waiting.initializedPromise = { then(resolve) { finishView = resolve; viewStarted(); } };
+  finishMetadata({ info: { Custom: { ZTFSplitLayout: JSON.stringify(layout()) } } });
+  await initializing;
+  const current = f.internal._primaryView = f.makeView();
+  finishView();
+  assert.equal(await pending, false);
+  assert.equal(waiting._iframeWindow.count("pointerdown"), 0);
+  assert.equal(current._iframeWindow.count("pointerdown"), 0);
+  assert.deepEqual(f.hookLogs, []);
+  assert.deepEqual(f.logs.map(JSON.parse), [
+    { event: "reader_selection_fallback", reason: "primary_view_not_hooked", count: 1 },
+  ]);
+  f.module.shutdown();
+});
+
+for (const reason of ["selection_position_missing", "selection_class_missing", "selection_empty_start",
+  "layout_page_missing", "layout_regions_empty"]) {
+  test(`T7 诊断：起点未处理 ${reason} 不得报告 selection_applied`, async () => {
+    const data = layout();
+    if (reason === "layout_page_missing") data.pages.length = 1;
+    if (reason === "layout_regions_empty") data.pages[0].regions = [];
+    const f = fixture({ info: { Custom: { ZTFSplitLayout: JSON.stringify(data) } } });
+    const view = f.internal._primaryView;
+    if (reason === "selection_class_missing") {
+      // 最近字符也位于全部冻结区域外，无法分类；日志不得夹带它的正文。
+      view._pdfPages[0].chars = [{ rect: [50, 790, 60, 800], c: "private-text" }];
+    } else if (reason === "selection_empty_start") view._pdfPages[0].chars = [];
+    assert.equal(await f.module.attachToReader(f.reader), true);
+    for (let i = 0; i < 2; i++) {
+      down(view, reason === "selection_position_missing" ? -1 : reason === "layout_page_missing" ? 655 : 55,
+        reason === "selection_class_missing" ? 795 : 205);
+    }
+    assert.deepEqual(f.logs.map(JSON.parse), [
+      { event: "reader_selection_fallback", reason, count: 1 },
+    ], "固定事件、原因、计数，重复起点去重且不含正文");
+    assert.deepEqual(f.hookLogs.map(JSON.parse), [
+      { event: "reader_selection_hook", reason: "view_attached", count: 1 },
+    ]);
+    f.module.shutdown();
+  });
+}
+
+for (const heights of [[800, 800], [800, 1200], [1200, 800]]) {
+  for (const kind of ["en", "zh"]) {
+    for (const reverse of [false, true]) {
+      for (const timing of ["起拖前", "起点页先迟到", "终点页先迟到"]) {
+        test(`T7：${kind} ${reverse ? "反向" : "正向"}跨页，页高 ${heights.join("/")}，原生隔离${timing}`, async () => {
+          const metadataLayout = layout();
+          for (const index of [0, 1]) {
+            for (const region of metadataLayout.pages[index].regions) {
+              region.r[1] += heights[index] - 800;
+              region.r[3] += heights[index] - 800;
+            }
+          }
+          const f = fixture({ info: { Custom: { ZTFSplitLayout: JSON.stringify(metadataLayout) } } });
+          const view = f.internal._primaryView;
+          const driver = nativeSelectionDriver(view);
+          // 加高页的字符和元数据一起移入增加的高度，不能只改未用到的 viewBox。
+          for (const index of [0, 1]) {
+            const page = view._pdfPages[index];
+            page.viewBox[3] = heights[index];
+            for (const char of page.chars) {
+              for (const rect of [char.rect, char.inlineRect]) {
+                rect[1] += heights[index] - 800;
+                rect[3] += heights[index] - 800;
+              }
+            }
+          }
+          const originalPages = structuredClone(view._pdfPages);
+          // 使用原生合并入口；覆盖复用字符与 {...char, isolated: true} 的复制路径。
+          const mergeNativeIsolation = index => {
+            view._processedPageIsolatedCharIndexes[index] = [0, 1, 2, 3, 4, 5, 6, 7];
+            view._pdfPages[index] = view._mergeProcessedPageData(index, view._pdfPages[index]);
+          };
+          if (timing === "起拖前") for (const index of [0, 1]) mergeNativeIsolation(index);
+          await f.module.attachToReader(f.reader);
+          const startPage = reverse ? 1 : 0;
+          const headPage = 1 - startPage;
+          const x = kind === "en" ? 50 : 350;
+          driver.down(startPage, x + (reverse ? 19 : 1), heights[startPage] - 595);
+          driver.move(headPage, x + (reverse ? 1 : 19), heights[headPage] - 595);
+          const assertOtherRegionsIsolated = () => {
+            for (const index of [0, 1]) {
+              assert.ok(view._pdfPages[index].chars.filter(char => char.kind !== kind)
+                .every(char => char.isolated), "另一侧、跨栏和页眉页脚不能被开放");
+            }
+          };
+          assertOtherRegionsIsolated();
+          if (timing !== "起拖前") {
+            const order = timing === "起点页先迟到" ? [startPage, headPage] : [headPage, startPage];
+            for (const index of order) {
+              mergeNativeIsolation(index);
+              assertOtherRegionsIsolated();
+            }
+          }
+          const text = kind === "en" ? "Ee|Ee" : "中译|中译";
+          const rects = [0, 1].map(index => [x, heights[index] - 600, x + 20, heights[index] - 590]);
+          driver.check(kind, text, rects);
+          driver.up();
+          driver.check(kind, text, rects);
+          driver.released(text.replaceAll("|", " "));
+          checkPopupMatchesCopy(driver, view, text.replaceAll("|", " "));
+          assert.deepEqual(f.logs, [], "整条路径无 fallback");
+          f.module.shutdown();
+          for (const index of [0, 1]) {
+            assert.deepEqual(view._pdfPages[index], { ...originalPages[index],
+              chars: originalPages[index].chars.map(char => ({ ...char, isolated: true })) },
+            "卸载保留原生隔离，不残留插件按侧改写的标记");
+          }
+        });
+      }
+    }
+  }
 }
 
 test("原生夹具可复现原实现的三个错误分组", () => {
@@ -2702,10 +3131,12 @@ test(`补挂钩：迟到隔离后菜单 ${failure} 失败，关闭菜单并记�
 });
 }
 
-(async () => {
+// 必须交由 node:test 等待；顶层未等待的 IIFE 在 --test-isolation=none 下可能
+// 已打印 AssertionError，却仍被测试运行器报告为 pass。
+nodeTest("readerSelection 回归", async () => {
   for (const { name, run } of tests) {
     await run();
     process.stdout.write(`通过：${name}\n`);
   }
   process.stdout.write(`readerSelection：${tests.length} 项测试通过\n`);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+});

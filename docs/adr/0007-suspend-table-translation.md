@@ -1,5 +1,7 @@
 # ADR 0007：0.7.0 暂缓表格翻译（仅翻译题注；表注与表格内容保留原文）
 
+> 0.8.0 更新：archive/ 下的 4 个封存模块及其单测已删除。需要恢复时从 git 历史取回：提交 `fe12236`（main 上 0.7.0 发布前最后一次提交）的 `addon/content/python/archive/`（4 个 helper，恢复到 `addon/content/python/`）与 6 个封存单测（tests/test_table2.py、test_table2_runner.py、test_table_headers.py、test_table_layout.py、test_table_roles.py、test_table_text.py，恢复到 `tests/`），例如 `git show fe12236:addon/content/python/archive/ztf_table2.py`。
+
 ## 背景
 
 0.6.0 发布后的表 2 问题（部分翻译、字号缩小）修复（issues #37/#38）在 0.7.0 T-B3 中经历多轮独立双轴审查仍未收敛：同格多段落字号不一致导致文字叠印、无线表几何判定退化、错误文本脱敏、正文回归断言无效、测试假绿等。用户决定：当前版本不再处理表格内容，仅翻译题注（表注/星号说明/来源注释与表格内容一并保留原文），表格翻译问题留待后续版本。表注翻译因碎片合并链路在保留原文路径存在 P1 缺陷（runner 失败/丢字），按硬收敛线回退为保留原文。

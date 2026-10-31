@@ -64,9 +64,7 @@ try {
         Get-ChildItem -LiteralPath $addonPath -Recurse -File -Force |
             Where-Object {
                 $_.Extension -ne '.pyc' -and
-                $_.FullName -notmatch '[\\/]__pycache__[\\/]' -and
-                # 封存代码（0.7.0 表格翻译暂停）不随插件发布；见 docs/archive/table-translation.md。
-                $_.FullName -notmatch '[\\/]python[\\/]archive[\\/]'
+                $_.FullName -notmatch '[\\/]__pycache__[\\/]'
             } |
             Sort-Object FullName
     )

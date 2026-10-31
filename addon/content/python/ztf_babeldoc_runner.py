@@ -297,7 +297,7 @@ def _link_paragraph_map(
     """Combine source boxes with final translated paragraph geometry."""
     paragraphs = []
     for page_index, page in enumerate(getattr(document, "page", ()) or ()):
-        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+        for paragraph_index, paragraph in enumerate(getattr(page, "pdf_paragraph", ()) or ()):
             snapshot = snapshots.get(id(paragraph))
             if snapshot is None:
                 continue
@@ -364,7 +364,7 @@ def _split_layout_pages(
         else:
             skips["invalid_page_geometry"] += 1
         paragraphs = []
-        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+        for paragraph_index, paragraph in enumerate(getattr(page, "pdf_paragraph", ()) or ()):
             snapshot = snapshots.get(id(paragraph))
             if snapshot is None:
                 skips["missing_snapshot"] += 1
@@ -374,6 +374,7 @@ def _split_layout_pages(
                 # 译文框无效时只影响跨栏扩框，段落本身仍按原文框规划。
                 skips["invalid_output_box"] += 1
             paragraphs.append({
+                "index": paragraph_index,
                 "box": snapshot["source_box"],
                 "output_box": output_box,
                 "label": _paragraph_layout_label(paragraph),
@@ -780,6 +781,10 @@ def create_completion_adapting(
             return response
         except Exception as error:
             failure = error
+            # The final independent-fragment rescue is one network attempt,
+            # including errors that normally trigger adaptation or recovery.
+            if (request_metadata or {}).get("phase") == "fragment_group_split_retry":
+                raise
             adaptation = parameter_adaptation(error)
             if adaptation is not None and attempts < 2:
                 attempts += 1
@@ -1198,6 +1203,7 @@ def _fragment_group_output_issues(
     expected_group_sizes: dict[str, int],
     group_outcomes: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] | None = None,
     member_keys_by_item_id: dict[str, str] | None = None,
+    member_qualities: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, str]:
     """Accumulate fragment outcomes across requests and reject only actual failures."""
     if group_outcomes is None:
@@ -1225,18 +1231,21 @@ def _fragment_group_output_issues(
                 # Continuation repacking will submit this item again; it is not
                 # a missing translation outcome yet.
                 continue
-            if output.get("_ztf_failed"):
-                failed = True
-                break
-            quality = validate_translation_output(
-                str(item.get("input", "")), translated, item, token_counter
-            )
-            if not quality["usable"]:
-                failed = True
-                break
             member_key = member_keys_by_item_id.get(
                 str(item.get("id")), str(item.get("id", ""))
             )
+            quality = (
+                {"usable": False, "reason": str(output["_ztf_failed"]),
+                 "checks": {"non_empty": False}}
+                if output.get("_ztf_failed") else validate_translation_output(
+                    str(item.get("input", "")), translated, item, token_counter
+                )
+            )
+            if member_qualities is not None:
+                member_qualities[member_key] = quality
+            if not quality["usable"]:
+                failed = True
+                continue
             stored_input = dict(item)
             stored_output = dict(output)
             stored_input["id"] = member_key
@@ -2236,9 +2245,6 @@ _TABLE_NOTE_WORD_RE = re.compile(
 )
 
 
-def _is_table_note_start(value: str) -> bool:
-    text = str(value or "").strip()
-    return bool(_TABLE_NOTE_START_RE.match(text) or _TABLE_NOTE_WORD_RE.match(text))
 _TABLE_NOTE_LAYOUT_LABELS = {"fallback_line", "table_footnote", "table_footnotes"}
 
 
@@ -3496,19 +3502,6 @@ def _configure_logging(api_key: str, policy: TranslationPolicy) -> None:
     babeldoc_logger.propagate = True
 
 
-def _read_integer_setting(name: str, default: int, minimum: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        value = int(raw)
-    except ValueError as error:
-        raise ValueError(f"{name} must be an integer.") from error
-    if value < minimum:
-        raise ValueError(f"{name} must be at least {minimum}.")
-    return value
-
-
 def _read_boolean_setting(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None or not raw.strip():
@@ -4339,7 +4332,7 @@ def _install_min_request_patches(
                 }
                 for item in batch
             ]
-            if phase == "repair":
+            if phase in {"repair", "fragment_group_split_retry"}:
                 request_state["repair_request_count"] = int(
                     request_state.get("repair_request_count", 0)
                 ) + 1
@@ -4348,7 +4341,8 @@ def _install_min_request_patches(
                 request_state,
                 max_output_tokens,
                 request_metadata={"phase": phase, "item_count": len(batch),
-                                  "estimated_output_tokens": estimated_output_tokens, "items": request_items_log},
+                                  "estimated_output_tokens": estimated_output_tokens,
+                                  "items": [] if phase == "fragment_group_split_retry" else request_items_log},
                 api_key=api_key,
                 model=instance.model,
                 **options,
@@ -4618,6 +4612,7 @@ def _install_min_request_patches(
                     group_sizes,
                     request_state.setdefault("fragment_group_outcomes", {}),
                     member_keys_by_item_id,
+                    request_state.setdefault("fragment_member_qualities", {}),
                 )
                 invalid_fragment_groups = request_state.setdefault(
                     "invalid_fragment_groups", {}
@@ -4683,7 +4678,12 @@ def _install_min_request_patches(
                                     else member_paragraph.unicode or ""
                                 ),
                                 "reason": reason,
-                                "checks": {"fragment_group_invalid": True},
+                                "checks": {
+                                    **request_state.get("fragment_member_qualities", {}).get(
+                                        str(member_key), {}
+                                    ).get("checks", {}),
+                                    "fragment_group_invalid": True,
+                                },
                                 "metadata": member_metadata,
                                 "layout_label": _paragraph_layout_label(member_paragraph),
                                 "fragment": True,
@@ -4718,11 +4718,15 @@ def _install_min_request_patches(
                                 if final_group_failure
                                 else "needs_repair",
                                 "reason": reason,
-                                "checks": {"fragment_group_invalid": True},
+                                "checks": repair_records.get(id(member_paragraph), {}).get(
+                                    "checks", {"fragment_group_invalid": True}
+                                ),
                                 "fragment": True,
                                 "fragment_type": group_member.get("fragment_type"),
                                 "fragment_id": group_id,
-                                "placeholder_issues": [],
+                                "placeholder_issues": request_state.get("fragment_member_qualities", {}).get(
+                                    str(id(member_paragraph)), {}
+                                ).get("checks", {}).get("placeholder_issues", []),
                                 "preview": _text_preview(member_source, api_key),
                                 "output_preview": "",
                             },
@@ -4776,7 +4780,12 @@ def _install_min_request_patches(
                         if paragraph is not None:
                             failed_paragraph_ids.add(id(paragraph))
                     elif fragment_group_failure:
-                        checks = {"fragment_group_invalid": True}
+                        checks = {
+                            **request_state.get("fragment_member_qualities", {}).get(
+                                str(id(paragraph)), {}
+                            ).get("checks", {}),
+                            "fragment_group_invalid": True,
+                        }
                         item_reason = fragment_group_failure
                     elif not failure_message and isinstance(source_text, str):
                         quality = validate_translation_output(
@@ -5011,7 +5020,12 @@ def _install_min_request_patches(
                     "reason": request_state.get("invalid_fragment_groups", {}).get(
                         group_id, "Linked fragment group requires repair."
                     ),
-                    "checks": {"fragment_group_invalid": True},
+                    "checks": {
+                        **request_state.get("fragment_member_qualities", {}).get(
+                            str(id(paragraph)), {}
+                        ).get("checks", {}),
+                        "fragment_group_invalid": True,
+                    },
                     "metadata": metadata,
                     "layout_label": _paragraph_layout_label(paragraph),
                     "fragment": True,
@@ -5358,7 +5372,7 @@ def _install_min_request_patches(
                 quality = {
                     "usable": False,
                     "reason": repair_group_issues[group_id],
-                    "checks": {"fragment_group_invalid": True},
+                    "checks": {**quality["checks"], "fragment_group_invalid": True},
                 }
             repair_quality_by_id[repair_id] = quality
 
@@ -5435,6 +5449,117 @@ def _install_min_request_patches(
                     exempt_failure_ids=kept_verbatim_paragraph_ids,
                 )
 
+        # A group that still failed validation or application gets one final,
+        # document-wide request as ordinary independent paragraphs. Do not use
+        # the repair repacker here: even an oversized batch gets only one shot.
+        split_repair_ids = {
+            repair_id for repair_id, record in records_by_repair_id.items()
+            if str(record.get("metadata", {}).get("fragment_id") or "")
+            in failed_repair_groups
+            and repair_id not in kept_verbatim_by_id
+        }
+        if split_repair_ids and not request_state.get("fatal_error"):
+            split_items = []
+            for repair_id in sorted(split_repair_ids):
+                item = dict(repair_items[repair_id])
+                for field in (
+                    "fragment", "fragment_id", "fragment_type", "fragment_part",
+                    "fragment_sibling_paragraph", "continues_in", "continued_from",
+                ):
+                    item.pop(field, None)
+                item.pop("repair_reason", None)
+                split_items.append(item)
+                paragraph_id = id(records_by_repair_id[repair_id]["paragraph"])
+                # Group rollback may have revoked earlier accepted outputs.
+                # A split result must never be replaced by one of those texts.
+                request_state.get("accepted_outputs", {}).pop(paragraph_id, None)
+                applied_by_id[repair_id] = False
+
+            split_prefix = (
+                "Translate each input independently into Chinese as an ordinary paragraph, "
+                "even if it is an incomplete sentence. Translate only its own input; "
+                "previous_context and next_context are read-only context. Preserve every "
+                "required_placeholders token exactly as specified and each formula's "
+                "original style span. Return only a JSON array of {id, output} objects.\n"
+                "## Here is the input:\n"
+            )
+            requests_before_split = request_budget.requests
+            split_outputs = translate_json_items_with_splitting(
+                split_items,
+                lambda batch: request_batch_callback(
+                    batch, prefix_override=split_prefix, phase="fragment_group_split_retry"
+                ),
+                request_budget,
+                stop_when_capped=True,
+                single_pass=True,
+                # This last rescue never aborts an otherwise exportable PDF.
+                on_batch_error=lambda error: None,
+            )
+            _write_job_log(
+                request_state,
+                {"event": "fragment_group_split_retry",
+                 "group_count": len(failed_repair_groups),
+                 "item_count": len(split_items),
+                 "request_count": request_budget.requests - requests_before_split},
+                api_key,
+            )
+            split_outputs_by_id = {str(item["id"]): item for item in split_outputs}
+            for item in split_items:
+                repair_id = item["id"]
+                record = records_by_repair_id[repair_id]
+                paragraph = record["paragraph"]
+                paragraph_id = id(paragraph)
+                output = split_outputs_by_id.get(str(repair_id), {})
+                translated = output.get("output")
+                failure = output.get("_ztf_failed")
+                quality = (
+                    {"usable": False, "reason": str(failure), "checks": {"non_empty": False}}
+                    if failure else validate_translation_output(
+                        item["input"], translated, item, token_counter
+                    )
+                )
+                applied = False
+                if quality["usable"] and quality["checks"].get("kept_verbatim"):
+                    kept_verbatim_by_id.add(repair_id)
+                    _mark_paragraph_kept_verbatim(request_state, policy, paragraph)
+                elif quality["usable"]:
+                    try:
+                        applied = bool(document_translator.il_translator.post_translate_paragraph(
+                            paragraph, record["tracker"],
+                            record.get("repair_translate_input") or record["translate_input"],
+                            str(translated),
+                        ))
+                    except Exception:
+                        applied = False
+                    if not applied:
+                        quality = {"usable": False,
+                                   "reason": "独立片段译文无法应用，已保留原文。",
+                                   "checks": {**quality["checks"], "restore_failed": True}}
+                if applied or repair_id in kept_verbatim_by_id:
+                    policy.clear_failure(paragraph)
+                    request_state.get("final_fragment_failure_ids", set()).discard(paragraph_id)
+                    request_state.get("failed_batch_paragraph_ids", set()).discard(paragraph_id)
+                    request_state.get("quality_failures", {}).pop(paragraph_id, None)
+                    if applied:
+                        request_state.setdefault("translated_paragraph_ids", set()).add(paragraph_id)
+                else:
+                    restore_paragraph_snapshots(
+                        request_state.get("document_paragraph_snapshots", {}), {paragraph_id}
+                    )
+                    request_state.get("translated_paragraph_ids", set()).discard(paragraph_id)
+                    request_state.setdefault("final_fragment_failure_ids", set()).add(paragraph_id)
+                applied_by_id[repair_id] = applied
+                repair_quality_by_id[repair_id] = quality
+                repair_translation_by_id[repair_id] = translated
+                repair_structural_by_id[repair_id] = _is_structural_quality_failure(quality["checks"])
+
+            # These members now settle independently, including when the cap
+            # prevented the rescue. No later group rollback may undo a sibling.
+            for group_id in failed_repair_groups:
+                request_state.get("invalid_fragment_groups", {}).pop(group_id, None)
+                request_state.get("fragment_group_outcomes", {}).pop(group_id, None)
+            failed_repair_groups.clear()
+
         for repair_id, record in records_by_repair_id.items():
             quality = repair_quality_by_id[repair_id]
             group_id = str(record.get("metadata", {}).get("fragment_id") or "")
@@ -5448,7 +5573,7 @@ def _install_min_request_patches(
                 applied = False
                 record["repair_status"] = "failed"
                 record["repair_reason"] = repair_group_issues[group_id]
-                record["repair_checks"] = {"fragment_group_invalid": True}
+                record["repair_checks"] = {**quality["checks"], "fragment_group_invalid": True}
             else:
                 applied = applied_by_id.get(repair_id, False)
                 if applied:
@@ -5498,8 +5623,8 @@ def _install_min_request_patches(
                     "fragment_type": record.get("metadata", {}).get("fragment_type"),
                     "fragment_id": record.get("metadata", {}).get("fragment_id"),
                     "placeholder_issues": record.get("repair_checks", {}).get("placeholder_issues", []),
-                    "preview": _text_preview(record.get("source", ""), api_key),
-                    "output_preview": _text_preview(translated, api_key) if applied else "",
+                    "preview": "" if repair_id in split_repair_ids else _text_preview(record.get("source", ""), api_key),
+                    "output_preview": _text_preview(translated, api_key) if applied and repair_id not in split_repair_ids else "",
                 },
                 api_key,
             )
@@ -5958,6 +6083,12 @@ def _install_min_request_patches(
 
     llm_module.PriorityThreadPoolExecutor = DeferredTranslationExecutor
 
+    if _split_dual_requested():
+        # T4 挂接，T5 接入合成
+        _load_helper("ztf_split_variants").install(
+            lambda event: _write_job_log(request_state, event, api_key)
+        )
+
 
 def babeldoc_version_error() -> str | None:
     try:
@@ -6329,11 +6460,10 @@ def _compose_split_dual(
         )
         with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
             json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
-        plan_helper = _load_helper("ztf_split_plan")
         compose_helper = _load_helper("ztf_split_compose")
-        plans = [plan_helper.plan_page(page) for page in layout["pages"]]
         stats = compose_helper.compose_split_document(
-            source_pdf, mono_pdf, plans, output_pdf
+            source_pdf, mono_pdf, layout, output_pdf,
+            log=lambda record: _write_job_log(request_state, record, api_key),
         )
     except Exception as error:  # noqa: BLE001 - 失败时回退为导入单语 PDF
         summary = {"error": log_safe_error(error, api_key)}
@@ -6363,9 +6493,10 @@ def _compose_split_dual(
         return {"error": "empty_output"}
     state["dual_result"] = output_pdf
     summary = dict(stats or {})
-    summary["pages"] = len(plans)
-    summary.setdefault("fallback_pages", sum(1 for plan in plans if plan.columns == 0))
-    _write_job_log(request_state, {"event": "split_dual", **summary}, api_key)
+    summary["pages"] = len(layout["pages"])
+    summary.setdefault("fallback_pages", 0)
+    _write_job_log(request_state, {"event": "split_dual",
+        **{key:value for key,value in summary.items() if key != "page_results"}}, api_key)
     return summary
 
 

@@ -1,490 +1,476 @@
-"""离线合成分栏双语 PDF，不发起网络请求。
+﻿"""T5 分栏合成：英文逐字过滤，中文变体整份嵌入，不裁剪、不涂黑。
 
-输入源 PDF、同页单语 PDF 和冻结的 PagePlan；输出原子替换的 PDF 与计数 dict。
-栏排版超出页面时，仅该源页回退整页并排并记录计数；其他合成或写入失败
-抛出异常，由 runner 记录脱敏日志并降级交付单语译本。
+输入源 PDF、单语 PDF、runner 导出的源段落/图表布局及 T4 sidecar。
+每源页输出两页，单页程序异常只撤销该页；保存失败不替换已有输出。
+导航和 ZTFSplitLayout 沿用 v1，坐标为实际输出页的 PDF 用户空间。
 """
-
-from dataclasses import dataclass
+from contextlib import ExitStack
 from collections import Counter
+from dataclasses import dataclass
+import ctypes
 import json
 import logging
 import math
 import os
+from pathlib import Path
 import tempfile
-from typing import TYPE_CHECKING
 
 import pymupdf as fitz
-
-if TYPE_CHECKING:
-    from ztf_split_plan import PagePlan
-
-
-MARGIN = 12.0
-
-
-class _ColumnLayoutOverflow(ValueError):
-    """可局部恢复的栏高度溢出，与第三方嵌入或写入异常分开处理。"""
+from ztf_split_types import Char, DocumentColumns, MARGIN, SPANNING
+from ztf_split_lines import build_lines
+from ztf_split_columns import detect_columns
+from ztf_split_margins import classify_margins, read_pdf_evidence
+from ztf_split_variants import object_region
 
 
 def _log(event, reason, **fields):
-    """只接受代码内固定原因；不记录第三方异常消息、路径或正文。"""
-    logging.getLogger(__name__).warning(json.dumps({
-        "event": event, "reason": reason, "count": 1, **fields}))
-
-
-def _close(document):
-    """清理失败独立记录，不覆盖合成失败，也不阻断其余资源清理。"""
-    try:
-        document.close()
-    except Exception as error:
-        _log("split_compose_cleanup_error", "close_failed", error_type=type(error).__name__)
+    page = fields.get('source_index', fields.get('output_index'))
+    logging.getLogger(__name__).warning(json.dumps({'event':event,'reason':reason,
+        **({'page':page} if page is not None else {}),
+        **({'count':fields['count']} if 'count' in fields else {})}))
 
 
 @dataclass(frozen=True)
 class RegionPlacement:
-    """S4 扩展点：区域在 PyMuPDF 左上原点坐标中的实际嵌入变换。
-
-    src/out 为从 0 开始的源页/输出页号；input 为 source 或 mono；k 为
-    en/zh/span/hf；source_box 为扩展后的实际裁框，output_box 为落点；
-    matrix 为源页坐标到输出页坐标的六元仿射变换，可直接交给 fitz.Matrix。
-    """
-
     src: int
     out: int
     part: str
     input: str
     k: str
-    source_box: tuple[float, float, float, float]
-    output_box: tuple[float, float, float, float]
-    matrix: tuple[float, float, float, float, float, float]
+    source_box: tuple
+    output_box: tuple
+    matrix: tuple
 
 
-def _text_lines(page):
-    """稳定的字符序号用于精确分配；不把 MuPDF 的整块当作不可分割文字。"""
-    lines = []
-    offset = 0
-    for block_index, block in enumerate(page.get_text(
-            "rawdict", flags=fitz.TEXTFLAGS_RAWDICT & ~fitz.TEXT_PRESERVE_IMAGES)["blocks"]):
-        for line in block.get("lines", []):
-            chars = []
-            for span in line["spans"]:
-                for char in span["chars"]:
-                    chars.append((offset, char["c"], fitz.Rect(char["bbox"])))
-                    offset += 1
-            if chars:
-                lines.append((block_index, fitz.Rect(line["bbox"]), chars))
-    return lines
+@dataclass(frozen=True)
+class _Page:
+    source_index: int
+    columns: int
 
 
-def _subtract_rect(box, keep):
-    """从涂黑框扣除保留区，返回互不重叠的至多四块。"""
-    hit = box & keep
-    if hit.is_empty:
-        return [box]
-    return [r for r in (fitz.Rect(box.x0, box.y0, box.x1, hit.y0),
-                        fitz.Rect(box.x0, hit.y1, box.x1, box.y1),
-                        fitz.Rect(box.x0, hit.y0, hit.x0, hit.y1),
-                        fitz.Rect(hit.x1, hit.y0, box.x1, hit.y1)) if not r.is_empty]
+class _GraphicObjects(fitz.mupdf.PdfProcessor2):
+    """按内容流调用顺序读取原路径和渐变载体，不使用描边外扩框。"""
+    def __init__(self, page, matrix=None, carrier=None, forms=()):
+        super().__init__()
+        self.page=page
+        self.document=fitz.mupdf.pdf_document_from_fz_document(page.parent.this)
+        self.matrix=matrix if matrix is not None else fitz.Identity
+        self.carrier,self.forms=carrier,forms
+        self.stack,self.boxes,self.paths,self.parts=[],[],[],[]
+        self.paintings=[]
+        self.closed=False
+        self.clip=False
+        self.clip_box=fitz.INFINITE_RECT()
+        for name in ('q','Q','cm','Do_form','sh','m','l','c','v','y','h','re',
+                     'S','s','f','F','fstar','B','Bstar','b','bstar','n','W','Wstar'):
+            getattr(self,'use_virtual_op_'+name)()
+
+    def op_q(self, ctx):
+        self.stack.append((self.matrix,self.clip_box))
+
+    def op_Q(self, ctx):
+        if self.stack: self.matrix,self.clip_box=self.stack.pop()
+
+    def op_cm(self, ctx, a, b, c, d, e, f):
+        self.matrix=fitz.Matrix(a,b,c,d,e,f)*self.matrix
+
+    def op_Do_form(self, ctx, name, raw):
+        if self.clip_box.is_empty: return
+        native=fitz.mupdf
+        obj=native.PdfObj(native.ll_pdf_keep_obj(raw))
+        identity=native.pdf_to_num(obj) or obj.m_internal_value()
+        if identity in self.forms:
+            return
+        m=native.pdf_xobject_matrix(obj)
+        matrix=fitz.Matrix(m.a,m.b,m.c,m.d,m.e,m.f)*self.matrix
+        b=native.pdf_xobject_bbox(obj)
+        box=fitz.Rect(b.x0,b.y0,b.x1,b.y1)*matrix*self.page.transformation_matrix
+        child=_GraphicObjects(self.page,matrix,box,(*self.forms,identity))
+        native.pdf_process_contents(child,self.document,native.pdf_xobject_resources(obj),
+                                    obj,native.FzCookie())
+        self.boxes.extend(child.boxes)
+        self.paths.extend(child.paths)
+        self.paintings.extend(child.paintings)
+
+    def op_sh(self, ctx, name, raw):
+        if not self.clip_box.is_empty:
+            self.boxes.append(self.carrier if self.carrier is not None else fitz.INFINITE_RECT())
+
+    def op_m(self, ctx, x, y):
+        if not self.clip_box.is_empty:
+            self.parts.append([(x,y)]);self.closed=False
+
+    def op_l(self, ctx, x, y):
+        if self.parts and not self.clip_box.is_empty:
+            if self.closed:
+                self.parts.append([self.parts[-1][0]]);self.closed=False
+            self.parts[-1].append((x,y))
+
+    def op_c(self, ctx, x1, y1, x2, y2, x3, y3):
+        for x,y in ((x1,y1),(x2,y2),(x3,y3)): self.op_l(ctx,x,y)
+
+    def op_v(self, ctx, x2, y2, x3, y3):
+        self.op_l(ctx,x2,y2);self.op_l(ctx,x3,y3)
+
+    def op_y(self, ctx, x1, y1, x3, y3):
+        self.op_l(ctx,x1,y1);self.op_l(ctx,x3,y3)
+
+    def op_h(self, ctx):
+        self.closed=True
+
+    def op_re(self, ctx, x, y, w, h):
+        if not self.clip_box.is_empty:
+            self.parts.append([(x,y),(x+w,y),(x+w,y+h),(x,y+h)])
+            self.closed=True
+
+    def op_W(self, ctx):
+        self.clip=True
+
+    op_Wstar=op_W
+
+    def _paint(self, kind):
+        if self.parts:
+            matrix=self.matrix*self.page.transformation_matrix
+            points=[fitz.Point(*point)*matrix for part in self.parts for point in part]
+            box=fitz.Rect(min(p.x for p in points),min(p.y for p in points),
+                          max(p.x for p in points),max(p.y for p in points))
+            if kind: self.paintings.append((kind,tuple(box)))
+            for part in self.parts:
+                if len(part)<2: continue
+                transformed=[fitz.Point(*point)*matrix for point in part]
+                bounds=fitz.Rect(min(p.x for p in transformed),min(p.y for p in transformed),
+                                 max(p.x for p in transformed),max(p.y for p in transformed))
+                self.paths.append((bounds,box,kind+4*int(self.clip)))
+            if self.clip: self.clip_box=self.clip_box & box
+        self.parts=[];self.clip=False;self.closed=False
+
+    def op_S(self, ctx): self._paint(2)
+    op_s=op_S
+    def op_f(self, ctx): self._paint(1)
+    op_F=op_f
+    op_fstar=op_f
+    def op_B(self, ctx): self._paint(3)
+    op_Bstar=op_B
+    op_b=op_B
+    op_bstar=op_B
+    def op_n(self, ctx): self._paint(0)
+
+    def run(self):
+        native=fitz.mupdf
+        page=native.pdf_page_from_fz_page(self.page.this)
+        native.pdf_process_contents(self,self.document,native.pdf_page_resources(page),
+                                    native.pdf_page_contents(page),native.FzCookie())
+        return self
 
 
-def _embed(output_page, document, index, box, destination, selected=None):
-    """复制单页并删除框外文字，再按原字号嵌入；临时文档总是关闭。"""
-    temporary = fitz.open()
+class _GlyphFilter(fitz.mupdf.PdfSanitizeFilterOptions2):
+    """MuPDF 原生逐字回调；同位置重叠字、连字和 Form 实例均按书写序号隔离。"""
+    def __init__(self, matrix, selected=None, graphic=None, shades=(), paths=()):
+        super().__init__()
+        self.matrix, self.selected, self.graphic = matrix, selected, graphic
+        self.chars = []
+        self.shades=iter(shades)
+        self.paths=iter((kind,parent) for _,parent,kind in paths if kind<4)
+        self.use_virtual_text_filter()
+        if graphic is not None:
+            self.use_virtual_culler()
+
+    def text_filter(self, ctx, ucs, length, trm, ctm, bbox, render, ca, CA):
+        # 1.28.2 mupdf.py director 签名；ucs 指针只在回调期间读取，不保留。
+        codepoints = ctypes.cast(int(ucs), ctypes.POINTER(ctypes.c_int))
+        text = ''.join(chr(codepoints[i]) if 0 <= codepoints[i] <= 0x10ffff else '\ufffd'
+                       for i in range(length))
+        matrix = fitz.Matrix(trm.a,trm.b,trm.c,trm.d,trm.e,trm.f)
+        matrix *= fitz.Matrix(ctm.a,ctm.b,ctm.c,ctm.d,ctm.e,ctm.f)
+        box = fitz.Rect(bbox.x0,bbox.y0,bbox.x1,bbox.y1) * matrix * self.matrix
+        index = len(self.chars)
+        self.chars.append(Char(index,index,0,*box,text))
+        return int(self.selected is not None and index not in self.selected)
+
+    def culler(self, ctx, bbox, kind):
+        # Clip paths必须保留：删除裁剪指令会改变仍保留的字和图形。
+        native = fitz.mupdf
+        if kind == native.FZ_CULL_GLYPH:
+            return 0
+        if 4<=kind<=7: return 0
+        if 0<=kind<4:
+            expected,box=next(self.paths)
+            if expected!=kind: raise ValueError('graphic_order_mismatch')
+            return int(not self.graphic(box))
+        # MuPDF 1.28.2 pdf_filter_sh 丢弃 fz_bound_shade 的返回值，传来的是
+        # 单位方框；不能据此把任意位置的渐变判成左栏。T4 透传渐变随载体。
+        box = (next(self.shades) if kind==native.FZ_CULL_SHADING else
+               fitz.Rect(bbox.x0,bbox.y0,bbox.x1,bbox.y1) * self.matrix)
+        return int(not self.graphic(box))
+
+
+def _filter(page, selected=None, graphic=None, *, collect=False):
+    native = fitz.mupdf
+    objects=_GraphicObjects(page).run() if graphic is not None else None
+    callback = _GlyphFilter(page.transformation_matrix,selected,graphic,
+                           objects.boxes if objects else (),objects.paths if objects else ())
+    # 实例化 Form，避免同一 XObject 多次调用时一次筛选污染其他实例。
+    # 只按实际绘制调用筛选。recurse 会再次进入 Pattern 等资源的局部坐标流；
+    # 其归属已由使用它的路径决定，不能在资源坐标中再按页面中线删一遍。
+    # instance_forms 独立保证所有实际 Form 调用仍逐实例递归筛选。
+    options = fitz._make_PdfFilterOptions(recurse=0,instance_forms=1,
+                                         no_update=int(collect),sanitize=1,sopts=callback)
+    native.pdf_filter_page_contents(native.pdf_document_from_fz_document(page.parent.this),
+                                   native.pdf_page_from_fz_page(page.this),options)
+    return tuple(callback.chars)
+
+
+def analyze_source(source, layout):
+    """只读内容流与 T3 证据，供合成/质量检查共用；不使用 YOLO 栏框。"""
+    pages = {p['index']:p for p in layout.get('pages',[])}
+    chars, lines, figures, errors = [], [], [], set()
+    for number,page in enumerate(source):
+        data = pages.get(number,{})
+        paragraphs = data.get('paragraphs',[])
+        assigned=[]
+        # no_update 不写回源 PDF；真实回调顺序也是随后过滤时的序号。
+        try:
+            glyphs = _filter(page, collect=True)
+        except Exception:
+            glyphs = ()
+            errors.add(number)
+        for char in glyphs:
+            center = fitz.Point((char.x0+char.x1)/2,(char.y0+char.y1)/2)
+            owner = next((p.get('index',i) for i,p in enumerate(paragraphs)
+                          if fitz.Rect(p['box']).contains(center)), -1)
+            assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
+                                 char.text,owner))
+        try:
+            page_lines = build_lines(number, assigned)
+        except Exception:
+            assigned, page_lines = [], ()
+            errors.add(number)
+        chars.append(tuple(assigned))
+        lines.append(page_lines)
+        figures.append(tuple(tuple(p['box']) for p in data.get('layouts',[])
+                             if p.get('class') in {'figure','table','formula','isolate_formula'}))
     try:
-        temporary.insert_pdf(document, from_page=index, to_page=index,
-                             links=False, annots=False, widgets=False)
-        page = temporary[0]
-        rotation = page.rotation
-        page.set_rotation(0)
-        bounds = page.rect
-        outside_boxes = (
-            (bounds.x0, bounds.y0, bounds.x1, box.y0),
-            (bounds.x0, box.y1, bounds.x1, bounds.y1),
-            (bounds.x0, box.y0, box.x0, box.y1),
-            (box.x1, box.y0, bounds.x1, box.y1),
-        )
-        if selected is not None:
-            # 按连续字符段涂黑，先扣除保留字符框；支持混合字号与倾斜图中文字。
-            # 后面的守恒检查明确拒绝无法隔离的真实重叠。
-            lines = _text_lines(page)
-            chars = [c for _, _, group in lines for c in group]
-            expected = Counter(c for i, c, _ in chars if i in selected and not c.isspace())
-            outside_boxes = [fitz.Rect(r) for r in outside_boxes if not fitz.Rect(r).is_empty]
-            protected = []
-            for _, _, group in lines:
-                run = fitz.Rect()
-                kept = fitz.Rect()
-                for i, _, rect in [*group, (None, "", fitz.Rect())]:
-                    remove = (i is not None and i not in selected and not rect.is_empty
-                              and rect.intersects(box))
-                    if not run.is_empty and not remove:
-                        outside_boxes.append(run + (0.001, 0.001, -0.001, -0.001))
-                        run = fitz.Rect()
-                    if remove:
-                        run |= rect
-                    elif i in selected:
-                        kept |= rect
-                if not kept.is_empty:
-                    protected.append(kept + (-0.001, -0.001, 0.001, 0.001))
-            safe_boxes = []
-            for rect in outside_boxes:
-                pieces = [rect]
-                for keep in protected:
-                    pieces = [part for piece in pieces for part in _subtract_rect(piece, keep)]
-                safe_boxes.extend(pieces)
-            outside_boxes = safe_boxes
-        for outside in outside_boxes:
-            rect = fitz.Rect(outside)
-            if not rect.is_empty:
-                page.add_redact_annot(rect, fill=False, cross_out=False)
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
-                              graphics=fitz.PDF_REDACT_LINE_ART_NONE,
-                              text=fitz.PDF_REDACT_TEXT_REMOVE)
-        if selected is not None:
-            actual = Counter(c for _, _, group in _text_lines(page)
-                             for _, c, _ in group if not c.isspace())
-            if actual != expected:
-                _log("split_compose_text_error", "redaction_text_mismatch", source_index=index)
-                raise ValueError("redaction_text_mismatch")
-            if any(not box.contains(rect) for _, _, group in _text_lines(page)
-                   for _, c, rect in group if not c.isspace()):
-                _log("split_compose_text_error", "text_outside_clip", source_index=index)
-                raise ValueError("text_outside_clip")
-        output_page.show_pdf_page(destination, temporary, 0, clip=box,
-                                  keep_proportion=True, overlay=True, rotate=-rotation)
-    finally:
-        _close(temporary)
+        tagged,appended = read_pdf_evidence(source.name) if source.name else ({},{})
+    except Exception:
+        tagged, appended = {}, {}
+        errors.update(range(len(source)))
+    margins = classify_margins(lines,[p.rect.height for p in source],tagged,appended)
+    return chars,lines,figures,margins,errors
 
 
-def _compose_pages(source, mono, plans, output):
-    """逐源页合成；局部回退同步更新内部计划，供元数据、导航与计数使用。"""
-    placements = []
-    for index, plan in enumerate(plans):
-        bounds = source[plan.source_index].rect
-        reason = "page_plan"
-        if plan.columns:
-            first_page, first_placement = len(output), len(placements)
-            try:
-                _compose_columns(source, mono, plan, output, placements)
-                continue
-            except _ColumnLayoutOverflow:
-                # A、B 页中任何一页溢出，均撤销该源页的全部输出和区域变换。
-                output.delete_pages(from_page=first_page, to_page=len(output) - 1)
-                del placements[first_placement:]
-                plan = type(plan)(plan.source_index, 0, (
-                    type(plan.regions[0])("fallback", tuple(bounds)),))
-                plans[index] = plan
-                reason = "column_layout_overflow"
-        if plan.columns == 0:
-            page = output.new_page(width=2 * bounds.width, height=bounds.height)
-            for document, kind, x in ((source, "en", 0), (mono, "zh", bounds.width)):
-                input_page = document[plan.source_index]
-                _place(page, document, plan, 0, input_page.rect * input_page.derotation_matrix,
-                       fitz.Rect(x, 0, x + bounds.width, bounds.height), kind, placements)
-            _log("split_compose_fallback", reason, source_index=plan.source_index)
-    return placements
+def _owners(number, entry, analysis, width, height):
+    chars,lines,figures,margins,_ = analysis
+    document = DocumentColumns(entry['columns'],entry.get('basis','single'))
+    columns = detect_columns(number,width,height,lines[number],margins[number],document,figures[number])
+    special = {cid:owner for line,owner in zip(lines[number],columns.line_column)
+               if owner in (MARGIN,SPANNING) for cid in line.char_ids}
+    paragraphs = dict(entry.get('paragraph_column',columns.paragraph_column))
+    owners = {c.id:(MARGIN if special.get(c.id)==MARGIN else
+                    SPANNING if paragraphs.get(c.paragraph)==SPANNING or special.get(c.id)==SPANNING else
+                    0 if c.x1<=width/2 else 1) for c in chars[number]}
+    return owners
 
 
-def _compose_columns(source, mono, plan, output, placements):
-    """合成一个源页的各栏；高度溢出交由逐页调度恢复。"""
-    bounds = source[plan.source_index].rect
-    source_page, mono_page = source[plan.source_index], mono[plan.source_index]
-    headers, _, source_columns = _partition_content(source_page, plan, False)
-    _, spans, mono_columns = _partition_content(mono_page, plan, True)
-    # 两套裁框独立：原文只扣源计划中的跨栏带，译文扣扩展、合并后的跨栏带。
-    # 不以译文的高度涂黑原文；输出发生碰撞时下移栏内容，保持原字号。
-    columns = {"en": source_columns, "zh": mono_columns}
-    column_bounds = {}
-    for regions in columns.values():
-        for region, box, _ in regions:
-            column_bounds[region.column] = column_bounds.get(region.column, fitz.Rect(box)) | box
-    width = max(bounds.width, 2 * max(b.width for b in column_bounds.values()) + 3 * MARGIN)
-    for column in range(plan.columns):
-        page = output.new_page(width=width, height=bounds.height)
-        page_spans = [(r, b, ids) for r, b, ids in spans if (
-            (r.position != "bottom" and column == 0)
-            or (r.position == "bottom" and column == plan.columns - 1))]
-        for region, box, selected in headers + page_spans:
-            document = source if region.kind == "header_footer" else mono
-            dest = fitz.Rect((width - box.width) / 2, box.y0,
-                             (width + box.width) / 2, box.y1)
-            _place(page, document, plan, column, box, dest,
-                   "hf" if region.kind == "header_footer" else "span", placements, selected)
-        obstacles = _merge_intervals([(b.y0, b.y1) for _, b, _ in headers + page_spans])
-        for document, kind in ((source, "en"), (mono, "zh")):
-            middle = _merge_intervals(
-                [(r.box[1], r.box[3]) for r in plan.regions
-                 if r.kind == "spanning" and r.position == "middle"] if kind == "en" else
-                [(b.y0, b.y1) for r, b, _ in spans if r.position == "middle"])
-            regions = sorted([(r, b, ids) for r, b, ids in columns[kind] if r.column == column],
-                             key=lambda item: item[1].y0)
-            down = 0
-            previous_end = 0
-            for region, box, selected in regions:
-                frame = column_bounds[column]
-                x = (width / 2 - MARGIN / 2 - frame.width if kind == "en"
-                     else width / 2 + MARGIN / 2) + box.x0 - frame.x0
-                shift = sum(end - start for start, end in middle if end <= box.y0) if column == 1 else 0
-                y = max(box.y0 - shift + down, previous_end)
-                for start, end in obstacles:
-                    if y < end and start < y + box.height:
-                        y = end
-                down = y - (box.y0 - shift)
-                previous_end = y + box.height
-                if previous_end > bounds.height + 0.01:
-                    _log("split_compose_collision", "column_layout_overflow", source_index=plan.source_index)
-                    raise _ColumnLayoutOverflow("column_layout_overflow")
-                dest = fitz.Rect(x, y, x + box.width, previous_end)
-                _place(page, document, plan, column, box, dest, kind, placements, selected)
-
-
-def _partition_content(page, plan, translated):
-    """按行认栏、按字符唯一分配；只有本行带的邻栏内容才构成边界。
-
-    跨栏块的延续行可扩框，但页眉页脚是屏障，已有栏正文不被跨栏吸入。
-    归属与裁框分开：裁框覆盖邻区空白时，也不能把邻区文字嵌入第二遍。
-    """
-    lines = _text_lines(page)
-    headers = [r for r in plan.regions if r.kind == "header_footer"]
-    spans = [r for r in plan.regions if r.kind == "spanning"]
-    columns = [r for r in plan.regions if r.kind == "column"]
-    frames = [fitz.Rect() for _ in range(plan.columns)]
-    for r in columns:
-        frames[r.column] |= fitz.Rect(r.box)
-    assigned = {id(r): [] for r in headers + spans + columns}
-
-    def vertical(box, r):
-        return max(0, min(box.y1, r.box[3]) - max(box.y0, r.box[1]))
-
-    def header_at(box):
-        # 使用字符中心，不因同一文字块中相邻行的 bbox 相交而吸入页眉。
-        y = (box.y0 + box.y1) / 2
-        return next((r for r in headers if r.box[1] <= y <= r.box[3]), None)
-
-    def column_at(box):
-        overlaps = [max(0, min(box.x1, f.x1) - max(box.x0, f.x0)) for f in frames]
-        return max(range(plan.columns), key=lambda c: overlaps[c])
-
-    seeds = {}
-    column_seeds = {}
-    for block, box, chars in lines:
-        if header_at(box):
+def body_starts(source, analysis, entries):
+    """全文正文书写行的两栏起点；排除页边、跨栏、图表公式内文字。"""
+    _,lines,figures,margins,errors=analysis
+    starts=[Counter(),Counter()]
+    for number,page in enumerate(source):
+        if number in errors or entries.get(number,{}).get('columns')!=2:
             continue
-        hits = [r for r in spans if vertical(box, r) > 0]
-        if hits:
-            seeds.setdefault(block, []).extend(hits)
-        else:
-            column = column_at(box)
-            column_seeds.setdefault((block, column), []).extend(
-                r for r in columns if r.column == column and vertical(box, r) > 0)
-
-    column_lines = []
-    for block, box, chars in lines:
-        column = column_at(box)
-        candidates = [r for r in columns if r.column == column and vertical(box, r) > 0]
-        direct = [r for r in spans if vertical(box, r) > 0]
-        if not candidates and not direct:
-            # 同块译文比源栏框更高时，保留其延续行；不能跨越已规划的独立带。
-            candidates = [r for r in column_seeds.get((block, column), [])
-                          if not any(min(box.y0, r.box[1]) < b.box[3]
-                                     and b.box[1] < max(box.y1, r.box[3])
-                                     for b in headers + spans)]
-        # 跨栏延续不能越过页眉；靠栏起点的独立正文保持栏归属。
-        continuation = []
-        for r in seeds.get(block, []):
-            between = (min(box.y0, r.box[1]), max(box.y1, r.box[3]))
-            if any(between[0] < h.box[3] and h.box[1] < between[1] for h in headers):
-                continue
-            if candidates and abs(box.x0 - frames[column].x0) <= MARGIN:
-                continue
-            continuation.append(r)
-        span = min(direct or continuation,
-                   key=lambda r: abs((box.y0 + box.y1) - (r.box[1] + r.box[3])), default=None)
-        body_chars = []
-        for char in chars:
-            header = header_at(char[2])
-            if header:
-                assigned[id(header)].append(char)
-            elif span:
-                # source 的跨栏原文只排除；mono 中只嵌入一次。
-                if translated:
-                    assigned[id(span)].append(char)
-            elif candidates:
-                owner = max(candidates, key=lambda r: (vertical(box, r),
-                            -abs((box.y0 + box.y1) - (r.box[1] + r.box[3]))))
-                assigned[id(owner)].append(char)
-                body_chars.append(char)
-        if body_chars:
-            column_lines.append((column, box))
-
-    # 横向限制仅来自本行带的另一栏；真实碰撞必须明确失败，不能截字。
-    for i, (column, box) in enumerate(column_lines):
-        for other, peer in column_lines[i + 1:]:
-            if column != other and box.intersects(peer):
-                _log("split_compose_collision", "column_text_overlap", source_index=plan.source_index)
-                raise ValueError("column_text_overlap")
-
-    def content(r):
-        selected = assigned[id(r)]
-        result = fitz.Rect(r.box)
-        for _, _, bbox in selected:
-            result |= bbox
-        if not page.rect.contains(result):
-            _log("split_compose_text_error", "region_outside_page", source_index=plan.source_index)
-            raise ValueError("region_outside_page")
-        return r, result, {i for i, _, _ in selected}
-
-    header_content = [content(r) for r in headers]
-    span_content = []
-    for item in sorted([content(r) for r in spans] if translated else [],
-                       key=lambda item: item[1].y0):
-        r = item[0]
-        if span_content and item[1].y0 <= span_content[-1][1].y1:
-            previous, previous_box, previous_ids = span_content.pop()
-            position = ("top" if "top" in {previous.position, r.position} else
-                        "bottom" if previous.position == r.position == "bottom" else "middle")
-            union = previous_box | item[1]
-            item = (type(r)("spanning", tuple(union), position), union, previous_ids | item[2])
-        span_content.append(item)
-    for _, box, _ in span_content:
-        if any(box.intersects(hbox) for _, hbox, _ in header_content):
-            _log("split_compose_collision", "span_header_overlap", source_index=plan.source_index)
-            raise ValueError("span_header_overlap")
-
-    bands = _merge_intervals([(b.y0, b.y1) for _, b, _ in header_content + span_content]
-                             if translated else [(r.box[1], r.box[3]) for r in headers + spans])
-    column_content = []
-    for r in columns:
-        for piece in _subtract_bands(fitz.Rect(r.box), bands):
-            # 按字符中心唯一归属；行高超出计划时扩展片段，不能在带边缘丢字。
-            selected = [c for c in assigned[id(r)]
-                        if piece.y0 <= (c[2].y0 + c[2].y1) / 2 <= piece.y1]
-            ids = {c[0] for c in selected}
-            for _, _, bbox in selected:
-                piece |= bbox
-            column_content.append((r, piece, ids))
-        placed = set().union(*(ids for owner, _, ids in column_content if owner is r))
-        missing = [c for c in assigned[id(r)] if c[0] not in placed]
-        if missing:
-            # 溢入跨栏带的译文也保留，放置阶段再局部下移避让。
-            box = fitz.Rect(missing[0][2])
-            for _, _, bbox in missing:
-                box |= bbox
-            column_content.append((r, box, {c[0] for c in missing}))
-    return header_content, span_content, column_content
+        mid=page.rect.width/2
+        owners=_owners(number,entries[number],analysis,page.rect.width,page.rect.height)
+        for owner in (0,1):
+            # 同一基线连续书写可能从左栏一直写到右栏；先按逐字认栏分开。
+            for line in build_lines(number,[c for c in analysis[0][number] if owners[c.id]==owner]):
+                box=(line.x0,line.y0,line.x1,line.y1)
+                if (not line.text.strip() or any(
+                    b[0]<=box[0] and b[1]<=box[1] and box[2]<=b[2] and box[3]<=b[3]
+                    for b in figures[number])):
+                    continue
+                starts[owner][line.x0]+=1
+    return tuple(c.most_common(1)[0][0] if c else None for c in starts)
 
 
-def _merge_intervals(intervals):
-    """收拢时按跨栏带的并集扣空白，重叠部分只计一次。"""
-    merged = []
-    for start, end in sorted(intervals):
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
-        else:
-            merged.append((start, end))
-    return merged
+def column_translation(source, analysis, entries):
+    left,right=body_starts(source,analysis,entries)
+    # 全跨栏/空页没有可移动正文；不以半页宽猜测缺失的起点。
+    return right-left if left is not None and right is not None else 0
 
 
-def _subtract_bands(box, bands):
-    """仅切分纵向范围，保持栏内原坐标和字号。"""
-    cursor = box.y0
-    pieces = []
-    for start, end in bands:
-        if start > cursor:
-            piece = fitz.Rect(box.x0, cursor, box.x1, min(start, box.y1))
-            if not piece.is_empty:
-                pieces.append(piece)
-        cursor = max(cursor, end)
-    if cursor < box.y1:
-        pieces.append(fitz.Rect(box.x0, cursor, box.x1, box.y1))
-    return pieces
+def column_origin_status(source, analysis, entries):
+    """返回双栏正文起点及是否只测得一侧。"""
+    origins = body_starts(source, analysis, entries)
+    return origins, (origins[0] is None) != (origins[1] is None)
 
 
-def _place(page, document, plan, column, box, destination, kind, placements, selected=None):
-    """每次真实嵌入记录变换，S4 可据此重建链接与跳转。"""
-    _embed(page, document, plan.source_index, box, destination, selected)
-    matrix = document[plan.source_index].rotation_matrix
-    rotated_box = box * matrix
-    matrix *= fitz.Matrix(1, 0, 0, 1, destination.x0 - rotated_box.x0,
-                          destination.y0 - rotated_box.y0)
-    placements.append(RegionPlacement(
-        plan.source_index, page.number, "ab"[column],
-        "source" if kind in {"en", "hf"} else "mono", kind,
-        tuple(box), tuple(destination),
-        tuple(matrix)))
+def _layer(source, number, selected, graphic):
+    result = fitz.open()
+    try:
+        result.insert_pdf(source,from_page=number,to_page=number,links=False,annots=False,widgets=False)
+        _filter(result[0],selected,graphic)
+        return result
+    except Exception:
+        result.close()
+        raise
 
 
-def _write_layout(output, plans, placements):
-    """冻结的 v1 信息字典，r 使用 PDF 用户空间的左下原点坐标。"""
-    pages = []
+def _content_boxes(page):
+    # bboxlog 返回实际内容范围（包括 MediaBox 之外），不是裁剪后的提取文本。
+    graphics, skipped = [], 0
+    for kind,box,*_ in page.get_bboxlog():
+        if kind in ('ignore-text', 'fill-text', 'stroke-text'):
+            continue
+        if not all(math.isfinite(v) for v in box) or fitz.Rect(box).is_infinite:
+            skipped += 1
+            continue
+        if not fitz.Rect(box).is_empty:
+            graphics.append(fitz.Rect(box))
+    if skipped:
+        _log('split_compose_bounds_filtered','non_finite_bounds',
+             source_index=page.number,count=skipped)
+    return graphics + [fitz.Rect(line.x0,line.y0,line.x1,line.y1)
+                       for line in build_lines(0, _filter(page, collect=True))]
+
+
+def _text_boxes(page):
+    """划词区域取真实文本行；未知字映射以实际绘制框补齐，不借用图形外框。"""
+    boxes=[fitz.Rect(line['bbox']) for block in page.get_text('dict',
+            flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,clip=fitz.INFINITE_RECT())['blocks']
+            for line in block.get('lines',()) if any(span['text'].strip() for span in line['spans'])]
+    for char in _filter(page,collect=True):
+        box=fitz.Rect(char.x0,char.y0,char.x1,char.y1)
+        if char.text.strip() and not any(owner.contains(box) for owner in boxes):
+            boxes.append(box)
+    return boxes
+
+
+def _selection(regions, page, kind, document, dx=0, elements=()):
+    # span 的矩形同时是 readerSelection 的元素身份，沿用 IL 段落/图表身份，
+    # 不能把同一多行元素按字体 span 分裂；未知文字仍由真实文本框补齐。
+    boxes=[fitz.Rect(box) for box in elements]
+    for box in _text_boxes(document[0]):
+        if not any(owner.contains(box) for owner in boxes):
+            boxes.append(box)
+    regions.extend((page.number,kind,tuple(box+(dx,0,dx,0))) for box in boxes)
+
+
+def _extend(page, height):
+    if height > page.rect.height:
+        media,crop=page.mediabox,page.cropbox
+        delta=height-page.rect.height
+        page.set_mediabox(fitz.Rect(media.x0,media.y0-delta,media.x1,media.y1))
+        # set_mediabox 会删除 CropBox；恢复原裁剪原点/宽度，仅向页底延伸。
+        page.set_cropbox(fitz.Rect(crop.x0,crop.y0,crop.x1,crop.y1+delta))
+
+
+def _embed_full(page, document, number, dx=0, *, kind, rotate=0):
+    source=document[number]
+    # 不传 clip；目标与源同尺寸，平移后完整 Form 嵌入，不改变字号。
+    if source.get_contents():
+        bounds=(fitz.Rect(0,0,source.rect.height,source.rect.width)
+                if rotate%180 else source.rect)
+        page.show_pdf_page(bounds+(dx,0,dx,0),document,number,
+                           keep_proportion=False,rotate=rotate)
+        # 标准 PDF marked content 记录真实层身份；不改变字形/几何或 v1 接口。
+        # QA 可据实际内容流核对顺序，不能从可能相交的选择框反推文字来源。
+        xref=page.get_contents()[-1]
+        page.parent.update_stream(xref,b'/ZTFSplit_'+kind.encode('ascii')+b' BMC\n'
+            +page.parent.xref_stream(xref)+b'\nEMC')
+
+
+def _record(placements, number, out, part, kind, box, dx=0, dy=0):
+    box=fitz.Rect(box)
+    if box.is_empty: return
+    placements.append(RegionPlacement(number,out,part,'source' if kind in {'en','hf'} else 'mono',
+        kind,tuple(box),tuple(box+(dx,dy,dx,dy)),(1,0,0,1,dx,dy)))
+
+
+def _compose_columns(source, mono, entry, variants, output, placements, analysis, regions, page_layout,
+                     column_shift):
+    number=entry['source_page']; original=source[number]; width,height=original.rect.width,original.rect.height
+    if original.rotation: raise ValueError('rotated_page')
+    owners=_owners(number,entry,analysis,width,height)
+    indices={v['column']:v['pdf_page'] for v in entry['variants']}
+    if set(indices)!={0,1,SPANNING}: raise ValueError('variant_set_invalid')
+    paragraphs=dict(entry.get('paragraph_column',()))
+    span_elements=[p.get('output_box') or p['box'] for p in page_layout.get('paragraphs',())
+                   if paragraphs.get(p.get('index'))==SPANNING]
+    span_elements.extend(p['box'] for p in page_layout.get('layouts',())
+                         if p.get('class') in {'figure','table','formula','isolate_formula'}
+                         and p['box'][0]<width/2<p['box'][2])
+    with ExitStack() as stack:
+        # 各变体单独复制，可调整 MediaBox 露出页底内容；不修改 T4 文件。
+        zh={}
+        for column in (0,1,SPANNING):
+            doc=stack.enter_context(fitz.open())
+            doc.insert_pdf(variants,from_page=indices[column],to_page=indices[column],links=False,annots=False,widgets=False)
+            boxes=_content_boxes(doc[0])
+            bottom=max([height]+[b.y1 for b in boxes])
+            _extend(doc[0],bottom)
+            zh[column]=(doc,boxes,bottom)
+        margins={i for i,owner in owners.items() if owner==MARGIN}
+        hf=stack.enter_context(_layer(source,number,margins,lambda box:False))
+        hf_boxes=[(l.x0,l.y0,l.x1,l.y1) for l in analysis[1][number] if l.index in analysis[3][number]]
+        for column in (0,1):
+            selected={i for i,owner in owners.items() if owner==column}
+            en=stack.enter_context(_layer(source,number,selected,
+                lambda box,c=column: object_region(tuple(box),analysis[2][number],
+                                                    ((width/2,width/2),))==c))
+            page_height=max(height,zh[column][2],zh[SPANNING][2])
+            page=output.new_page(width=width,height=page_height)
+            part='ab'[column]
+            _embed_full(page,hf,0,kind='hf')
+            _selection(regions,page,'hf',hf)
+            for box in hf_boxes: _record(placements,number,page.number,part,'hf',box)
+            _embed_full(page,zh[SPANNING][0],0,kind='span')
+            _selection(regions,page,'span',zh[SPANNING][0],elements=span_elements)
+            for box in zh[SPANNING][1]: _record(placements,number,page.number,part,'span',box)
+            dx=-column*column_shift
+            _embed_full(page,en,0,dx,kind='en')
+            _selection(regions,page,'en',en,dx)
+            for box in _content_boxes(en[0]): _record(placements,number,page.number,part,'en',box,dx)
+            dx=(1-column)*column_shift
+            _embed_full(page,zh[column][0],0,dx,kind='zh')
+            _selection(regions,page,'zh',zh[column][0],dx)
+            for box in zh[column][1]: _record(placements,number,page.number,part,'zh',box,dx)
+
+
+def _whole_pages(source, mono, number, output, placements, regions, *, expand=True):
+    for document,kind,part in ((source,'en','a'),(mono,'zh','b')):
+        original=document[number]
+        # 单栏中文也完整保留页底溢出；英文页仍为原大小。只修改用于嵌入的副本。
+        with fitz.open() as copied:
+            copied.insert_pdf(document,from_page=number,to_page=number,links=False,annots=False,widgets=False)
+            # remove_rotation 会重置非全页 CropBox；仅清 Rotate，再在嵌入矩阵旋转，
+            # 同时保持原可视范围和页面宽高，避免裁掉整页安全网的内容。
+            copied[0].set_rotation(0)
+            if expand and kind=='zh' and not original.rotation:
+                _extend(copied[0],max([original.rect.height]+[b.y1 for b in _content_boxes(copied[0])]))
+            page=output.new_page(width=original.rect.width,
+                height=original.rect.height if original.rotation else copied[0].rect.height)
+            _embed_full(page,copied,0,kind=kind,rotate=-original.rotation)
+            regions.append((page.number,kind,tuple(page.rect)))
+        matrix=original.rotation_matrix
+        placements.append(RegionPlacement(number,page.number,part,'source' if kind=='en' else 'mono',kind,
+            tuple(original.rect*original.derotation_matrix),tuple(page.rect),tuple(matrix)))
+
+
+def _write_layout(output, reports, regions):
+    pages=[]
     for page in output:
-        items = [p for p in placements if p.out == page.number]
-        for i, item in enumerate(items):
-            for peer in items[i + 1:]:
-                if item.k != peer.k and fitz.Rect(item.output_box).intersects(fitz.Rect(peer.output_box)):
-                    _log("split_compose_collision", "metadata_region_overlap", source_index=item.src)
-                    raise ValueError("metadata_region_overlap")
-        pages.append({"src": items[0].src, "part": items[0].part, "regions": [
-            {"k": p.k, "r": list(fitz.Rect(p.output_box) * ~page.transformation_matrix)}
-            for p in items]})
-        if any(plan.source_index == items[0].src and plan.columns == 0 for plan in plans):
-            pages[-1]["fallback"] = True
-    output.set_metadata({"producer": "BabelDOC for Zotero"})
-    _, reference = output.xref_get_key(-1, "Info")
-    output.xref_set_key(int(reference.split()[0]), "ZTFSplitLayout",
-                        fitz.get_pdf_str(json.dumps({"v": 1, "pages": pages}, separators=(",", ":"))))
-
-
-def _validate_inputs(source, mono, plans):
-    """冻结接口应完整描述所选页；拒绝无效几何，避免悄悄生成部分文档。"""
-    if not source.is_pdf or not mono.is_pdf or len(source) != len(mono) or not plans:
-        raise ValueError("invalid_documents")
-    seen = set()
-    for plan in plans:
-        if (type(plan.source_index) is not int or plan.source_index in seen
-                or not 0 <= plan.source_index < len(source) or plan.columns not in {0, 1, 2}):
-            raise ValueError("invalid_page_plan")
-        seen.add(plan.source_index)
-        # 在构造任何计划 Rect 或使用其坐标前检查所有框，包括回退计划。
-        for region in plan.regions:
-            box = region.box
-            try:
-                valid = (isinstance(box, (tuple, list)) and len(box) == 4
-                         and all(type(v) in {int, float} and math.isfinite(v) for v in box))
-            except OverflowError:
-                valid = False
-            # S2 尺寸未知的回退哨兵不参与任何坐标运算，继续从真实页取尺寸。
-            sentinel = (plan.columns == 0 and region.kind == "fallback"
-                        and valid and tuple(box) == (0, 0, 0, 0))
-            if not valid or (not sentinel and (box[0] >= box[2] or box[1] >= box[3])):
-                _log("split_compose_invalid_plan", "invalid_region_box", source_index=plan.source_index)
-                raise ValueError("invalid_region_box")
-    # 先完成全部计划的原始框检查，后续才读取页面几何或构造 Rect。
-    for plan in plans:
-        a, b = source[plan.source_index], mono[plan.source_index]
-        if (not all(math.isfinite(v) for v in (*a.rect, *b.rect))
-                or a.rect.is_empty or b.rect.is_empty
-                or any(abs(x - y) > 0.01 for x, y in zip(a.rect, b.rect))):
-            raise ValueError("page_geometry_mismatch")
-        for region in plan.regions:
-            box = region.box
-            if (box[2] > box[0] and box[3] > box[1]
-                    and not fitz.Rect(box).intersects(a.rect)):
-                _log("split_compose_invalid_plan", "invalid_region_box", source_index=plan.source_index)
-                raise ValueError("region_outside_page")
-        if plan.columns:
-            if a.rotation or b.rotation:
-                raise ValueError("rotation_requires_fallback")
-            if {r.column for r in plan.regions if r.kind == "column"} != set(range(plan.columns)):
-                raise ValueError("missing_column")
-            for region in plan.regions:
-                if region.kind not in {"header_footer", "spanning", "column"}:
-                    raise ValueError("invalid_region_kind")
-                if region.kind == "spanning" and region.position not in {"top", "middle", "bottom"}:
-                    raise ValueError("invalid_span_position")
-
-
+        # 即便全部为空白，调用方仍提供页身份；不伪造可划词区域。
+        report=reports[page.number//2]
+        pages.append({'src':report['source_page'],'part':'ab'[page.number%2],
+            'width':page.rect.width,'height':page.rect.height,
+            **({'fallback':True} if report['safety_net'] else {}),
+            **({'reason':report['reason']} if report['reason'] != 'composed' else {}),
+            'regions':[{'k':kind,'r':list(fitz.Rect(box)*~page.transformation_matrix)}
+                       for number,kind,box in regions if number==page.number]})
+    output.set_metadata({'producer':'BabelDOC for Zotero'})
+    _,ref=output.xref_get_key(-1,'Info')
+    output.xref_set_key(int(ref.split()[0]),'ZTFSplitLayout',
+        fitz.get_pdf_str(json.dumps({'v':1,'pages':pages},separators=(',',':'))))
 def _navigation_values(value, size):
     """第三方坐标先检查有限性，再交给 Point / Rect 做运算。"""
     try:
@@ -839,57 +825,91 @@ def _rebuild_split_navigation(source, mono, output, plans, placements):
     return stats
 
 
-def compose_split_document(source_pdf: str, mono_pdf: str, plans: "list[PagePlan]",
-                           output_pdf: str) -> dict:
-    """返回 input_pages、output_pages、regions、fallback_pages（均为整数）。
 
-    导航计数 links_source 含两份输入的全部链接；links_written 是输出注释数，
-    links_unresolved 是完全未写入的输入链接数（含有意省略的区域），
-    links_fallback 是目标回退页顶的输入链接数；toc_entries、labels 是条数。
-    links_zoom_fallback、toc_zoom_fallback 为无效缩放回退数；toc_unresolved
-    为仅保留标题和层级、未能写入动作的目录条数。
-    labels_unresolved 为源标签读取或输出写入失败的输出页数；labels_read_fallback
-    为读取失败后使用源页序号的输出页数。写入失败页使用空标签，不影响其余页。
 
-    失败抛 RuntimeError("split_compose_failed")，日志只含固定原因与异常类型。
-    原输出在替换成功之前保持完整；所有输入及临时 Document 在 finally 关闭。
-    """
-    source = mono = output = None
-    temporary_path = None
+def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None):
+    """消费 T4 sidecar；逐源页事务，固定原因码日志；原子替换输出。"""
+    temporary=None
     try:
-        source = fitz.open(source_pdf)
-        mono = fitz.open(mono_pdf)
-        output = fitz.open()
-        _validate_inputs(source, mono, plans)
-        plans = list(plans)  # 局部回退只修改本次合成计划，不改变调用方输入。
-        placements = _compose_pages(source, mono, plans, output)
-        _write_layout(output, plans, placements)
-        navigation = _rebuild_split_navigation(source, mono, output, plans, placements)
-        handle = tempfile.NamedTemporaryFile(prefix=".ztf-split-", suffix=".pdf",
-                                             dir=os.path.dirname(os.path.abspath(output_pdf)),
-                                             delete=False)
-        temporary_path = handle.name
-        handle.close()
-        output.save(temporary_path, garbage=4, deflate=True)
-        output.close()
-        output = None
-        os.replace(temporary_path, output_pdf)
-        temporary_path = None
-        return {"input_pages": len(plans), "output_pages": len({p.out for p in placements}),
-                "regions": len(placements),
-                "fallback_pages": sum(plan.columns == 0 for plan in plans), **navigation}
-    except Exception as error:
-        # 不把第三方异常中的路径、正文或凭据带进 runner 日志。
-        logging.getLogger(__name__).warning(json.dumps({
-            "event": "split_compose_error", "reason": "composition_failed", "count": 1,
-            "error_type": type(error).__name__}))
-        raise RuntimeError("split_compose_failed") from None
-    finally:
-        for document in (output, mono, source):
-            if document is not None:
-                _close(document)
-        if temporary_path is not None:
+        with ExitStack() as stack:
+            source=stack.enter_context(fitz.open(source_pdf))
+            mono=stack.enter_context(fitz.open(mono_pdf))
+            output=stack.enter_context(fitz.open())
+            if len(source)!=len(mono): raise ValueError('page_count_mismatch')
             try:
-                os.unlink(temporary_path)
-            except Exception as error:
-                _log("split_compose_cleanup_error", "unlink_failed", error_type=type(error).__name__)
+                mapping=json.loads(Path(str(mono_pdf)+'.variants.json').read_text(encoding='utf-8'))
+                if mapping.get('version') != 1:
+                    raise ValueError('variant_version')
+            except (OSError, ValueError):
+                mapping={'pages':[]}
+            entries={e['source_page']:e for e in mapping['pages']}
+            try:
+                variants=stack.enter_context(fitz.open(mapping['pdf_path'])) if mapping.get('pdf_path') else None
+            except Exception:
+                variants=None
+            analysis=analyze_source(source,layout)
+            origins, column_origin_missing = column_origin_status(source,analysis,entries)
+            column_shift=origins[1]-origins[0] if not any(origin is None for origin in origins) else 0
+            if column_origin_missing:
+                _log('split_compose_single_column','column_origin_missing',count=len(source))
+                if log:
+                    log({'event':'split_compose_single_column','reason':'column_origin_missing',
+                         'count':len(source)})
+            layout_pages={p['index']:p for p in layout.get('pages',())}
+            placements=[];reports=[];plans=[];regions=[]
+            for number in range(len(source)):
+                entry=entries.get(number,{})
+                start,count,region_count=len(output),len(placements),len(regions)
+                safety=False;reason='composed'
+                try:
+                    if number in analysis[4]: raise ValueError('source_page_error')
+                    if entry.get('error'): raise ValueError('t4_page_error')
+                    if entry.get('columns') not in (1,2): raise ValueError('t4_page_missing')
+                    if entry['columns']==1 or (entry['columns']==2 and column_origin_missing):
+                        _whole_pages(source,mono,number,output,placements,regions)
+                    else:
+                        if variants is None: raise ValueError('variants_missing')
+                        _compose_columns(source,mono,entry,variants,output,placements,analysis,regions,
+                                         layout_pages.get(number,{}),column_shift)
+                except Exception:
+                    # 第三方异常不进入日志（可能包含正文或凭据）。
+                    if len(output)>start: output.delete_pages(from_page=start,to_page=len(output)-1)
+                    del placements[count:]
+                    del regions[region_count:]
+                    safety=True
+                    reason=('t4_page_error' if entry.get('error') else
+                            'source_analysis_error' if number in analysis[4] else
+                            'variant_data_missing' if entry.get('columns') not in (1,2)
+                            or (entry['columns']==2 and variants is None) else 'compose_error')
+                    _whole_pages(source,mono,number,output,placements,regions,expand=False)
+                heights=[output[i].rect.height for i in range(start,len(output))]
+                handled_columns = (1 if entry.get('columns')==2 and column_origin_missing else
+                                   entry.get('columns') if entry.get('columns') in (1,2) else 1)
+                reason = ('column_origin_missing' if entry.get('columns')==2 and column_origin_missing
+                          else reason)
+                report={'source_page':number,'columns':handled_columns,
+                    'basis':entry.get('basis','single') if entry.get('basis') in ('tag','jump','single') else 'single',
+                    'margin_basis':sorted(set(analysis[3][number].values())),
+                    'grown':[h>source[number].rect.height for h in heights],
+                    'safety_net':safety,'reason':reason}
+                reports.append(report)
+                plans.append(_Page(number,0 if safety else handled_columns))
+                if log and not column_origin_missing:
+                    log({'event':'split_compose_page','page':number,'reason':reason})
+            _write_layout(output,reports,regions)
+            navigation=_rebuild_split_navigation(source,mono,output,plans,placements)
+            handle=tempfile.NamedTemporaryFile(prefix='.ztf-split-',suffix='.pdf',
+                dir=os.path.dirname(os.path.abspath(output_pdf)),delete=False)
+            temporary=handle.name;handle.close()
+            output.save(temporary,garbage=4,deflate=True)
+            os.replace(temporary,output_pdf);temporary=None
+            return {'input_pages':len(source),'output_pages':len(output),'regions':len(placements),
+                    'fallback_pages':sum(r['safety_net'] for r in reports),
+                    'column_origin_missing':len(source) if column_origin_missing else 0,
+                    'page_results':reports,**navigation}
+    except Exception:
+        raise RuntimeError('split_compose_failed') from None
+    finally:
+        if temporary is not None:
+            try: os.remove(temporary)
+            except OSError: _log('split_compose_cleanup_error','temporary_remove_failed')

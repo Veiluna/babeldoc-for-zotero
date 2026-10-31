@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P05/P01 的真实 BabelDOC + 本地假译文端到端；全部产物位于 build/s7。
+"""Chen/FoBa 的真实 BabelDOC + 本地假译文端到端；全部产物位于 build/t5d。
 
 不读取 Zotero 配置，端点固定为 tests/mock_openai_server.py 的环回随机端口。
 运行：<babeldoc-env>/python.exe -B -X utf8 tests/run_split_mock_e2e.py
@@ -20,7 +20,7 @@ import time
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "build/s7/mock"
+OUTPUT = ROOT / "build/t5d/mock"
 RUNNER = ROOT / "addon/content/python/ztf_babeldoc_runner.py"
 DEFAULT_PYTHON = Path("G:/ProgramData/zotero-translate-files/babeldoc-env/python.exe")
 
@@ -35,22 +35,13 @@ def log_event(event, reason, count=1, *, path=None, **fields):
 
 
 def find_samples():
-    p05 = Path("G:/Program Files/Zotero/datas/storage/JYCINM3Z/P05.pdf")
-    samples = [("P05", p05)]
-    candidates = sorted(Path("G:/ProgramData/zotero-translate-files/ztest/samples").rglob("P01.pdf"))
-    if not candidates:
-        # diag 中 input.pdf 位于 P01 工作目录；不把 mono/dual 译本当作原文。
-        candidates = sorted(p for p in (ROOT / "build/diag").rglob("*.pdf")
-                            if p.name.lower() == "p01.pdf" or
-                            (p.name == "input.pdf" and p.parent.name.upper() == "P01"))
-    if candidates:
-        samples.append(("P01", candidates[0]))
-    return samples
+    directory = Path("G:/ProgramData/zotero-translate-files/ztest/samples/0.8.0")
+    return [(name, directory / (name + ".pdf")) for name in ("chen2026", "foba")]
 
 
 def isolated_environment(directory):
     """复制已安装资源，避免 BabelDOC 缓存、字节码或临时文件写到许可范围外。"""
-    original_cache = Path.home() / ".cache/babeldoc"
+    original_cache = Path("C:/Users/A/.cache/babeldoc")
     profile = directory / "profile"
     cache = profile / ".cache/babeldoc"
     for name in ("fonts", "models", "cmap", "tiktoken"):
@@ -59,9 +50,9 @@ def isolated_environment(directory):
         shutil.copytree(original_cache / name, cache / name, dirs_exist_ok=True)
     temp = directory / "tmp"
     temp.mkdir(parents=True, exist_ok=True)
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.upper().startswith(("ZTF_", "OPENAI_", "ANTHROPIC_"))
-                   and "API_KEY" not in key.upper() and not key.upper().endswith("_PROXY")}
+    # 不查询、继承或持久化宿主环境值；子进程只收到这里构造的本地 mock 配置。
+    environment = {"SystemRoot": "C:/Windows", "WINDIR": "C:/Windows",
+                   "PATH": "C:/Windows/System32;C:/Program Files/nodejs"}
     environment.update({"USERPROFILE": str(profile), "TMP": str(temp), "TEMP": str(temp),
                         "TIKTOKEN_CACHE_DIR": str(cache / "tiktoken"),
                         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
@@ -163,8 +154,8 @@ def run_case(python, name, source, endpoint, environment, server, timeout, run_d
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="P05/P01 本地 mock 分栏双语端到端")
-    parser.add_argument("--python", type=Path, default=Path(os.environ.get("ZTF_BABELDOC_PYTHON", str(DEFAULT_PYTHON))), help="BabelDOC 0.6.4 Python")
+    parser = argparse.ArgumentParser(description="Chen/FoBa 本地 mock 分栏双语端到端")
+    parser.add_argument("--python", type=Path, default=DEFAULT_PYTHON, help="BabelDOC 0.6.4 Python")
     parser.add_argument("--timeout", type=int, default=1800, help="单份样本超时秒数")
     args = parser.parse_args()
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -186,7 +177,6 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         endpoint = f"http://127.0.0.1:{server.server_port}/v1"
-        summary["endpoint"] = endpoint
         samples = find_samples()
         if len(samples) == 1:
             summary["skipped_samples"] = [{"sample": "P01", "reason": "sample_not_found"}]

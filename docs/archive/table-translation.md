@@ -3,6 +3,8 @@
 > 状态：**封存**（0.7.0 起暂停表格翻译，代码不部署、不加载；仅保留题注翻译）。
 > 决策记录：ADR 0007（0.7.0 暂缓表格翻译）。
 > 恢复指引见文末。
+>
+> 0.8.0 起 4 个封存模块与其单测已从仓库删除，代码在 git 提交 `fe12236` 的 `addon/content/python/archive/` 下（`git show fe12236:addon/content/python/archive/<文件名>`）。
 
 ## 1. 当前版本（0.7.0）行为
 
@@ -83,7 +85,7 @@
 ## 4. 恢复步骤（后续版本）
 
 1. 阅读 ADR 0005（输出保真）、ADR 0006（表体翻译策略与进度修复；表格部分已被取代）、ADR 0007（暂缓表格翻译）与本文档。
-2. 将 archive/ 下 4 个 helper 移回 addon/content/python/，并加回 runner.js pythonHelpers 清单与 helper-manifest 期望。
+2. 从提交 `fe12236` 取回 archive/ 下 4 个 helper 放回 addon/content/python/，取回 6 个封存单测（tests/test_table2.py、test_table2_runner.py、test_table_headers.py、test_table_layout.py、test_table_roles.py、test_table_text.py）放回 tests/（同时把这些单测里指向 `archive/` 的导入路径改回 `addon/content/python/`），并加回 runner.js pythonHelpers 清单与 helper-manifest 期望。
 3. 在 runner 中恢复表格分析、表体判定、旋转表头、字号 patch 接线（参考 git 历史）。
 4. 修复第 3 节问题（同格多段落协调、无线表判定、正文断言、脱敏、题注碎片合并等）。
 5. 先 mock 后真实重跑验证：字号 >=0.9 倍源、同格无重叠、边框不变、正文不变、请求数可接受。
