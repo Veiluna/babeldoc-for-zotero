@@ -1,8 +1,16 @@
 # BabelDOC for Zotero
 
+<p align="center">
+  <a href="https://github.com/Veiluna/babeldoc-for-zotero/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/Veiluna/babeldoc-for-zotero?label=%E7%89%88%E6%9C%AC"></a>
+  <a href="https://github.com/Veiluna/babeldoc-for-zotero/releases"><img alt="下载量" src="https://img.shields.io/github/downloads/Veiluna/babeldoc-for-zotero/total?label=%E4%B8%8B%E8%BD%BD"></a>
+  <img alt="Zotero 7–10" src="https://img.shields.io/badge/Zotero-7%E2%80%9310-CC2936">
+  <img alt="Windows" src="https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows-0078D6">
+  <a href="LICENSE"><img alt="AGPL-3.0" src="https://img.shields.io/github/license/Veiluna/babeldoc-for-zotero?label=%E8%AE%B8%E5%8F%AF%E8%AF%81"></a>
+</p>
+
 在 Zotero 里一键把外文 PDF 翻译成**保持原版式的简体中文 PDF**，也可以生成**分栏中英对照 PDF**。翻译引擎是开源的 [BabelDOC](https://github.com/funstory-ai/BabelDOC)，模型用你自己的 OpenAI 兼容接口（填写接口地址、API key 和模型名即可）。
 
-当前版本：**0.8.0**　|　[下载最新版](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest)　|　[更新日志](CHANGELOG.md)　|　[问题反馈](https://github.com/Veiluna/babeldoc-for-zotero/issues)
+当前版本：**0.8.0**　|　[下载最新版](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest)　|　[更新日志](CHANGELOG.md)　|　[问题反馈](https://github.com/Veiluna/babeldoc-for-zotero/issues)　|　[English](#english)
 
 > 从旧版 Translate Files for Zotero 升级：Zotero 会把本插件识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 
@@ -95,3 +103,15 @@
 ## 许可证与致谢
 
 本项目采用 [GNU Affero General Public License v3.0 only](LICENSE)（AGPL-3.0-only）。感谢 [BabelDOC](https://github.com/funstory-ai/BabelDOC) 提供 PDF 版面解析与翻译引擎。
+
+## English
+
+**BabelDOC for Zotero** is a Zotero 7–10 plugin for Windows that translates PDF attachments into Simplified Chinese while keeping the original layout, using [BabelDOC](https://github.com/funstory-ai/BabelDOC) and any OpenAI-compatible Chat Completions API you configure (base URL, API key, model).
+
+- Right-click a PDF attachment → **BabelDOC for Zotero** → *Translate to Chinese PDF* or *Generate bilingual PDF*.
+- The bilingual output places each column's English and Chinese side by side; links, figures' editable text and the table of contents are preserved.
+- The result is imported as a new attachment; the original PDF is never modified.
+- The Python runtime and BabelDOC are installed automatically on first start.
+- The whole document is packed into as few API requests as possible.
+
+Download the `.xpi` from [Releases](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest) and install it via **Tools → Plugins → Install Plugin From File**. The user interface is in Chinese and English. Licensed under AGPL-3.0-only.

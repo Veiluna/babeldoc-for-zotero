@@ -1,0 +1,14 @@
+name: 功能建议 / Feature request
+description: 希望插件增加或改进的功能
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: 想解决什么问题
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 希望怎么做（可选）

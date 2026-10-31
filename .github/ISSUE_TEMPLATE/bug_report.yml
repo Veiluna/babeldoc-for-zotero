@@ -1,0 +1,51 @@
+name: 问题反馈 / Bug report
+description: 翻译失败、译本有问题或插件报错
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！请不要在这里粘贴 API key。
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      placeholder: 例如 0.8.0
+    validations:
+      required: true
+  - type: input
+    id: zotero-version
+    attributes:
+      label: Zotero 版本
+      placeholder: 例如 10.0.7（64 位）
+    validations:
+      required: true
+  - type: dropdown
+    id: output
+    attributes:
+      label: 使用的功能
+      options:
+        - 翻译成中文 PDF
+        - 生成双语对照 PDF
+        - 安装 / 修复环境
+        - 设置或测试连接
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 期望的结果和实际结果，最好附上截图（注明页码）。
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: 诊断日志
+      description: 失败提示里会显示日志路径，位于 Zotero 数据目录的 `babeldoc-for-zotero/logs/`。日志已脱敏，不含 API key 和完整正文，可直接拖入附件。
+  - type: input
+    id: paper
+    attributes:
+      label: 论文（可选）
+      description: 公开论文可以给出标题或 DOI，方便复现。
