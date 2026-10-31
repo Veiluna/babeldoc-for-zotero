@@ -11,3 +11,13 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+
+# 开发与 agent 文档只保存在本地，不上传 GitHub
+AGENTS.md
+CLAUDE.md
+CODING_STANDARDS.md
+GLOSSARY.md
+docs/
+.claude/
+.codex/
+ztest/

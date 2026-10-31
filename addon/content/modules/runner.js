@@ -254,7 +254,7 @@ var ZoteroTranslateFilesRunner = (function () {
       ];
 
       // BabelDOC 只生成单语中文 PDF；双语模式下由 runner 用原文与单语译文
-      // 合成分栏双语 PDF（ZTF_SPLIT_DUAL=1，见 docs/specs/split-bilingual-layout.md）。
+      // 合成分栏双语 PDF（ZTF_SPLIT_DUAL=1）。
       args.push("--no-dual");
 
       // The API key is supplied only through the child environment, never the OS command line.
