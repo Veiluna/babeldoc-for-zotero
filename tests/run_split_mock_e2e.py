@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Chen/FoBa 的真实 BabelDOC + 本地假译文端到端；全部产物位于 build/t5c。
+"""Chen/FoBa 的真实 BabelDOC + 本地假译文端到端；全部产物位于 build/t5d。
 
 不读取 Zotero 配置，端点固定为 tests/mock_openai_server.py 的环回随机端口。
 运行：<babeldoc-env>/python.exe -B -X utf8 tests/run_split_mock_e2e.py
@@ -20,7 +20,7 @@ import time
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "build/t5c/mock"
+OUTPUT = ROOT / "build/t5d/mock"
 RUNNER = ROOT / "addon/content/python/ztf_babeldoc_runner.py"
 DEFAULT_PYTHON = Path("G:/ProgramData/zotero-translate-files/babeldoc-env/python.exe")
 
@@ -177,7 +177,6 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         endpoint = f"http://127.0.0.1:{server.server_port}/v1"
-        summary["endpoint"] = endpoint
         samples = find_samples()
         if len(samples) == 1:
             summary["skipped_samples"] = [{"sample": "P01", "reason": "sample_not_found"}]

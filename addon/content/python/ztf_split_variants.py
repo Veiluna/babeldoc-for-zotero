@@ -108,6 +108,14 @@ def _inside(box, owner):
             and box[2] <= owner[2] and box[3] <= owner[3])
 
 
+def object_region(bounds, figure_boxes, gutters):
+    """图形随最小完整包含它的图表公式归属，否则按自身框；不扩框。"""
+    containing = [box for box in figure_boxes if _inside(bounds, box)]
+    if containing:
+        bounds = min(containing, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+    return _region(bounds, gutters)
+
+
 _FIGURE_LABELS = frozenset(("figure", "table", "isolate_formula", "formula"))
 _ERROR_REASONS = frozenset(("source_char_order_missing", "source_snapshot_missing",
                             "paragraph_identity_changed", "split_paragraph_unresolved",
@@ -228,11 +236,7 @@ def create_variants(
                     if item.class_name in _FIGURE_LABELS]
 
     def own_region(item):
-        bounds = convert(item.box)
-        containing = [box for box in figure_boxes if _inside(bounds, box)]
-        if containing:
-            bounds = min(containing, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
-        return _region(bounds, columns.gutters)
+        return object_region(convert(item.box), figure_boxes, columns.gutters)
 
     all_forms = [*page.pdf_form, *_formula_forms(page.pdf_paragraph)]
     carriers = _form_carriers(page, all_forms)

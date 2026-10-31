@@ -43,11 +43,12 @@ def glyphs(page):
     return compose._filter(page,collect=True)
 
 
-def layer_glyphs(page):
+def layer_glyphs(page, *, with_graphics=False):
     """逐嵌入流读取真实文字层；未知/额外流也保留，不能被预期文本长度掩盖。"""
     groups={k:[] for k in RANK}
     groups['unknown']=[]
     actual=[]
+    graphics={k:[] for k in groups}
     with fitz.open() as copied:
         copied.insert_pdf(page.parent,from_page=page.number,to_page=page.number,links=False)
         streams=copied[0].get_contents()
@@ -58,7 +59,8 @@ def layer_glyphs(page):
             chars=glyphs(copied[0])
             actual.extend(chars)
             groups[kind].extend(chars)
-    return actual,groups
+            if with_graphics: graphics[kind].extend(graphic_marks(copied[0]))
+    return (actual,groups,graphics) if with_graphics else (actual,groups)
 
 
 def text(chars):
@@ -88,6 +90,38 @@ def same_run(expected, actual, dx=0):
     actual=[c for c in actual if c.text.strip()]
     return len(expected)==len(actual) and all(same_position(
         replace(a,x0=a.x0+dx,x1=a.x1+dx),b,a) for a,b in zip(expected,actual))
+
+
+def graphic_marks(page):
+    """读取实际绘制实例，不按资源 xref 去重；图形框不参与正文边距统计。"""
+    result=[]
+    for image in page.get_image_info(hashes=True):
+        result.append(('image:'+image['digest'].hex(),tuple(image['bbox'])))
+    # Pattern 的内部图元可延伸到填充路径之外；其可见范围及归属由使用它的
+    # 原路径决定。按实际内容流绘制对象计数，不能把资源内部图元当成额外跨栏对象。
+    for kind,box in compose._GraphicObjects(page).run().paintings:
+        result.append(('path:'+str(kind),box))
+    return result
+
+
+def same_graphics(expected, actual):
+    remaining=list(actual)
+    for kind,box in expected:
+        reference=compose.Char(0,0,0,*box,kind)
+        found=next((i for i,(k,b) in enumerate(remaining)
+                    if same_position(reference,compose.Char(0,0,0,*b,k))),None)
+        if found is None: return False
+        remaining.pop(found)
+    return not remaining
+
+
+def shifted_graphics(marks, dx):
+    return [(kind,tuple(fitz.Rect(box)+(dx,0,dx,0))) for kind,box in marks]
+
+
+def body_bounds(chars):
+    boxes=[(c.x0,c.x1) for c in chars if c.text.strip()]
+    return [min(b[0] for b in boxes),max(b[1] for b in boxes)] if boxes else None
 
 
 def pdfjs_order(path, layout):
@@ -163,20 +197,49 @@ def build_report(source_path,dual_path,mono_path=None):
         entries={e['source_page']:e for e in mapping['pages']}
         variants=stack.enter_context(fitz.open(mapping['pdf_path'])) if mapping.get('pdf_path') else None
         analysis=compose.analyze_source(source,raw)
+        # 独立累加全文书写行起点，避免质量检查仅复述合成器的平移值。
+        starts=[Counter(),Counter()]
+        for src,lines in enumerate(analysis[1]):
+            if entries[src].get('columns')!=2: continue
+            mid=source[src].rect.width/2
+            owners=compose._owners(src,entries[src],analysis,source[src].rect.width,source[src].rect.height)
+            for side in (0,1):
+                for line in compose.build_lines(src,[c for c in analysis[0][src] if owners[c.id]==side]):
+                    if (line.text.strip() and not any(
+                        b[0]<=line.x0 and b[1]<=line.y0 and line.x1<=b[2] and line.y1<=b[3]
+                        for b in analysis[2][src])):
+                        starts[side][line.x0]+=1
+        anchors=[c.most_common(1)[0][0] if c else None for c in starts]
+        origin_missing = (anchors[0] is None) != (anchors[1] is None)
+        shift=anchors[1]-anchors[0] if None not in anchors else 0
+        expected_missing_pages=sum(entry.get('columns')==2 for entry in entries.values())
+        handled_missing_pages=sum(
+            meta.get('reason')=='column_origin_missing'
+            for meta in layout['pages'][::2]
+        )
         page_errors=[];en_errors=[];zh_errors=[];span_errors=[];margin_errors=[];region_errors=[]
+        graphic_errors=[];body_errors=[];graphic_results=[];body_results=[]
         page_results=[]
         cached_variants={}
         for n,page in enumerate(dual):
             meta=layout['pages'][n];src=meta['src'];entry=entries[src]
             regions=RegionIndex([(r['k'],fitz.Rect(r['r'])*page.transformation_matrix) for r in meta['regions']])
-            actual,groups=layer_glyphs(page)
+            actual,groups,graphics=layer_glyphs(page,with_graphics=True)
             for c in actual:
                 if c.text.strip() and not any(fitz.Rect(c.x0,c.y0,c.x1,c.y1).intersects(box)
                     for _,box in regions.at((c.y0+c.y1)/2)):
                     region_errors.append({'page':n+1,'reason':'unmapped_glyph'})
             if any(c.text.strip() for c in groups['unknown']):
                 region_errors.append({'page':n+1,'reason':'unmarked_content'})
-            whole=entry.get('columns')==1 or meta.get('fallback',False)
+            whole=(entry.get('columns')==1 or meta.get('fallback',False)
+                   or meta.get('reason')=='column_origin_missing')
+            if origin_missing and entry.get('columns') == 2 and not (
+                expected_missing_pages == handled_missing_pages
+                and meta.get('reason') == 'column_origin_missing'
+            ):
+                body_errors.append({'page':n+1,'reason':'column_origin_missing'})
+            if meta.get('fallback',False):
+                page_errors.append({'page':n+1,'reason':'safety_net'})
             if (page.rect.width!=source[src].rect.width or meta.get('width')!=page.rect.width
                 or meta.get('height')!=page.rect.height
                 or page.rect.height<source[src].rect.height
@@ -189,7 +252,7 @@ def build_report(source_path,dual_path,mono_path=None):
                 owners=compose._owners(src,entry,analysis,source[src].rect.width,source[src].rect.height)
                 column=n%2
                 if not same_run([c for c in analysis[0][src] if owners[c.id]==column],groups['en'],
-                                -column*source[src].rect.width/2):
+                                -column*shift):
                     en_errors.append({'page':n+1,'reason':'english_character_assignment'})
                 expected_height=source[src].rect.height
                 for key,col in (('zh',column),('span',SPANNING)):
@@ -198,12 +261,42 @@ def build_report(source_path,dual_path,mono_path=None):
                         doc=stack.enter_context(fitz.open())
                         doc.insert_pdf(variants,from_page=index,to_page=index,links=False)
                         boxes=compose._content_boxes(doc[0]);compose._extend(doc[0],max([source[src].rect.height]+[b.y1 for b in boxes]))
-                        cached_variants[index]=(glyphs(doc[0]),doc[0].rect.height)
-                    expected_chars,variant_height=cached_variants[index]
+                        cached_variants[index]=(glyphs(doc[0]),doc[0].rect.height,graphic_marks(doc[0]))
+                    expected_chars,variant_height,_=cached_variants[index]
                     expected_height=max(expected_height,variant_height)
-                    dx=(1-column)*source[src].rect.width/2 if key=='zh' else 0
+                    dx=(1-column)*shift if key=='zh' else 0
                     if not same_run(expected_chars,groups[key],dx):
                         zh_errors.append({'page':n+1,'reason':key+'_variant_incomplete'})
+                english=[c for c in analysis[0][src] if owners[c.id]==column]
+                zh_index=next(v['pdf_page'] for v in entry['variants'] if v['column']==column)
+                span_index=next(v['pdf_page'] for v in entry['variants'] if v['column']==SPANNING)
+                expected_zh=cached_variants[zh_index][0]
+                if (not same_run(english,groups['en'],-column*shift)
+                    or not same_run(expected_zh,groups['zh'],(1-column)*shift)):
+                    body_errors.append({'page':n+1,'reason':'body_horizontal_position'})
+                bounds=body_bounds(groups['en']+groups['zh'])
+                source_bounds=body_bounds([c for c in analysis[0][src] if owners[c.id] in (0,1)])
+                body_results.append({'page':n+1,'source_page':src+1,'source_bounds':source_bounds,
+                    'output_bounds':bounds,'left_margin':bounds[0] if bounds else None,
+                    'right_margin':page.rect.width-bounds[1] if bounds else None,
+                    'source_left_margin':source_bounds[0] if source_bounds else None,
+                    'source_right_margin':source[src].rect.width-source_bounds[1] if source_bounds else None})
+                span_marks=cached_variants[span_index][2]
+                mid=source[src].rect.width/2
+                # 跨栏层逐实例对照；同时检查英文层是否混入本应原位画一次的图形。
+                en_span=[m for m in shifted_graphics(graphics['en'],column*shift)
+                    if compose.object_region(m[1],analysis[2][src],((mid,mid),))==SPANNING]
+                extra_span=[m for k in ('hf','zh','unknown') for m in graphics[k]
+                    if compose.object_region(m[1],analysis[2][src],((mid,mid),))==SPANNING
+                    or any(m[0]==s[0] and same_graphics([m],[s]) for s in span_marks)]
+                if not same_graphics(span_marks,graphics['span']) or en_span or extra_span:
+                    graphic_errors.append({'page':n+1,'reason':'graphic_instance_count_or_position'})
+                graphic_results.append({'page':n+1,'source_page':src+1,
+                    'expected_spanning_images':sum(k.startswith('image:') for k,b in span_marks),
+                    'spanning_images':sum(k.startswith('image:') for k,b in graphics['span']+en_span+extra_span),
+                    'spanning_paths':sum(k.startswith('path:') for k,b in graphics['span']+en_span+extra_span),
+                    'expected_spanning_graphics':len(span_marks),
+                    'actual_spanning_graphics':len(graphics['span'])+len(en_span)+len(extra_span)})
                 if page.rect.height!=expected_height:
                     page_errors.append({'page':n+1,'reason':'unexpected_content_height'})
                 expected=[c for c in analysis[0][src] if owners[c.id]==MARGIN and c.text.strip()]
@@ -234,6 +327,13 @@ def build_report(source_path,dual_path,mono_path=None):
         add('spanning_copies','跨栏两份同内容同位置',span_errors)
         add('headers_footers','已认定源页边字符每页一次且原位',margin_errors)
         add('selection_regions','每个字符有 v1 划词区域',region_errors)
+        add('spanning_graphics','跨栏图片与矢量图形每输出页一次且原位',graphic_errors,pages=graphic_results)
+        add('body_margins','各层放置原点按源双栏起点对齐（实际墨迹边距另报）',body_errors,
+            column_starts=anchors,
+            translation=None if origin_missing else shift,
+            reason='column_origin_missing' if origin_missing else '',
+            count=len(source) if origin_missing else 0,
+            pages=body_results)
         passed,evidence=pdfjs_order(dual_path,layout)
         pdfjs_errors=evidence.pop('errors',[])
         add('pdfjs_order','Zotero pdf.js 内容流顺序',[] if passed else pdfjs_errors or ['pdfjs_order'],**evidence)

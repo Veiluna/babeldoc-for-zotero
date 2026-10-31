@@ -9,6 +9,42 @@ from tests.test_split_compose import SplitComposeFixture
 import ztf_split_compose as compose
 
 class SplitLinksTests(SplitComposeFixture, unittest.TestCase):
+    def test_document_modal_starts_drive_layers_regions_links_and_toc(self):
+        layout=self.fixture()
+        for path in (self.source,self.mono,self.root/'variants.pdf'):
+            with fitz.open(path) as doc:
+                # Right-column start 250 minus left start 30 is 220, not half-width 200.
+                for index,page in enumerate(doc):
+                    for xref in page.get_contents():
+                        data=doc.xref_stream(xref)
+                        if b'230 ' in data:
+                            data=data.replace(b'230 ',b'250 ')
+                        # 后一页段首缩进是离群值；全文仍共用前一页众数差 220。
+                        if (index//3 if path==self.root/'variants.pdf' else index)==1:
+                            data=data.replace(b' 30 ',b' 40 ').replace(b' 250 ',b' 270 ')
+                        doc.update_stream(xref,data)
+                if path!=self.root/'variants.pdf':
+                    doc[0].insert_link({'kind':fitz.LINK_GOTO,'from':fitz.Rect(30,110,58,122),
+                        'page':1,'to':fitz.Point(275,120)})
+                    if path==self.source:
+                        doc.set_toc([[1,'right',2,{'kind':fitz.LINK_GOTO,'to':fitz.Point(275,120)}]])
+                doc.saveIncr()
+        with fitz.open(self.source) as source:
+            analysis=compose.analyze_source(source,layout)
+            self.assertEqual(compose.column_translation(source,analysis,{i:{'columns':2} for i in range(2)}),220)
+        self.run_compose(layout)
+        with fitz.open(self.output) as doc:
+            for n,page in enumerate(doc):
+                words={w[4]:w[0] for w in page.get_text('words')}
+                self.assertEqual(words[('LEFT' if n%2==0 else 'RIGHT')+chr(65+n//2)],
+                    30 if n//2==0 else 40 if n%2==0 else 50)
+                self.assertEqual(words[('ZHLEFT' if n%2==0 else 'ZHRIGHT')+str(n//2)],
+                    250 if n//2==0 else 260 if n%2==0 else 270)
+            self.assertEqual(sorted(l['to'].x for l in doc[0].get_links()),[55,275])
+            self.assertEqual(doc.get_toc(False)[0][3]['to'].x,55)
+            regions=self.layout(doc)['pages'][0]['regions']
+            self.assertTrue(any(r['k']=='zh' and r['r'][0]==250 for r in regions))
+
     def prefixes(self, doc):
         tree=doc.xref_get_key(doc.pdf_catalog(),'PageLabels/Nums')[1]
         return [doc.xref_get_key(int(ref),'P')[1]

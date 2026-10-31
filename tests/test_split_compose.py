@@ -12,7 +12,7 @@ import ztf_split_compose as compose
 
 class SplitComposeFixture:
     def setUp(self):
-        root = Path(__file__).resolve().parents[1] / 'build/t5c/unit'
+        root = Path(__file__).resolve().parents[1] / 'build/t5d/unit'
         root.mkdir(parents=True, exist_ok=True)
         mkdir = os.mkdir
         with patch('tempfile._os.mkdir', side_effect=lambda path, mode: mkdir(path, 0o777)):
@@ -47,7 +47,70 @@ class SplitComposeFixture:
         _,ref=doc.xref_get_key(-1,'Info')
         return json.loads(doc.xref_get_key(int(ref.split()[0]),'ZTFSplitLayout')[1])
 
+    def graphic_fixture(self):
+        layout=self.fixture()
+        image=fitz.Pixmap(fitz.csRGB,fitz.IRect(0,0,2,2),False)
+        image.clear_with(128)
+        boxes=[(80,200,100,220),(280,240,285,245),(30,320,40,330),(230,320,240,330)]
+        for path in (self.source,self.root/'variants.pdf'):
+            with fitz.open(path) as doc:
+                for i in range(2):
+                    for j,box in enumerate(boxes):
+                        page=doc[i] if path==self.source else doc[i*3+(2 if j<2 else j-2)]
+                        page.insert_image(fitz.Rect(box),pixmap=image)
+                    page=doc[i] if path==self.source else doc[i*3+2]
+                    page.draw_line((61,191),(90,191))
+                    page.draw_line((70,270),(330,270))
+                    shape=page.new_shape()
+                    shape.draw_rect(fitz.Rect(30,350,40,360));shape.draw_rect(fitz.Rect(230,350,240,360))
+                    shape.finish(fill=(0,0,0));shape.commit()
+                    shade=doc.get_new_xref()
+                    doc.update_object(shade,'<< /ShadingType 2 /ColorSpace /DeviceRGB '
+                        '/BBox [80 265 110 275] /Coords [80 265 110 275] '
+                        '/Function << /FunctionType 2 /Domain [0 1] '
+                        '/C0 [1 0 0] /C1 [0 0 1] /N 1 >> >>')
+                    resources=int(doc.xref_get_key(page.xref,'Resources')[1].split()[0])
+                    doc.xref_set_key(resources,'Shading',f'<< /ZTFShade {shade} 0 R >>')
+                    stream=doc.get_new_xref();doc.update_object(stream,'<<>>')
+                    doc.update_stream(stream,b'/ZTFShade sh')
+                    doc.xref_set_key(page.xref,'Contents','['+' '.join(
+                        f'{xref} 0 R' for xref in [*page.get_contents(),stream])+']')
+                    # Pattern 的内部绘制越过栏界；归属取使用它的路径，资源不可再筛。
+                    patterned=doc[i] if path==self.source else doc[i*3]
+                    pattern=doc.get_new_xref()
+                    doc.update_object(pattern,'<< /Type /Pattern /PatternType 1 /PaintType 1 '
+                        '/TilingType 1 /BBox [0 0 20 20] /XStep 20 /YStep 20 /Resources <<>> >>')
+                    doc.update_stream(pattern,b'0 g 0 0 400 500 re f')
+                    res=int(doc.xref_get_key(patterned.xref,'Resources')[1].split()[0])
+                    doc.xref_set_key(res,'Pattern',f'<< /ZTFPat {pattern} 0 R >>')
+                    stream=doc.get_new_xref();doc.update_object(stream,'<<>>')
+                    doc.update_stream(stream,b'q /Pattern cs /ZTFPat scn 30 100 20 20 re f Q')
+                    doc.xref_set_key(patterned.xref,'Contents','['+' '.join(
+                        f'{xref} 0 R' for xref in [*patterned.get_contents(),stream])+']')
+                doc.saveIncr()
+        for page in layout['pages']:
+            page['layouts']=[{'class':'figure','box':[60,190,340,280]}]
+        Path(str(self.mono)+'.layout.json').write_text(json.dumps(layout),encoding='utf-8')
+        return layout
+
 class SplitComposeTests(SplitComposeFixture,unittest.TestCase):
+    def test_graphics_follow_spanning_figure_owner_and_column_instances(self):
+        self.run_compose(self.graphic_fixture())
+        with fitz.open(self.output) as doc:
+            for page in doc:
+                boxes=[tuple(info['bbox']) for info in page.get_image_info()]
+                self.assertEqual(sorted(boxes),sorted([(80,200,100,220),(280,240,285,245),
+                    (30,320,40,330),(230,320,240,330),(80,225,110,235)]))
+                self.assertEqual([box for _,box in compose._GraphicObjects(page).run().paintings],
+                    [(61,191,90,191),(70,270,330,270),(30,350,240,360)]+
+                    ([(30,380,50,400),(230,380,250,400)] if page.number%2==0 else []))
+                pixels=page.get_pixmap(alpha=False)
+                expected=(0,0,0) if page.number%2==0 else (255,255,255)
+                self.assertEqual(pixels.pixel(35,385),expected)
+                self.assertEqual(pixels.pixel(235,385),expected)
+                self.assertEqual([box for kind,box in page.get_bboxlog() if kind=='fill-shade'],
+                    [(80,225,110,235)])
+
     def test_shading_infinite_bounds_do_not_grow_output_pages(self):
         layout = self.fixture()
         path = self.root/'variants.pdf'

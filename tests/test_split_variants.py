@@ -443,18 +443,18 @@ class MockRunnerTests(unittest.TestCase):
             f"G:/ProgramData/zotero-translate-files/ztest/samples/0.8.0/{name}.pdf"))
         if not sample.is_file():
             self.skipTest(f"缺少 {name} 本地原文样本")
-        run = root / "build/t62/t4" / (name + '-' + time.strftime("%Y%m%d-%H%M%S"))
+        run = root / "build/t5d/unit-variants" / (name + '-' + time.strftime("%Y%m%d-%H%M%S"))
         run.mkdir(parents=True)
         source = run / (name + "-two-pages.pdf")
         with pymupdf.open(sample) as full, pymupdf.open() as two:
             for number in numbers:
                 two.insert_pdf(full, from_page=number, to_page=number)
             two.save(source)
-        environment = isolated_environment(root / "build/t62/resources")
+        environment = isolated_environment(root / "build/t5d/unit-resources")
         server = MockOpenAIServer(("127.0.0.1", 0), MockOpenAIHandler, synthetic=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        # 仅测试驱动采集预写出 IL 的字符，正文证据只放 build/t62/t4，不进入生产日志。
+        # 仅测试驱动采集预写出 IL 的字符，正文证据只放 build/t5d，不进入生产日志。
         harness = run / "run.py"
         harness.write_text('''import copy, dataclasses, hashlib, json, os, sys, traceback
 from unittest.mock import patch
