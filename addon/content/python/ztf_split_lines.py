@@ -20,11 +20,16 @@ class _WritingLine(Line):
 def _characters(line: Line) -> tuple[Char, ...]:
     """build_lines 保留逐字数据；手工构造的 Line 视为单个连续字符框。"""
     if isinstance(line, _WritingLine):
-        return line.chars
+        return tuple(c for c in line.chars if not _text_only(c))
     return tuple(Char(line.char_ids[0] if line.char_ids else -1,
                       line.order_start, 0, line.x0, line.y0, line.x1, line.y1,
                       line.text, paragraph)
                  for paragraph in (line.paragraphs or (-1,)))
+
+
+def _text_only(char):
+    # 分段时被删除的真实空格只还原行文字，不贡献几何、压中线或回跳证据。
+    return char.paragraph == -1 and char.text.isspace()
 
 
 def build_lines(page: int, chars: Sequence[Char]) -> tuple[Line, ...]:
@@ -37,7 +42,10 @@ def build_lines(page: int, chars: Sequence[Char]) -> tuple[Line, ...]:
     """
     groups: list[list[Char]] = []
     anchor_top = anchor_baseline = None
-    for char in sorted(chars, key=lambda char: (char.order, char.sub_order)):
+    ordered = sorted(chars, key=lambda char: (char.order, char.sub_order))
+    for char in ordered:
+        if _text_only(char):
+            continue
         if (not all(isfinite(value) for value in (char.x0, char.y0, char.x1, char.y1))
                 or char.x1 < char.x0 or char.y1 < char.y0):
             raise ValueError("invalid_char_box")
@@ -57,12 +65,20 @@ def build_lines(page: int, chars: Sequence[Char]) -> tuple[Line, ...]:
             counts[char.y1] = counts.get(char.y1, 0) + 1
         baseline = max(counts, key=counts.get)
         baselines.append(baseline)
+    # 真实空格按内容流顺序附回相邻书写行；框和基线仍只由几何字符决定。
+    owners = {c.id: i for i, group in enumerate(groups) for c in group}
+    text_groups = [[] for _ in groups]
+    current = 0
+    for char in ordered:
+        current = owners.get(char.id, current)
+        if text_groups:
+            text_groups[current].append(char)
     return tuple(
-        _WritingLine(page, index, tuple(char.id for char in group),
+        _WritingLine(page, index, tuple(char.id for char in text_groups[index]),
              group[0].order, group[-1].order,
              min(char.x0 for char in group), max(char.x1 for char in group),
              min(char.y0 for char in group), max(char.y1 for char in group),
-             baselines[index], "".join(char.text for char in group),
+             baselines[index], "".join(char.text for char in text_groups[index]),
              tuple(sorted({char.paragraph for char in group if char.paragraph > -1})),
              tuple(group))
         for index, group in enumerate(groups)

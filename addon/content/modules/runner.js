@@ -206,7 +206,6 @@ var ZoteroTranslateFilesRunner = (function () {
         ["ztf_figure_text.py", "图内文字恢复辅助模块"],
         ["ztf_punctuation_cleanup.py", "重复标点清理辅助模块"],
         // 0.7.0 分栏双语：规划与合成模块，runner 在双语模式下按路径加载。
-        ["ztf_split_plan.py", "分栏规划辅助模块"],
         ["ztf_split_compose.py", "分栏合成辅助模块"],
         // 0.8.0 分栏双语：底层数据认栏与中文排版变体（ADR 0009）。
         ["ztf_split_types.py", "分栏共享数据结构"],

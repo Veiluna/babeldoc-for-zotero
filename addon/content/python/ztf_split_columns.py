@@ -1,4 +1,11 @@
-﻿"""#62：全文单/双栏判定与页面中线归属，纯函数，不设视觉容差。"""
+"""#62：全文单/双栏判定与页面中线归属，纯函数，不设视觉容差。
+
+输入：按内容流顺序的 Line（build_lines 的逐字信息）、页尺寸、T3 页边证据、
+图表公式范围及可选 ColumnCount 标签。输出：不可变 DocumentColumns / PageColumns。
+全文先由标签或首个严格回跳点确定单/双栏，各页随后按页面中线逐字归栏；
+页边证据优先，真实补回空格只用于行文字，不参与回跳或压中线的几何判定。
+页尺寸非有限或非正、行/图表框非有限或倒置、文档页尺寸数量不匹配时抛 ValueError。
+"""
 from collections.abc import Mapping, Sequence
 from math import isfinite
 

@@ -297,7 +297,7 @@ def _link_paragraph_map(
     """Combine source boxes with final translated paragraph geometry."""
     paragraphs = []
     for page_index, page in enumerate(getattr(document, "page", ()) or ()):
-        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+        for paragraph_index, paragraph in enumerate(getattr(page, "pdf_paragraph", ()) or ()):
             snapshot = snapshots.get(id(paragraph))
             if snapshot is None:
                 continue
@@ -364,7 +364,7 @@ def _split_layout_pages(
         else:
             skips["invalid_page_geometry"] += 1
         paragraphs = []
-        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+        for paragraph_index, paragraph in enumerate(getattr(page, "pdf_paragraph", ()) or ()):
             snapshot = snapshots.get(id(paragraph))
             if snapshot is None:
                 skips["missing_snapshot"] += 1
@@ -374,6 +374,7 @@ def _split_layout_pages(
                 # 译文框无效时只影响跨栏扩框，段落本身仍按原文框规划。
                 skips["invalid_output_box"] += 1
             paragraphs.append({
+                "index": paragraph_index,
                 "box": snapshot["source_box"],
                 "output_box": output_box,
                 "label": _paragraph_layout_label(paragraph),
@@ -6459,11 +6460,10 @@ def _compose_split_dual(
         )
         with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
             json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
-        plan_helper = _load_helper("ztf_split_plan")
         compose_helper = _load_helper("ztf_split_compose")
-        plans = [plan_helper.plan_page(page) for page in layout["pages"]]
         stats = compose_helper.compose_split_document(
-            source_pdf, mono_pdf, plans, output_pdf
+            source_pdf, mono_pdf, layout, output_pdf,
+            log=lambda record: _write_job_log(request_state, record, api_key),
         )
     except Exception as error:  # noqa: BLE001 - 失败时回退为导入单语 PDF
         summary = {"error": log_safe_error(error, api_key)}
@@ -6493,9 +6493,10 @@ def _compose_split_dual(
         return {"error": "empty_output"}
     state["dual_result"] = output_pdf
     summary = dict(stats or {})
-    summary["pages"] = len(plans)
-    summary.setdefault("fallback_pages", sum(1 for plan in plans if plan.columns == 0))
-    _write_job_log(request_state, {"event": "split_dual", **summary}, api_key)
+    summary["pages"] = len(layout["pages"])
+    summary.setdefault("fallback_pages", 0)
+    _write_job_log(request_state, {"event": "split_dual",
+        **{key:value for key,value in summary.items() if key != "page_results"}}, api_key)
     return summary
 
 

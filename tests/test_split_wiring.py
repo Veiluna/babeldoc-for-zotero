@@ -23,27 +23,18 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(runner)
 
 
-@dataclass(frozen=True)
-class _Plan:
-    source_index: int
-    columns: int
-    regions: tuple = ()
-
-
 def _fake_helpers(compose):
-    plan = types.SimpleNamespace(
-        plan_page=lambda page: _Plan(page["index"], 2 if page.get("paragraphs") else 0)
-    )
-    composer = types.SimpleNamespace(compose_split_document=compose)
-    return {"ztf_split_plan": plan, "ztf_split_compose": composer}
+    return {"ztf_split_compose": types.SimpleNamespace(compose_split_document=compose)}
 
 
 class SplitWiringTests(unittest.TestCase):
     def setUp(self):
+        temporary_root = ROOT / "build/t5c/unit"
+        temporary_root.mkdir(parents=True, exist_ok=True)
         # Windows 沙箱令牌不兼容 Python 3.12 的 0700 专用 ACL，夹具沿用父目录 ACL。
         mkdir = os.mkdir
         with mock.patch("tempfile._os.mkdir", side_effect=lambda path, mode: mkdir(path, 0o777)):
-            self.tmp = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
+            self.tmp = tempfile.TemporaryDirectory(dir=temporary_root)
         self.addCleanup(self.tmp.cleanup)
         self.mono = os.path.join(self.tmp.name, "input.no_watermark.zh.mono.pdf")
         Path(self.mono).write_bytes(b"%PDF-1.7 mono")
@@ -114,9 +105,9 @@ class SplitWiringTests(unittest.TestCase):
         self.assertNotIn("dual_result", self.state)
 
     def test_success_sets_dual_result_and_writes_layout(self):
-        def compose(source, mono, plans, output):
+        def compose(source, mono, layout, output, **kwargs):
             self.assertEqual((source, mono), (self.source, self.mono))
-            self.assertEqual([plan.source_index for plan in plans], [0, 1])
+            self.assertEqual([page["index"] for page in layout["pages"]], [0, 1])
             Path(output).write_bytes(b"%PDF-1.7 split")
             return {"output_pages": 3}
 
@@ -127,7 +118,7 @@ class SplitWiringTests(unittest.TestCase):
         expected = self.mono.replace(".zh.mono.pdf", ".zh.dual.pdf")
         self.assertEqual(self.state["dual_result"], expected)
         self.assertEqual(result["output_pages"], 3)
-        self.assertEqual(result["fallback_pages"], 1)
+        self.assertEqual(result["fallback_pages"], 0)
         with open(self.mono + ".layout.json", encoding="utf-8") as handle:
             written = json.load(handle)
         self.assertEqual(len(written["pages"]), 2)
@@ -140,7 +131,7 @@ class SplitWiringTests(unittest.TestCase):
     def test_compose_fallback_count_is_preserved_in_result_and_log(self):
         for fallback_pages in (0, 2):
             with self.subTest(fallback_pages=fallback_pages):
-                def compose(source, mono, plans, output):
+                def compose(source, mono, layout, output, **kwargs):
                     Path(output).write_bytes(b"%PDF-1.7 split")
                     return {"output_pages": 2, "fallback_pages": fallback_pages}
 
@@ -153,7 +144,7 @@ class SplitWiringTests(unittest.TestCase):
                 self.assertEqual(self.logs[-1]["fallback_pages"], fallback_pages)
 
     def test_compose_error_falls_back_without_dual(self):
-        def compose(source, mono, plans, output):
+        def compose(source, mono, layout, output, **kwargs):
             Path(output).write_bytes(b"partial")
             raise RuntimeError("boom")
 
@@ -168,7 +159,7 @@ class SplitWiringTests(unittest.TestCase):
         self.assertEqual(self.logs[-1]["pages"], 2)
 
     def test_cleanup_failure_is_logged(self):
-        def compose(source, mono, plans, output):
+        def compose(source, mono, layout, output, **kwargs):
             Path(output).write_bytes(b"partial")
             raise RuntimeError("boom")
 
@@ -193,7 +184,7 @@ class SplitWiringTests(unittest.TestCase):
     def test_export_skips_are_logged(self):
         self.request_state["split_layout_skips"] = runner.Counter(missing_snapshot=2)
         with self._with_env("1"), mock.patch.dict(
-            runner._HELPER_MODULES, _fake_helpers(lambda *args: {})
+            runner._HELPER_MODULES, _fake_helpers(lambda *args, **kwargs: {})
         ):
             runner._dual_after_layout(self.state, self.request_state, {}, "")
         self.assertIn(

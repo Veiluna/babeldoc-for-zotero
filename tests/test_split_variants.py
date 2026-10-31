@@ -48,6 +48,67 @@ def columns():
 
 
 class VariantTests(unittest.TestCase):
+    def test_foba_page17_watermark_is_margin_and_absent_from_chinese_variants(self):
+        import gzip
+        from ztf_split_lines import build_lines
+        from ztf_split_margins import classify_margins
+        from ztf_split_columns import detect_columns
+        from ztf_split_types import DocumentColumns
+
+        fixture = Path(__file__).parent / 'fixtures/foba-watermark.json.gz'
+        records = json.loads(gzip.decompress(fixture.read_bytes()))['pages']
+        saved = {}
+
+        class Finder:
+            def process_page(self, original):
+                # Replay measured paragraph membership after BabelDOC spacing:
+                # the real spaces with paragraph=-1 disappeared from the IL.
+                glyphs = original.pdf_character
+                original.pdf_character = []
+                for c in glyphs:
+                    if c.expected_paragraph >= 0:
+                        original.pdf_paragraph[c.expected_paragraph].pdf_paragraph_composition.append(
+                            NS(pdf_character=c, pdf_formula=None))
+
+        split_variants._install_paragraph_capture(Finder, saved)
+        pages, lines = [], []
+        for record in records:
+            original = page()
+            original.page_number = record['page']
+            original.pdf_paragraph = [NS(pdf_paragraph_composition=[]) for _ in range(
+                1 + max(c[8] for c in record['chars']))]
+            original.pdf_character = [NS(render_order=c[1], sub_render_order=c[2],
+                box=box(*c[3:7]), char_unicode=c[7], xobj_id=c[9], expected_paragraph=c[8])
+                for c in record['chars']]
+            Finder().process_page(original)
+            convert = lambda b:(b.x,b.y,b.x2,b.y2)
+            chars = collect_source_chars(original, convert, saved.pop(id(original))[1])
+            lines.append(build_lines(record['page'], chars))
+            pages.append(original)
+        margins = classify_margins(lines, [792,792])
+        self.assertEqual(len(lines[1]), 1)
+        self.assertIn('UTC from IEEE', lines[1][0].text)
+        self.assertIn(lines[1][0].index, margins[1])
+        assigned = detect_columns(16,612,792,lines[1],margins[1],DocumentColumns(2,'jump'))
+        self.assertEqual(assigned.line_column, (MARGIN,))
+        self.assertTrue(all(not v.paragraphs for v in create_variants(pages[1],assigned)))
+        self.assertFalse(any(c.char_unicode.isspace() and c.expected_paragraph == -1
+            for p in pages[1].pdf_paragraph for c in split_variants._paragraph_chars(p)))
+
+        # BabelDOC may share a protected paragraph between a unique copyright
+        # line and the repeated watermark. Keep its non-margin source line.
+        original = page()
+        footer = NS(render_order=8,sub_render_order=0,xobj_id=0,
+                    box=box(10,20,100,30),char_unicode='watermark')
+        copyright = NS(render_order=7,sub_render_order=0,xobj_id=0,
+                       box=box(10,40,100,50),char_unicode='copyright')
+        original.pdf_paragraph[2].pdf_paragraph_composition = [
+            NS(pdf_character=None,pdf_formula=None,pdf_line=NS(pdf_character=[copyright,footer]))]
+        variants = create_variants(original,columns(),{(8,0,0):MARGIN})
+        self.assertEqual([c.char_unicode for c in split_variants._paragraph_chars(
+            variants[-1].page.pdf_paragraph[0])],['copyright'])
+        self.assertEqual(list(split_variants._paragraph_chars(original.pdf_paragraph[2])),[copyright,footer])
+
     def test_column_count_is_read_from_structural_attributes(self):
         import pymupdf
         for count in (1, 2):
@@ -467,14 +528,16 @@ def collect_checked(*args, **kwargs):
             traceback.format_exc(), encoding="utf-8")
         raise
 variants.collect_source_chars = collect_checked
-def glyphs(paragraph):
+def glyphs(paragraph, char_columns):
     text = []
     for c in paragraph.pdf_paragraph_composition:
         if c.pdf_character is not None:
-            text.append(c.pdf_character.char_unicode)
+            text.append(c.pdf_character)
         elif c.pdf_formula is not None:
-            text.extend(g.char_unicode for g in c.pdf_formula.pdf_character)
-    return "".join(text)
+            text.extend(c.pdf_formula.pdf_character)
+    return "".join(c.char_unicode for c in text
+        if char_columns.get((getattr(c, "render_order", None),
+            getattr(c, "sub_render_order", None), getattr(c, "xobj_id", None))) != variants.MARGIN)
 def checked(page, columns, *args, **kwargs):
     geometry = {"forms": [{"xobj_id": f.xobj_id,
                            "box": [f.box.x, f.box.y, f.box.x2, f.box.y2],
@@ -498,8 +561,9 @@ def checked(page, columns, *args, **kwargs):
     Path(os.environ['T4_EXPECTED']).with_name(f'source-lazy-{page.page_number}.json').write_text(
         json.dumps({'lazy_count': len(lazy), 'source_caches_unchanged': True}), encoding='utf-8')
     assignment = dict(columns.paragraph_column)
+    char_columns = args[0] if args else kwargs.get("char_columns", {})
     for variant in result:
-        expected = "".join(glyphs(p) for i, p in enumerate(page.pdf_paragraph)
+        expected = "".join(glyphs(p, char_columns) for i, p in enumerate(page.pdf_paragraph)
                            if assignment.get(i) == variant.column)
         expected += "".join(c.char_unicode for c in variant.page.pdf_character)
         records.append({"source_page": page.page_number, "column": variant.column,

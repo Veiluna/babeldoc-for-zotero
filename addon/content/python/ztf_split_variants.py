@@ -47,10 +47,38 @@ def _page_box(page, box):
             box.x2 - crop.x, top - box.y - crop.y)
 
 
-def collect_source_chars(page: Any, convert_box: Callable | None = None) -> tuple[Char, ...]:
+def _install_paragraph_capture(finder, captured):
+    """在 0.6.4 分段删空格前持有真实对象；分段后只按对象身份恢复归段。"""
+    original = finder.process_page
+
+    @functools.wraps(original)
+    def process_page(instance, page, *args, **kwargs):
+        try:
+            glyphs = {id(c): c for c in page.pdf_character}
+            for paragraph in page.pdf_paragraph:
+                glyphs.update((id(c), c) for c in _paragraph_chars(paragraph))
+        except Exception:
+            glyphs = None
+        result = original(instance, page, *args, **kwargs)
+        try:
+            owners = {id(c): i for i, p in enumerate(page.pdf_paragraph)
+                      for c in _paragraph_chars(p)}
+            if glyphs is not None:
+                captured[id(page)] = (page, tuple((c, owners.get(identity, -1))
+                                                for identity, c in glyphs.items()))
+        except Exception:
+            pass  # 翻译入口按页回退原取字路径，并记录 source_capture_missing。
+        return result
+
+    finder.process_page = process_page
+
+
+def collect_source_chars(page: Any, convert_box: Callable | None = None,
+                         captured=None) -> tuple[Char, ...]:
     """翻译前采集，保留真实 render/sub_render_order；同一字符只计一次。"""
     convert = convert_box or (lambda box: _page_box(page, box))
-    glyphs = {id(char): (char, -1) for char in page.pdf_character}
+    glyphs = {id(char): (char, paragraph) for char, paragraph in (captured or ())}
+    glyphs.update((id(char), (char, -1)) for char in page.pdf_character)
     for index, paragraph in enumerate(page.pdf_paragraph):
         for char in _paragraph_chars(paragraph):
             glyphs[id(char)] = (char, index)
@@ -229,6 +257,24 @@ def create_variants(
                         if assignments.get(index) == column)
         variant = _copy_il(page)
         variant.pdf_paragraph = [variant.pdf_paragraph[index] for index in indices]
+        # 同一保留段落可同时包含跨栏版权行和页边水印；段归属不能覆盖逐字页边证据。
+        # 只过滤变体副本中的源字，翻译 IL/单语输出及未知新译字均保持不变。
+        def is_margin(char):
+            return char_columns.get((getattr(char, "render_order", None),
+                getattr(char, "sub_render_order", None), getattr(char, "xobj_id", None))) == MARGIN
+
+        for paragraph in variant.pdf_paragraph:
+            compositions = []
+            for composition in paragraph.pdf_paragraph_composition:
+                char = getattr(composition, "pdf_character", None)
+                if char is not None and is_margin(char):
+                    continue
+                for name in ("pdf_line", "pdf_same_style_characters", "pdf_formula"):
+                    container = getattr(composition, name, None)
+                    if container is not None:
+                        container.pdf_character = [c for c in container.pdf_character if not is_margin(c)]
+                compositions.append(composition)
+            paragraph.pdf_paragraph_composition = compositions
         variant.pdf_character = [char for char in variant.pdf_character
                                  if char_columns.get((char.render_order, char.sub_render_order,
                                                       char.xobj_id), owner(char)) == column]
@@ -361,6 +407,15 @@ def install(log: Callable[[dict], None]) -> None:
 
     snapshots = {}
     source_errors = {}
+    captured_pages = {}
+    capture_hook = False
+    try:
+        from babeldoc.format.pdf.document_il.midend.paragraph_finder import ParagraphFinder
+        _install_paragraph_capture(ParagraphFinder, captured_pages)
+        capture_hook = True
+    except Exception:
+        # 各页在 capture 中记录固定原因码并继续使用原取字路径。
+        pass
     original_write = None
 
     def capture(document, source_pdf):
@@ -377,7 +432,12 @@ def install(log: Callable[[dict], None]) -> None:
                     return tuple(pymupdf.Rect(box.x, box.y, box.x2, box.y2) * _matrix)
 
                 try:
-                    chars = collect_source_chars(page, convert)
+                    captured = captured_pages.pop(id(page), None)
+                    if captured is None:
+                        log({"event": "split_source_capture_fallback", "page": number,
+                             "reason": "source_capture_missing" if capture_hook
+                             else "source_capture_unavailable"})
+                    chars = collect_source_chars(page, convert, captured[1] if captured else None)
                 except Exception as error:  # noqa: BLE001 - 保留源页诊断，不中断其他页采集
                     reason = _error_reason(error)
                     source_errors[id(page)] = reason
@@ -433,6 +493,8 @@ def install(log: Callable[[dict], None]) -> None:
             except Exception as error:  # noqa: BLE001 - 变体诊断不能改变单语翻译路径
                 log({"event": "split_variants_error", "stage": "source",
                      "error": _error_reason(error), "count": 1})
+            finally:
+                captured_pages.clear()
             return _original(instance, document, *args, **kwargs)
 
         translator.translate = translate
