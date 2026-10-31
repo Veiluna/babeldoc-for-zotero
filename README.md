@@ -90,7 +90,7 @@
 
 ## 参与开发
 
-开发、测试和发布说明见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
+欢迎通过 [Issues](https://github.com/Veiluna/babeldoc-for-zotero/issues) 反馈问题。测试在 `tests/` 下：Node 测试用 `node tests/<文件>.test.js` 逐个运行，Python 测试用 `python tests/<文件>.py` 运行。
 
 ## 许可证与致谢
 
