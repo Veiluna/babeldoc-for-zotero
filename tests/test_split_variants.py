@@ -47,6 +47,50 @@ def columns():
                        ((0, 0), (1, 1), (2, SPANNING)))
 
 
+def _reference_region(bounds, figure_boxes, gutters):
+    """测试专用的旧归属规则，不调用生产模块的 object_region。"""
+    containing = [candidate for candidate in figure_boxes
+                  if candidate[0] <= bounds[0] and candidate[1] <= bounds[1]
+                  and bounds[2] <= candidate[2] and bounds[3] <= candidate[3]]
+    if containing:
+        bounds = min(containing,
+                     key=lambda candidate: (candidate[2] - candidate[0])
+                     * (candidate[3] - candidate[1]))
+    if any(bounds[0] < right and bounds[2] > left for left, right in gutters):
+        return SPANNING
+    return sum(bounds[0] >= right for _, right in gutters)
+
+
+def _reference_box(item):
+    return (item.box.x, item.box.y, item.box.x2, item.box.y2)
+
+
+def _object_ids(items):
+    return tuple(getattr(item, "marker", getattr(item, "xobj_id", None))
+                 for item in items)
+
+
+def _snapshot(value, seen=None):
+    """将测试 IL 转成无身份信息的字段快照，便于比较写出前后状态。"""
+    seen = {} if seen is None else seen
+    identity = id(value)
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    if identity in seen:
+        return ("<cycle>", seen[identity])
+    marker = len(seen)
+    seen[identity] = marker
+    if isinstance(value, dict):
+        return ("dict", tuple(sorted((repr(key), _snapshot(item, seen))
+                                      for key, item in value.items())))
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, tuple(_snapshot(item, seen) for item in value))
+    if hasattr(value, "__dict__"):
+        return (type(value).__name__, tuple(sorted(
+            (key, _snapshot(item, seen)) for key, item in vars(value).items())))
+    return repr(value)
+
+
 class VariantTests(unittest.TestCase):
     def test_foba_page17_watermark_is_margin_and_absent_from_chinese_variants(self):
         import gzip
@@ -199,6 +243,238 @@ class VariantTests(unittest.TestCase):
         self.assertEqual([len(v.page.pdf_curve) for v in variants], [1, 1, 1])
         self.assertEqual([len(v.page.pdf_form) for v in variants], [0, 1, 0])
         self.assertEqual([len(v.page.pdf_character) for v in variants], [0, 0, 1])
+
+    def test_variants_match_legacy_objects_and_copy_only_selected_curves(self):
+        original = page()
+        original.page_layout = [
+            NS(class_name="figure", box=box(40, 0, 280, 800), marker="layout-left"),
+            NS(class_name="figure", box=box(320, 0, 560, 800), marker="layout-right"),
+        ]
+        original.pdf_paragraph = [
+            paragraph("left", (40, 600, 280, 700)),
+            paragraph("right", (320, 600, 560, 700)),
+            paragraph("spanning", (40, 730, 560, 760)),
+        ]
+        original.pdf_character = [
+            NS(box=box(50, 500, 60, 510), xobj_id=11, render_order=1,
+               sub_render_order=0, marker="char-left"),
+            NS(box=box(350, 500, 360, 510), xobj_id=12, render_order=2,
+               sub_render_order=0, marker="char-right"),
+            NS(box=box(290, 500, 310, 510), xobj_id=13, render_order=3,
+               sub_render_order=0, marker="char-spanning"),
+        ]
+        left_curves = [NS(box=box(40, 300, 280, 301), xobj_id=21, marker=i)
+                       for i in range(1000)]
+        original.pdf_curve = [
+            *left_curves,
+            NS(box=box(320, 300, 560, 301), xobj_id=22, marker="curve-right"),
+            NS(box=box(290, 300, 310, 301), xobj_id=23, marker="curve-spanning"),
+        ]
+        original.pdf_rectangle = [
+            NS(box=box(50, 250, 80, 260), xobj_id=31, marker="rect-left"),
+            NS(box=box(350, 250, 380, 260), xobj_id=32, marker="rect-right"),
+        ]
+        original.pdf_figure = [
+            NS(box=box(60, 150, 120, 200), xobj_id=41, marker="figure-left"),
+            NS(box=box(380, 150, 440, 200), xobj_id=42, marker="figure-right"),
+        ]
+        original.pdf_form = [
+            NS(box=box(80, 100, 120, 130), xobj_id=51, marker="form-left",
+               pdf_form_subtype=NS(pdf_xobj_form=None)),
+            NS(box=box(400, 100, 440, 130), xobj_id=52, marker="form-right",
+               pdf_form_subtype=NS(pdf_xobj_form=None)),
+        ]
+        original.pdf_xobject = [
+            NS(xobj_id=xobj_id, xref_id=xobj_id + 100, box=box(*bounds), marker=marker)
+            for xobj_id, bounds, marker in (
+                (11, (50, 500, 60, 510), "xobj-char-left"),
+                (12, (350, 500, 360, 510), "xobj-char-right"),
+                (13, (290, 500, 310, 510), "xobj-char-spanning"),
+                (21, (40, 300, 280, 301), "xobj-curve-left"),
+                (22, (320, 300, 560, 301), "xobj-curve-right"),
+                (23, (290, 300, 310, 301), "xobj-curve-spanning"),
+                (31, (50, 250, 80, 260), "xobj-rect-left"),
+                (32, (350, 250, 380, 260), "xobj-rect-right"),
+                (41, (60, 150, 120, 200), "xobj-figure-left"),
+                (42, (380, 150, 440, 200), "xobj-figure-right"),
+                (51, (80, 100, 120, 130), "xobj-form-left"),
+                (52, (400, 100, 440, 130), "xobj-form-right"),
+            )
+        ]
+
+        figure_boxes = [_reference_box(item) for item in original.page_layout]
+
+        def legacy_variant(column):
+            # 旧实现先整页复制，再对各集合按归属过滤；这里保留该逻辑作为独立期望。
+            cloned = copy.deepcopy(original)
+            assignments = dict(columns().paragraph_column)
+            paragraphs = tuple(i for i in range(len(cloned.pdf_paragraph))
+                               if assignments.get(i) == column)
+            selected = {}
+            for name in ("pdf_character", "pdf_curve", "pdf_rectangle", "pdf_figure",
+                         "page_layout", "pdf_form"):
+                selected[name] = [item for item in getattr(cloned, name)
+                                  if _reference_region(_reference_box(item), figure_boxes,
+                                                       columns().gutters) == column]
+            active = {item.xobj_id for name in ("pdf_character", "pdf_curve", "pdf_rectangle",
+                                                "pdf_form") for item in selected[name]}
+            for index in paragraphs:
+                active.update(char.xobj_id for char in split_variants._paragraph_chars(
+                    cloned.pdf_paragraph[index]))
+            selected["pdf_xobject"] = [item for item in cloned.pdf_xobject
+                                        if item.xobj_id in active]
+            return {
+                "paragraphs": paragraphs,
+                **{name: _object_ids(items) for name, items in selected.items()},
+            }
+
+        curve_ids = {id(curve) for curve in original.pdf_curve}
+        copy_calls = []
+        real_copy = split_variants._copy_il
+
+        def counting_copy(value):
+            pending, seen, count = [value], set(), 0
+            while pending:
+                item = pending.pop()
+                if id(item) in seen:
+                    continue
+                seen.add(id(item))
+                if id(item) in curve_ids:
+                    count += 1
+                if isinstance(item, dict):
+                    pending.extend(item.values())
+                elif isinstance(item, (list, tuple)):
+                    pending.extend(item)
+                elif hasattr(item, "__dict__"):
+                    pending.extend(vars(item).values())
+            copy_calls.append(count)
+            return real_copy(value)
+
+        with patch.object(split_variants, "_copy_il", counting_copy):
+            variants = create_variants(original, columns())
+
+        self.assertEqual([copy_calls[i] for i in (0, 2, 4)], [1000, 1, 1])
+        self.assertEqual(len(copy_calls), 6)  # 每个变体分别复制对象根和页面壳
+        for variant in variants:
+            actual = {
+                "paragraphs": variant.paragraphs,
+                **{name: _object_ids(getattr(variant.page, name))
+                   for name in ("pdf_character", "pdf_curve", "pdf_rectangle",
+                                "pdf_figure", "page_layout", "pdf_form", "pdf_xobject")},
+            }
+            self.assertEqual(actual, legacy_variant(variant.column))
+        self.assertIsNot(variants[0].page.pdf_curve[0], original.pdf_curve[0])
+
+    def test_large_figure_curve_selection_matches_legacy_and_copies_objects(self):
+        original = page()
+        original.page_layout = [
+            NS(class_name="figure", box=box(40, 0, 280, 800), marker="layout-left"),
+        ]
+        left_curves = [NS(box=box(40, 300, 280, 301), xobj_id=21, marker=i)
+                       for i in range(10001)]
+        right_curve = NS(box=box(320, 300, 560, 301), xobj_id=22,
+                         marker="curve-right")
+        original.pdf_curve = [*left_curves, right_curve]
+
+        # This is the independently written legacy expectation for the page
+        # geometry: every left curve belongs to column 0, the right curve to
+        # column 1, and no curve crosses the gutter into SPANNING.
+        expected_markers = {
+            0: tuple(range(10001)),
+            1: ("curve-right",),
+            SPANNING: (),
+        }
+        variants = create_variants(original, columns())
+
+        self.assertEqual([len(variant.page.pdf_curve) for variant in variants],
+                         [10001, 1, 0])
+        source_curve_ids = {id(curve) for curve in original.pdf_curve}
+        for variant in variants:
+            self.assertEqual(tuple(curve.marker for curve in variant.page.pdf_curve),
+                             expected_markers[variant.column])
+            self.assertTrue(all(id(curve) not in source_curve_ids
+                                for curve in variant.page.pdf_curve))
+
+    def test_render_variants_keeps_creator_docs_il_unchanged_after_writer_mutations(self):
+        import pymupdf
+        import types
+
+        source = page()
+        source.pdf_font = []
+        source.base_operations = NS(value="source")
+        source.pdf_form = []
+        creator = NS(
+            docs=NS(page=[source]),
+            translation_config=NS(raise_if_cancelled=lambda: None),
+            original_pdf_path="source.pdf",
+            mediabox_data=None,
+        )
+        variant = split_variants.Variant(0, source, (0,))
+        before = _snapshot(creator.docs)
+        mutations = []
+
+        class FakeOutput:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def insert_pdf(self, *_args, **_kwargs):
+                mutations.append("insert")
+
+            def save(self, *_args, **_kwargs):
+                mutations.append("save")
+
+        class FakeSource:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def fake_open(path=None):
+            return FakeOutput() if path is None else FakeSource()
+
+        class FakeDocument:
+            def __init__(self, page, total_pages):
+                self.page = page
+                self.total_pages = total_pages
+
+        class FakeFontMapper:
+            def add_font(self, _pdf, document):
+                document.page[0].pdf_font.append(NS(name="added-font"))
+                mutations.append("font")
+
+        class FakeWriter:
+            def __init__(self, *_args):
+                self.font_mapper = FakeFontMapper()
+
+            def update_page_content_stream(self, *_args):
+                mutations.append("content")
+
+            def restore_media_box(self, *_args):
+                mutations.append("media-box")
+
+        def fake_isolate(render_page, _pdf):
+            render_page.base_operations.value = "isolated"
+            mutations.append("isolate")
+
+        fake_il = types.ModuleType("babeldoc.format.pdf.document_il.il_version_1")
+        fake_il.Document = FakeDocument
+        fake_backend = types.ModuleType(
+            "babeldoc.format.pdf.document_il.backend.pdf_creater")
+        fake_backend.PDFCreater = FakeWriter
+        with patch.object(pymupdf, "open", side_effect=fake_open), \
+                patch.dict(sys.modules, {
+                    "babeldoc.format.pdf.document_il.il_version_1": fake_il,
+                    "babeldoc.format.pdf.document_il.backend.pdf_creater": fake_backend,
+                }), \
+                patch.object(split_variants, "_isolate_form_streams", fake_isolate):
+            split_variants.render_variants(creator, (variant,), "ignored.pdf")
+
+        self.assertEqual(before, _snapshot(creator.docs))
+        self.assertEqual(mutations, ["isolate", "font", "content", "media-box", "insert", "save"])
 
     def test_single_column_has_no_variants(self):
         original = page()
