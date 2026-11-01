@@ -1,7 +1,8 @@
 """T4 中文排版变体：过滤排版后的 IL 副本，交 BabelDOC 写出，供 T5 整页嵌入。
 
-原 IL、原 PDF 和单语输出均不修改。纯 IL 入口 create_variants 不执行 I/O；
-install 在翻译前采集字符，在 PDFCreater.write 前生成变体。依赖 BabelDOC 0.6.4。
+纯 IL 入口 create_variants 不执行 I/O，也不改传入的排版 IL。
+install 在翻译前抽出图表对象，写出 mono/variants 时以原页矢量 Form 提供底图；
+原 PDF 不修改。依赖 BabelDOC 0.6.4。
 """
 
 import copy
@@ -20,6 +21,14 @@ if _DIRECTORY not in sys.path:
     sys.path.insert(0, _DIRECTORY)
 
 from ztf_split_types import MARGIN, SPANNING, Char, PageColumns
+from ztf_figure_background import (
+    build_plan,
+    inject_background_sequence,
+    inject_backgrounds,
+    remember,
+    remove_selected_objects,
+    remembered,
+)
 
 
 @dataclass(frozen=True)
@@ -295,6 +304,7 @@ def create_variants(
         return _copy_il(shell)
 
     result = []
+    source_background = remembered(page)
     for column in (*range(columns.columns), SPANNING):
         indices = tuple(index for index in range(len(page.pdf_paragraph))
                         if assignments.get(index) == column)
@@ -356,6 +366,8 @@ def create_variants(
         variant.page_layout = list(copied_layout)
         variant.pdf_form = list(copied_forms)
         variant.pdf_xobject = list(copied_xobjects)
+        if source_background is not None:
+            remember(variant, source_background.for_owner(column))
 
         # Margin 字符只从当前变体的副本中移除，避免修改 creator.docs IL。
         for paragraph in variant.pdf_paragraph:
@@ -482,6 +494,7 @@ def install(log: Callable[[dict], None]) -> None:
     from ztf_split_margins import classify_margins, read_pdf_evidence
 
     snapshots = {}
+    mono_plans = {}
     source_errors = {}
     captured_pages = {}
     capture_hook = False
@@ -524,7 +537,8 @@ def install(log: Callable[[dict], None]) -> None:
                 figures = tuple(convert(item.box) for item in page.page_layout
                                 if item.class_name in _FIGURE_LABELS)
                 entries.append((page, chars, lines, convert, figures,
-                                original.cropbox.width, original.cropbox.height))
+                                original.cropbox.width, original.cropbox.height,
+                                build_plan(page, convert_box=convert)))
         # classify_margins 按传入序列下标寻址，证据按真实源页号重映射。
         margins = classify_margins(
             [entry[2] for entry in entries], [entry[6] for entry in entries],
@@ -536,7 +550,7 @@ def install(log: Callable[[dict], None]) -> None:
             margins, {i: e[4] for i, e in enumerate(entries)},
             column_count_tag,
         )
-        for index, (page, chars, lines, convert, figures, width, height) in enumerate(entries):
+        for index, (page, chars, lines, convert, figures, width, height, plan) in enumerate(entries):
             columns = detect_columns(page.page_number, width, height, lines,
                                      margins[index], document_columns, figures)
             mid = width / 2
@@ -545,8 +559,12 @@ def install(log: Callable[[dict], None]) -> None:
             groups.update({char.id: (0 if columns.columns == 1 or char.x1 <= mid else 1)
                            for char in chars if char.id not in groups})
             owners = {(char.order, char.sub_order, char.xobj): groups[char.id] for char in chars}
+            plan = plan.with_gutters(columns.gutters)
+            remove_selected_objects(page, plan)
+            mono_plans[id(page)] = plan
+            remember(page, plan)
             snapshots[id(page)] = (columns, owners, convert,
-                                   tuple(id(p) for p in page.pdf_paragraph))
+                                   tuple(id(p) for p in page.pdf_paragraph), plan)
 
     for translator in (ILTranslator, ILTranslatorLLMOnly):
         original_translate = getattr(translator, "translate", None)
@@ -579,7 +597,14 @@ def install(log: Callable[[dict], None]) -> None:
         started = time.perf_counter()
         variants = []
         pages = []
+        variant_backgrounds = []
+        variant_source_pages = []
+        mono_backgrounds = {}
         for page in creator.docs.page:
+            # 图表已移出 IL；单语底图不能依赖后续分栏检查或变体生成成功。
+            plan = mono_plans.pop(id(page), None)
+            if plan is not None:
+                mono_backgrounds[page.page_number] = plan
             entry = {"source_page": page.page_number, "variants": []}
             try:
                 if id(page) in source_errors:
@@ -589,7 +614,11 @@ def install(log: Callable[[dict], None]) -> None:
                 saved = snapshots.pop(id(page), None)
                 if saved is None:
                     raise ValueError("source_snapshot_missing")
-                columns, owners, convert, paragraph_ids = saved
+                if len(saved) == 5:
+                    columns, owners, convert, paragraph_ids, plan = saved
+                else:
+                    columns, owners, convert, paragraph_ids = saved
+                    plan = None
                 if tuple(id(p) for p in page.pdf_paragraph) != paragraph_ids:
                     raise ValueError("paragraph_identity_changed")
                 entry.update({"columns": columns.columns, "basis": columns.basis,
@@ -601,6 +630,8 @@ def install(log: Callable[[dict], None]) -> None:
                                               "pdf_page": len(variants),
                                               "paragraphs": variant.paragraphs})
                     variants.append(variant)
+                    variant_backgrounds.append(remembered(variant.page))
+                    variant_source_pages.append(page.page_number)
             except Exception as error:  # noqa: BLE001 - 显式记录单页安全网所需原因
                 # 只发固定原因码，第三方异常文本可能包含文档数据。
                 entry["error"] = _error_reason(error)
@@ -613,6 +644,11 @@ def install(log: Callable[[dict], None]) -> None:
             if variants:
                 try:
                     render_variants(creator, tuple(variants), str(temporary))
+                    if variant_backgrounds:
+                        inject_background_sequence(
+                            str(temporary), str(creator.original_pdf_path),
+                            variant_backgrounds, variant_source_pages,
+                        )
                     rendered = True
                 except Exception as error:  # noqa: BLE001 - 变体写出失败保留单语输出
                     log({"event": "split_variants_error", "stage": "render",
@@ -620,6 +656,15 @@ def install(log: Callable[[dict], None]) -> None:
             elapsed = time.perf_counter() - started
             # 原写出器只接触原 document，变体从未被写回 creator.docs。
             result = original_write(creator, translation_config, check_font_exists)
+            if result.mono_pdf_path and mono_backgrounds:
+                try:
+                    inject_backgrounds(
+                        str(result.mono_pdf_path), str(creator.original_pdf_path),
+                        mono_backgrounds,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    log({"event": "figure_background_error", "stage": "mono",
+                         "error": type(error).__name__, "count": 1})
             if result.mono_pdf_path:
                 try:
                     pdf_path = str(result.mono_pdf_path) + ".variants.pdf"
