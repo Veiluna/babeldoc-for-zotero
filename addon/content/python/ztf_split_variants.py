@@ -176,6 +176,25 @@ def _copy_il(value):
             detached.snapshot = copy.copy(item.snapshot)
             detached.snapshot._render_cache = dict(item.snapshot._render_cache)
             memo[id(item)] = detached.materialize()
+        elif type(item).__name__ == "PdfCurve":
+            # P05 图表页可含 267k 条曲线。曲线及路径是写出器只读的，
+            # 只隔离其容器和 graphic state；Lazy 指令仍按原语义 materialize。
+            detached = copy.copy(item)
+            for name in ("pdf_path", "pdf_original_path", "ctm", "relocation_transform"):
+                field_value = getattr(item, name, None)
+                if isinstance(field_value, list):
+                    setattr(detached, name, list(field_value))
+            graphic_state = getattr(item, "graphic_state", None)
+            if graphic_state is not None:
+                graphic_state_copy = copy.copy(graphic_state)
+                instruction = getattr(graphic_state, "passthrough_per_char_instruction", None)
+                if isinstance(instruction, LazyPassthroughInstruction):
+                    instruction_copy = copy.copy(instruction)
+                    instruction_copy.snapshot = copy.copy(instruction.snapshot)
+                    instruction_copy.snapshot._render_cache = dict(instruction.snapshot._render_cache)
+                    graphic_state_copy.passthrough_per_char_instruction = instruction_copy.materialize()
+                detached.graphic_state = graphic_state_copy
+            memo[id(item)] = detached
         elif isinstance(item, dict):
             pending.extend(item.keys())
             pending.extend(item.values())
@@ -223,11 +242,10 @@ def create_variants(
     char_columns: Mapping[tuple[int, int, int | None], int] | None = None,
     *, convert_box: Callable | None = None,
 ) -> tuple[Variant, ...]:
-    """每栏及 SPANNING 各一份独立副本；一栏页直接使用单语页。"""
+    """为每个检测到的栏和 SPANNING 生成一份筛选后的 IL 页面。"""
     if columns.columns == 1:
         return ()
     if columns.split_paragraphs:
-        # T2 明确未给混组段落归属；译后不能按坐标猜中文的源字符归属。
         raise ValueError("split_paragraph_unresolved")
     assignments = dict(columns.paragraph_column)
     char_columns = char_columns or {}
@@ -240,11 +258,6 @@ def create_variants(
 
     all_forms = [*page.pdf_form, *_formula_forms(page.pdf_paragraph)]
     carriers = _form_carriers(page, all_forms)
-
-    # 普通 Form/图片/曲线的 box 已是页面用户空间，直接按自身框归属。
-    # 本机 0.6.4 的 project_native_shading_paint 却为透传 shading 写入零占位框；
-    # Chen 的 6 个绿色组件由这些 shading 写出，不能把零框当成左栏坐标。
-    # 仅这类无空间范围的绘制随其载体归属；跨栏载体及无载体的未知范围保留 SPANNING。
     carrier_by_child = {child: all_forms[index] for index, child in carriers.items()}
     child_by_form = {id(all_forms[index]): child for index, child in carriers.items()}
 
@@ -255,42 +268,56 @@ def create_variants(
             form = carrier_by_child.get(getattr(item, "xobj_id", None))
             return own_region(form) if form is not None else SPANNING
         return own_region(item)
+
+    # 归属在页面级只计算一次；变体循环只读取缓存，避免同一批对象重复 owner。
+    owner_cache = {}
+
+    def cached_owner(item):
+        identity = id(item)
+        if identity not in owner_cache:
+            owner_cache[identity] = owner(item)
+        return owner_cache[identity]
+
+    char_owner = {}
+    for char in page.pdf_character:
+        key = (char.render_order, char.sub_render_order, char.xobj_id)
+        char_owner[id(char)] = (char_columns[key] if key in char_columns
+                                else cached_owner(char))
+    object_collections = ("pdf_xobject", "page_layout", "pdf_rectangle",
+                          "pdf_paragraph", "pdf_figure", "pdf_character", "pdf_curve",
+                          "pdf_form")
+
+    def copy_page_shell():
+        shell = copy.copy(page)
+        for name in object_collections:
+            if hasattr(shell, name):
+                setattr(shell, name, [])
+        return _copy_il(shell)
+
     result = []
     for column in (*range(columns.columns), SPANNING):
         indices = tuple(index for index in range(len(page.pdf_paragraph))
                         if assignments.get(index) == column)
-        variant = _copy_il(page)
-        variant.pdf_paragraph = [variant.pdf_paragraph[index] for index in indices]
-        # 同一保留段落可同时包含跨栏版权行和页边水印；段归属不能覆盖逐字页边证据。
-        # 只过滤变体副本中的源字，翻译 IL/单语输出及未知新译字均保持不变。
+        paragraphs = [page.pdf_paragraph[index] for index in indices]
+
         def is_margin(char):
             return char_columns.get((getattr(char, "render_order", None),
-                getattr(char, "sub_render_order", None), getattr(char, "xobj_id", None))) == MARGIN
+                                     getattr(char, "sub_render_order", None),
+                                     getattr(char, "xobj_id", None))) == MARGIN
 
-        for paragraph in variant.pdf_paragraph:
-            compositions = []
-            for composition in paragraph.pdf_paragraph_composition:
-                char = getattr(composition, "pdf_character", None)
-                if char is not None and is_margin(char):
-                    continue
-                for name in ("pdf_line", "pdf_same_style_characters", "pdf_formula"):
-                    container = getattr(composition, name, None)
-                    if container is not None:
-                        container.pdf_character = [c for c in container.pdf_character if not is_margin(c)]
-                compositions.append(composition)
-            paragraph.pdf_paragraph_composition = compositions
-        variant.pdf_character = [char for char in variant.pdf_character
-                                 if char_columns.get((char.render_order, char.sub_render_order,
-                                                      char.xobj_id), owner(char)) == column]
-        for name in ("pdf_curve", "pdf_rectangle", "pdf_figure", "page_layout"):
-            setattr(variant, name, [item for item in getattr(variant, name)
-                                    if owner(item) == column])
-        forms = [(index, form) for index, form in enumerate(variant.pdf_form)
-                 if index not in carriers and owner(form) == column]
+        selected_characters = [char for char in page.pdf_character
+                               if char_owner[id(char)] == column]
+        selected_curves = [item for item in page.pdf_curve if cached_owner(item) == column]
+        selected_rectangles = [item for item in page.pdf_rectangle
+                               if cached_owner(item) == column]
+        selected_figures = [item for item in page.pdf_figure if cached_owner(item) == column]
+        selected_layout = [item for item in page.page_layout if cached_owner(item) == column]
+        forms = [(index, form) for index, form in enumerate(page.pdf_form)
+                 if index not in carriers and cached_owner(form) == column]
         active = {getattr(item, "xobj_id", None) for item in
-                  [*variant.pdf_character, *variant.pdf_curve, *variant.pdf_rectangle,
+                  [*selected_characters, *selected_curves, *selected_rectangles,
                    *(form for _, form in forms)]}
-        for paragraph in variant.pdf_paragraph:
+        for paragraph in paragraphs:
             active.update(char.xobj_id for char in _paragraph_chars(paragraph))
             for composition in paragraph.pdf_paragraph_composition:
                 formula = composition.pdf_formula
@@ -305,19 +332,46 @@ def create_variants(
             if not selected:
                 break
             for index in selected:
-                form = (variant.pdf_form[index] if index < len(page.pdf_form)
-                        else _copy_il(all_forms[index]))
-                if id(all_forms[index]) not in selected_formula_forms:
+                form = all_forms[index]
+                if id(form) not in selected_formula_forms:
                     forms.append((index, form))
                 active.add(form.xobj_id)
                 del pending[index]
-        variant.pdf_form = [form for _, form in sorted(forms)]
-        # 写出器逐项重写 XObject 流；未激活的同 xref 实例会以空流覆盖已选实例。
-        variant.pdf_xobject = [item for item in variant.pdf_xobject if item.xobj_id in active]
+        selected_forms = [form for _, form in sorted(forms)]
+        selected_xobjects = [item for item in page.pdf_xobject if item.xobj_id in active]
+
+        # 只把本变体会用到的对象作为 deepcopy 根；页面壳的 mediabox/cropbox、字体等
+        # 仍然独立复制，但不会把其他栏的图形对象带入复制图。
+        roots = (paragraphs, selected_characters, selected_curves, selected_rectangles,
+                 selected_figures, selected_layout, selected_forms, selected_xobjects)
+        copied = _copy_il(roots)
+        (copied_paragraphs, copied_characters, copied_curves, copied_rectangles,
+         copied_figures, copied_layout, copied_forms, copied_xobjects) = copied
+        variant = copy_page_shell()
+        variant.pdf_paragraph = list(copied_paragraphs)
+        variant.pdf_character = list(copied_characters)
+        variant.pdf_curve = list(copied_curves)
+        variant.pdf_rectangle = list(copied_rectangles)
+        variant.pdf_figure = list(copied_figures)
+        variant.page_layout = list(copied_layout)
+        variant.pdf_form = list(copied_forms)
+        variant.pdf_xobject = list(copied_xobjects)
+
+        # Margin 字符只从当前变体的副本中移除，避免修改 creator.docs IL。
+        for paragraph in variant.pdf_paragraph:
+            compositions = []
+            for composition in paragraph.pdf_paragraph_composition:
+                char = getattr(composition, "pdf_character", None)
+                if char is not None and is_margin(char):
+                    continue
+                for name in ("pdf_line", "pdf_same_style_characters", "pdf_formula"):
+                    container = getattr(composition, name, None)
+                    if container is not None:
+                        container.pdf_character = [c for c in container.pdf_character if not is_margin(c)]
+                compositions.append(composition)
+            paragraph.pdf_paragraph_composition = compositions
         result.append(Variant(column, variant, indices))
     return tuple(result)
-
-
 def _isolate_form_streams(page, pdf):
     """只修改渲染副本：每次 Form 调用使用独立流和资源名，保持原页面位置。"""
     from babeldoc.format.pdf.document_il.utils.zstd_helper import zstd_compress
@@ -364,6 +418,24 @@ def _isolate_form_streams(page, pdf):
         form.pdf_form_subtype.pdf_xobj_form.do_args = name
 
 
+def _copy_render_page(page):
+    """复制已筛选变体的 IL 字段，供写出器在隔离副本上修改。
+
+    输入是一个已由 ``create_variants`` 筛选的 IL 页面；输出是保留页面
+    元数据但深复制可变字段的独立页面。复制或 IL 对象结构不符合
+    BabelDOC 0.6.4 约定时会直接抛出原始异常，不返回部分页面。
+    """
+    field_names = ("mediabox", "cropbox", "pdf_xobject", "page_layout",
+                   "pdf_rectangle", "pdf_font", "pdf_paragraph", "pdf_figure",
+                   "pdf_character", "pdf_curve", "pdf_form", "base_operations")
+    roots = tuple(getattr(page, name, None) for name in field_names)
+    copied = _copy_il(roots)
+    isolated = copy.copy(page)
+    for name, value in zip(field_names, copied):
+        setattr(isolated, name, value)
+    return isolated
+
+
 def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str) -> None:
     """只复用 0.6.4 字体/内容流写出器，不调用 write，不重排、不改原文件。
 
@@ -379,7 +451,7 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
         for variant in variants:
             config.raise_if_cancelled()
             # FontMapper.add_font 会往 IL 中追加字体，副本不得污染待交付的 IL。
-            document = il.Document(page=[_copy_il(variant.page)], total_pages=1)
+            document = il.Document(page=[_copy_render_page(variant.page)], total_pages=1)
             with pymupdf.open(creator.original_pdf_path) as pdf:
                 _isolate_form_streams(document.page[0], pdf)
                 writer = PDFCreater(creator.original_pdf_path, document, config,
