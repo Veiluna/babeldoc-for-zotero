@@ -455,10 +455,10 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
 
     每份变体重新打开解析用 PDF，避免共享 xref/Form 流被上一份变体改写；
     保持原 page_number，隔离每次 Form 调用的流，恢复原页几何后整页复制。
+    浅复制 writer 复用已加载的 FontMapper；只替换副本的 docs，不影响随后 mono。
     """
     import pymupdf
     from babeldoc.format.pdf.document_il import il_version_1 as il
-    from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
 
     config = creator.translation_config
     with pymupdf.open() as output:
@@ -469,9 +469,10 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
             with timing.call('ztf_split_variants.open[render_variants]',
                              pymupdf.open, creator.original_pdf_path) as pdf:
                 _isolate_form_streams(document.page[0], pdf)
-                writer = timing.call('ztf_split_variants.PDFCreater[render_variants]',
-                                     PDFCreater, creator.original_pdf_path, document, config,
-                                     creator.mediabox_data)
+                # 0.6.4 add_font 的 xref/PdfFont 均按 doc/IL 局部创建；mapper 只读。
+                # 每份 writer 保留原配置/字体，docs 仍指向本次独立的 IL 副本。
+                writer = copy.copy(creator)
+                writer.docs = document
                 timing.call('ztf_split_variants.add_font[render_variants]',
                             writer.font_mapper.add_font, pdf, document)
                 timing.call('ztf_split_variants.update_page_content_stream[render_variants]',

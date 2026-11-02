@@ -76,6 +76,28 @@ class SaveEquivalenceTests(unittest.TestCase):
         self.assertFalse(report['bytes']['identical'])
         self.assertTrue(report['bytes']['indirect_objects_and_raw_streams_identical'])
 
+    def test_mono_or_variants_without_split_layout_still_checks_text_and_pixels(self):
+        with fitz.open(self.a) as doc:
+            _, info = doc.xref_get_key(-1, 'Info')
+            doc.xref_set_key(int(info.split()[0]), 'ZTFSplitLayout', 'null')
+            doc[0].insert_text((20.125, 60), 'changed mono or variant')
+            doc.save(self.b)
+        report = compare_pdfs(self.a, self.b, include_layout=False)
+        self.assertFalse(report['checks']['rawdict'])
+        self.assertFalse(report['checks']['pixels_72'])
+        self.assertFalse(report['checks']['pixels_150'])
+
+    def test_run_comparison_fails_when_only_mono_or_variants_changes(self):
+        from run_save_equivalence import compare_runs
+        self.change(lambda doc: doc[0].draw_line((20, 80), (100, 80)))
+        old = {'pdf': self.a, 'mono': self.a, 'variants': self.a, 'stats': {'pages': 1}}
+        for role in ('mono', 'variants'):
+            with self.subTest(role=role):
+                report = compare_runs(old, dict(old, **{role: self.b}))
+                self.assertEqual(report['status'], 'FAIL')
+                self.assertFalse(report['checks'][role])
+                self.assertEqual(report['artifacts'][role]['status'], 'FAIL')
+
 
 if __name__ == '__main__':
     unittest.main()

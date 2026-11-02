@@ -2,8 +2,9 @@
 """真实 BabelDOC + 本地合成译文的保存等价性检查；非 Zotero 真机验收。
 
 默认依次运行每个样本的 baseline、baseline-repeat、working；重复基线不一致
-时不认可该样本的优化等价性。所有实验产物位于 .scratch/t082/t1，基线代码
-仅用 git archive 导出到 .scratch/t082/base。需指定环境的 Python 运行。
+时不认可该样本的优化等价性。同时检查 variants 与 mono 的文本和像素。
+所有实验产物位于 .scratch/t082/t2，基线代码仅用 git archive 导出。
+需指定环境的 Python 运行。
 """
 from __future__ import annotations
 
@@ -21,8 +22,8 @@ import time
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / '.scratch/t082/t1'
-BASE = ROOT / '.scratch/t082/base'
+OUTPUT = ROOT / '.scratch/t082/t2'
+BASE = OUTPUT / 'base'
 PYTHON = Path('G:/ProgramData/zotero-translate-files/babeldoc-env/python.exe')
 
 # 只在实验子进程捕获返回值；不修改导出的基线或生产 runner。
@@ -74,11 +75,13 @@ def normalize(value):
     return [normalize(v) for v in value]  # Point / Rect
 
 
-def pdf_snapshot(path):
+def pdf_snapshot(path, *, include_layout=True):
     import pymupdf as fitz
     with fitz.open(path) as doc:
-        _, info = doc.xref_get_key(-1, 'Info')
-        layout = json.loads(doc.xref_get_key(int(info.split()[0]), 'ZTFSplitLayout')[1])
+        layout = None
+        if include_layout:
+            _, info = doc.xref_get_key(-1, 'Info')
+            layout = json.loads(doc.xref_get_key(int(info.split()[0]), 'ZTFSplitLayout')[1])
         pages = []
         for page in doc:
             pixels = {}
@@ -96,8 +99,8 @@ def pdf_snapshot(path):
                 'page_labels': normalize(doc.get_page_labels())}
 
 
-def compare_pdfs(left, right):
-    a, b = pdf_snapshot(left), pdf_snapshot(right)
+def compare_pdfs(left, right, *, include_layout=True):
+    a, b = (pdf_snapshot(path, include_layout=include_layout) for path in (left, right))
     checks = {key: a[key] == b[key] for key in ('page_count', 'layout', 'toc', 'page_labels')}
     differences = [{'page': None, 'type': key} for key, same in checks.items() if not same]
     for key in ('size', 'rawdict', 'pixels_72', 'pixels_150', 'links', 'label'):
@@ -133,6 +136,21 @@ def compare_pdfs(left, right):
                                               'PDF serialization differs; see semantic checks'})
     return {'status': 'PASS' if all(checks.values()) else 'FAIL', 'checks': checks,
             'differences': differences, 'bytes': byte_comparison}
+
+
+def compare_runs(left, right):
+    result = compare_pdfs(left['pdf'], right['pdf'])
+    result['artifacts'] = {}
+    for role in ('mono', 'variants'):
+        comparison = compare_pdfs(left[role], right[role], include_layout=False)
+        result['artifacts'][role] = comparison
+        result['checks'][role] = comparison['status'] == 'PASS'
+        result['differences'].extend(dict(item, artifact=role) for item in comparison['differences'])
+    result['checks']['compose_stats'] = left['stats'] == right['stats']
+    if not result['checks']['compose_stats']:
+        result['differences'].append({'page': None, 'type': 'compose_stats'})
+    result['status'] = 'PASS' if all(result['checks'].values()) else 'FAIL'
+    return result
 
 
 def export_baseline(commit):
@@ -177,12 +195,15 @@ def run_translation(python, name, source, label, runner, endpoint, environment, 
         raise RuntimeError('runner_timeout') from None
     events = [json.loads(line) for line in log.read_text(encoding='utf-8').splitlines() if line.strip()]
     pdfs = list(out.glob('*.dual.pdf'))
-    if proc.returncode or len(pdfs) != 1 or not stats.is_file() or server.request_count <= before:
+    monos, variants = list(out.glob('*.mono.pdf')), list(out.glob('*.variants.pdf'))
+    if (proc.returncode or len(pdfs) != 1 or len(monos) != 1 or len(variants) != 1
+            or not stats.is_file() or server.request_count <= before):
         raise RuntimeError('runner_missing_successful_output')
     summaries = [e for e in events if e.get('event') == 'timing_summary']
     if len(summaries) != 1:
         raise RuntimeError('missing_unique_timing_summary')
-    result = {'directory': str(directory), 'pdf': str(pdfs[0]), 'runner_exit': proc.returncode,
+    result = {'directory': str(directory), 'pdf': str(pdfs[0]),
+              'mono': str(monos[0]), 'variants': str(variants[0]), 'runner_exit': proc.returncode,
               'mock_requests': server.request_count-before, 'elapsed_seconds': time.monotonic()-started,
               'stats': json.loads(stats.read_text(encoding='utf-8')), 'timing': summaries[0]}
     (directory / 'result.json').write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding='utf-8')
@@ -194,13 +215,14 @@ def run_translation(python, name, source, label, runner, endpoint, environment, 
 def timing_comparison(baseline, working):
     old, new = baseline['timing']['functions'], working['timing']['functions']
     return {key: {'baseline': old.get(key), 'working': new.get(key)}
-            for key in sorted(old.keys() | new.keys()) if key.startswith('ztf_split_compose.')}
+            for key in sorted(old.keys() | new.keys())
+            if key.startswith(('ztf_split_compose.', 'ztf_split_variants.'))}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, default=PYTHON)
-    parser.add_argument('--baseline', default='39cd986')
+    parser.add_argument('--baseline', default='f61319b')
     parser.add_argument('--timeout', type=int, default=3600)
     parser.add_argument('--samples', nargs='+', choices=['P05', 'chen2026', 'foba'],
                         default=['P05', 'chen2026', 'foba'])
@@ -236,20 +258,14 @@ def main():
                 repeat = run_translation(args.python, name, samples[name], 'baseline-repeat', baseline_runner,
                                          endpoint, environment, server, run, args.timeout)
                 case['runs'] = {'baseline': old, 'baseline_repeat': repeat}
-                case['determinism'] = compare_pdfs(old['pdf'], repeat['pdf'])
-                case['determinism']['checks']['compose_stats'] = old['stats'] == repeat['stats']
-                if old['stats'] != repeat['stats']:
-                    case['determinism']['differences'].append({'page': None, 'type': 'compose_stats'})
+                case['determinism'] = compare_runs(old, repeat)
                 if not all(case['determinism']['checks'].values()):
                     case['determinism']['status'] = 'FAIL'
                     case['error'] = 'same_code_not_deterministic'
                     continue
                 new = run_translation(args.python, name, samples[name], 'working', working_runner,
                                       endpoint, environment, server, run, args.timeout)
-                case['equivalence'] = compare_pdfs(old['pdf'], new['pdf'])
-                case['equivalence']['checks']['compose_stats'] = old['stats'] == new['stats']
-                if old['stats'] != new['stats']:
-                    case['equivalence']['differences'].append({'page': None, 'type': 'compose_stats'})
+                case['equivalence'] = compare_runs(old, new)
                 case['timing_comparison'] = timing_comparison(old, new)
                 case['runs'] = {'baseline': old, 'baseline_repeat': repeat, 'working': new}
                 case['status'] = 'PASS' if all(case['equivalence']['checks'].values()) else 'FAIL'
