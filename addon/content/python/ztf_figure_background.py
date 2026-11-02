@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 import functools
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -279,8 +280,6 @@ def remove_selected_objects(page: Any, plan: BackgroundPlan) -> None:
         page.pdf_figure = [item for item in page.pdf_figure if id(item) not in selected_figures]
     if hasattr(page, "pdf_form"):
         page.pdf_form = [item for item in page.pdf_form if id(item) not in selected_forms]
-    if hasattr(page, "pdf_xobject"):
-        page.pdf_xobject = [item for item in page.pdf_xobject if id(item) not in selected_xobjects]
     affected_paragraphs = set()
     for paragraph in getattr(page, "pdf_paragraph", ()) or ():
         if any(id(char) in selected_chars for char in _iter_paragraph_chars(paragraph)):
@@ -294,6 +293,19 @@ def remove_selected_objects(page: Any, plan: BackgroundPlan) -> None:
                               for comp in paragraph.pdf_paragraph_composition)
             if not has_formula and hasattr(paragraph, 'unicode'):
                 paragraph.unicode = ''
+    if hasattr(page, "pdf_xobject"):
+        # Form.xobj_id 是调用所在的父资源域；移除子图表调用不能同时删去
+        # 框外正文仍使用的父域字体（例如 P01 的 F49）。载体本身不绘图。
+        active = {getattr(char, "xobj_id", None) for char in _all_page_chars(page)}
+        for paragraph in getattr(page, "pdf_paragraph", ()) or ():
+            if any(_iter_paragraph_chars(paragraph)):
+                active.add(getattr(paragraph, "xobj_id", None))
+        for name in ("pdf_curve", "pdf_form", "pdf_figure", "pdf_rectangle"):
+            active.update(getattr(item, "xobj_id", None)
+                          for item in getattr(page, name, ()) or ())
+        page.pdf_xobject = [item for item in page.pdf_xobject
+                            if id(item) not in selected_xobjects
+                            or getattr(item, "xobj_id", None) in active]
 
 
 def clone_for_owner(plan: BackgroundPlan, owner: int) -> BackgroundPlan:
@@ -303,10 +315,19 @@ def clone_for_owner(plan: BackgroundPlan, owner: int) -> BackgroundPlan:
 
 # A small registry avoids adding fields to BabelDOC's generated slot dataclasses.
 _PLANS: dict[int, BackgroundPlan] = {}
+_PLAN_PAGES: dict[int, Any] = {}
+_INJECTED_OUTPUTS: set[str] = set()
+_REMOVED_PLAN_PAGES: set[int] = set()
 
 
-def remember(page: Any, plan: BackgroundPlan) -> None:
+def remember(page: Any, plan: BackgroundPlan, *, removed: bool = False) -> None:
+    """登记页及计划；removed=True 表示 runner 已移除其选中 IL，不得重新采集。"""
     _PLANS[id(page)] = plan
+    _PLAN_PAGES[id(page)] = page
+    if removed:
+        _REMOVED_PLAN_PAGES.add(id(page))
+    else:
+        _REMOVED_PLAN_PAGES.discard(id(page))
 
 
 def remembered(page: Any) -> BackgroundPlan | None:
@@ -315,6 +336,25 @@ def remembered(page: Any) -> BackgroundPlan | None:
 
 def forget(page: Any) -> None:
     _PLANS.pop(id(page), None)
+    _PLAN_PAGES.pop(id(page), None)
+    _REMOVED_PLAN_PAGES.discard(id(page))
+
+
+def forget_all() -> None:
+    """文档结束时逐页 forget，并清除本次输出的注入记录。"""
+    for page in tuple(_PLAN_PAGES.values()):
+        forget(page)
+    _INJECTED_OUTPUTS.clear()
+
+
+def plan_objects_removed(page: Any) -> bool:
+    """判断该页是否已由 runner 采集并移除选中 IL 对象。"""
+    return id(page) in _REMOVED_PLAN_PAGES
+
+
+def was_injected(output_path: str) -> bool:
+    """判断本次文档是否已经给指定产物注入底图，防止重复文字。"""
+    return os.path.abspath(str(output_path)) in _INJECTED_OUTPUTS
 
 
 def _difference_rects(page_rect: tuple[float, float, float, float],
@@ -382,7 +422,8 @@ def install_source_layer_guard(compose_helper: Any) -> None:
     读取现有 layout 与 variants sidecar。单栏/无图页不改，局部栏图仍由
     现有英文 owner 规则绘制。临时包装源层创建函数，合成结束必恢复。
     """
-    if getattr(compose_helper, "_ztf_figure_background_guard", False):
+    if (getattr(compose_helper, "_ztf_figure_background_guard", False)
+            or not hasattr(compose_helper, "_layer")):
         return
     original = compose_helper.compose_split_document
 
@@ -492,6 +533,7 @@ def inject_backgrounds(output_path: str, source_path: str,
         output.save(temporary, garbage=3, deflate=True)
         output.close()
         Path(temporary).replace(output_path)
+        _INJECTED_OUTPUTS.add(os.path.abspath(str(output_path)))
         return changed
     finally:
         source.close()
@@ -542,6 +584,7 @@ def inject_background_sequence(output_path: str, source_path: str,
         output.save(temporary, garbage=3, deflate=True)
         output.close()
         Path(temporary).replace(output_path)
+        _INJECTED_OUTPUTS.add(os.path.abspath(str(output_path)))
         return changed
     finally:
         source.close()
@@ -562,5 +605,6 @@ __all__ = [
     "figure_boxes", "forget", "inject_backgrounds", "inject_background_sequence",
     "prepend_background_form",
     "clip_source_layer_outside_figures", "install_source_layer_guard",
-    "remember", "remembered", "remove_selected_objects",
+    "remember", "remembered", "remove_selected_objects", "was_injected",
+    "plan_objects_removed", "forget_all",
 ]

@@ -162,6 +162,7 @@ class InlineFormulaIntegrationTest(unittest.TestCase):
         for helper_name in (
             "ztf_inline_formulas.py", "ztf_style_guards.py",
             "ztf_links.py",
+            "ztf_figure_background.py", "ztf_split_types.py",
         ):
             helper = ROOT / "addon/content/python" / helper_name
             shutil.copyfile(helper, deployed / helper_name)

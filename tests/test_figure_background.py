@@ -56,6 +56,25 @@ def page():
 
 
 class FigureBackgroundTests(unittest.TestCase):
+    def test_removing_chart_form_keeps_parent_fonts_used_by_outside_body(self):
+        p = page()
+        body = char('body', (20, 20, 60, 40))
+        body.xobj_id = 7
+        p.pdf_paragraph = [paragraph(body)]
+        p.pdf_paragraph[0].xobj_id = 7
+        chart_form = NS(box=box(120, 120, 280, 280), xobj_id=7,
+                        pdf_form_subtype=NS(pdf_xobj_form=NS(xref_id=74)))
+        carrier = NS(box=chart_form.box, xobj_id=7, xref_id=73,
+                     pdf_font=[NS(font_id='F49')])
+        p.pdf_form = [chart_form]
+        p.pdf_xobject = [carrier]
+        background.remove_selected_objects(p, background.build_plan(p))
+        self.assertEqual(p.pdf_form, [])
+        self.assertEqual(p.pdf_xobject, [carrier])
+        fonts = {f.font_id: f for x in p.pdf_xobject if x.xobj_id == body.xobj_id
+                 for f in x.pdf_font}
+        self.assertIn('F49', fonts)
+
     def test_curve_overlap_includes_inside_crossing_and_edge_but_not_outside(self):
         p = page()
         inside = NS(marker="inside", box=box(120, 120, 140, 140))

@@ -28,6 +28,7 @@ from ztf_figure_background import (
     remember,
     remove_selected_objects,
     remembered,
+    plan_objects_removed,
 )
 
 
@@ -536,9 +537,15 @@ def install(log: Callable[[dict], None]) -> None:
                 lines = build_lines(number, chars)
                 figures = tuple(convert(item.box) for item in page.page_layout
                                 if item.class_name in _FIGURE_LABELS)
+                plan = remembered(page)
+                if plan is not None and not plan_objects_removed(page):
+                    selected_ids = {id(item) for item in plan.selected_curves}
+                    current_ids = {id(item) for item in (getattr(page, "pdf_curve", ()) or ())}
+                    if current_ids and not selected_ids.intersection(current_ids):
+                        plan = None
                 entries.append((page, chars, lines, convert, figures,
                                 original.cropbox.width, original.cropbox.height,
-                                build_plan(page, convert_box=convert)))
+                                plan or build_plan(page, convert_box=convert)))
         # classify_margins 按传入序列下标寻址，证据按真实源页号重映射。
         margins = classify_margins(
             [entry[2] for entry in entries], [entry[6] for entry in entries],
@@ -560,9 +567,11 @@ def install(log: Callable[[dict], None]) -> None:
                            for char in chars if char.id not in groups})
             owners = {(char.order, char.sub_order, char.xobj): groups[char.id] for char in chars}
             plan = plan.with_gutters(columns.gutters)
+            # 复用 runner 已采集的计划；按对象身份移除是幂等的。
+            canonical_removed = plan_objects_removed(page)
             remove_selected_objects(page, plan)
             mono_plans[id(page)] = plan
-            remember(page, plan)
+            remember(page, plan, removed=canonical_removed)
             snapshots[id(page)] = (columns, owners, convert,
                                    tuple(id(p) for p in page.pdf_paragraph), plan)
 
@@ -661,6 +670,11 @@ def install(log: Callable[[dict], None]) -> None:
                     inject_backgrounds(
                         str(result.mono_pdf_path), str(creator.original_pdf_path),
                         mono_backgrounds,
+                        page_numbers=(tuple(sorted(
+                            page.page_number for page in creator.docs.page
+                            if translation_config.should_translate_page(page.page_number + 1)
+                        )) if getattr(translation_config, "only_include_translated_page", False)
+                            else None),
                     )
                 except Exception as error:  # noqa: BLE001
                     log({"event": "figure_background_error", "stage": "mono",

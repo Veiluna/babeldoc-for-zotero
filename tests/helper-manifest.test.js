@@ -17,6 +17,7 @@ const helperFiles = fs
   .filter(name => name.endsWith(".py") && name !== runnerFile)
   .sort();
 const expectedHelpers = [
+  "ztf_figure_background.py",
   "ztf_figure_text.py",
   "ztf_inline_formulas.py",
   "ztf_links.py",
@@ -79,6 +80,7 @@ const loadedModules = Array.from(
 assert.deepEqual(
   loadedModules,
   [
+    "ztf_figure_background.py",
     "ztf_figure_text.py",
     "ztf_links.py",
     "ztf_punctuation_cleanup.py",
