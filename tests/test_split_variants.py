@@ -7,7 +7,6 @@ import subprocess
 import sys
 import threading
 import time
-import unicodedata
 import unittest
 from collections import Counter
 from contextlib import nullcontext
@@ -839,15 +838,21 @@ def checked(page, columns, *args, **kwargs):
     assignment = dict(columns.paragraph_column)
     char_columns = args[0] if args else kwargs.get("char_columns", {})
     for variant in result:
+        from ztf_figure_background import remembered
+        background = remembered(variant.page)
         expected = "".join(glyphs(p, char_columns) for i, p in enumerate(page.pdf_paragraph)
                            if assignment.get(i) == variant.column)
         expected += "".join(c.char_unicode for c in variant.page.pdf_character)
         records.append({"source_page": page.page_number, "column": variant.column,
-                        "expected": expected})
+                        "expected": expected,
+                        "background_regions": background.clip_regions if background else (),
+                        "excluded_figure_boxes": background.excluded_figure_boxes if background else (),
+                        "figure_boxes": background.figure_boxes if background else ()})
     Path(os.environ["T4_EXPECTED"]).write_text(json.dumps(records), encoding="utf-8")
     return result
 variants.create_variants = checked
-sys.exit(runner.main())
+if __name__ == "__main__":
+    sys.exit(runner.main())
 ''', encoding="utf-8")
         results = {}
         try:
@@ -877,6 +882,12 @@ sys.exit(runner.main())
                 self.assertEqual(completed.returncode, 0, str(directory / "runner.jsonl"))
                 mono, = (directory / "out").glob("*.mono.pdf")
                 with pymupdf.open(mono) as pdf:
+                    font_xrefs = {font[0] for page in pdf for font in page.get_fonts(full=True)}
+                    font_sizes = [len(pdf.extract_font(xref)[3]) for xref in font_xrefs]
+                    # 真实 write 链路必须完成子集化，不能只验证最终页面能打开。
+                    # 样本只用少量 CJK 字符，整份 14–25MB 字体会触发此断言。
+                    self.assertLess(max(font_sizes, default=0), 2_000_000,
+                                    (name, "mono font was not subset", max(font_sizes, default=0)))
                     results[name] = {"texts": [p.get_text() for p in pdf],
                                      "nontext_counts": [{"images": len(p.get_image_info()),
                                                          "drawings": len(p.get_drawings())}
@@ -895,11 +906,42 @@ sys.exit(runner.main())
                 self.assertTrue(metadata["pdf_path"])
                 expected_records = json.loads(expected.read_text(encoding="utf-8"))
 
-                def characters(text):
-                    return Counter(c for c in unicodedata.normalize("NFKC", text) if not c.isspace())
+                scale = 150 / 72
+
+                def pixels(page, clip=None):
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale),
+                                          clip=clip, alpha=False)
+                    return pix.width, pix.height, pix.samples
+
+                def outside_pixels(page, regions):
+                    import math
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+                    data = bytearray(pix.samples)
+                    for x0, y0, x1, y1 in regions:
+                        left = max(0, math.floor(x0*scale)-1)
+                        top = max(0, math.floor(y0*scale)-1)
+                        right = min(pix.width, math.ceil(x1*scale)+1)
+                        bottom = min(pix.height, math.ceil(y1*scale)+1)
+                        for y in range(top, bottom):
+                            start = (y*pix.width+left)*pix.n
+                            data[start:start+(right-left)*pix.n] = bytes((right-left)*pix.n)
+                    return pix.width, pix.height, data
+
+                def positioned_words(page, regions=(), inside=False):
+                    result = Counter()
+                    for word in page.get_text("words"):
+                        in_region = any(pymupdf.Rect(word[:4]).intersects(pymupdf.Rect(r))
+                                        for r in regions)
+                        if in_region == inside:
+                            result[(word[4], *(round(x, 1) for x in word[:4]))] += 1
+                    return result
 
                 with pymupdf.open(metadata["pdf_path"]) as pdf:
                     results[name]["nontext"] = []
+                    reference_path = (run / "enabled" / "work"
+                                      / f"{sample_name}-two-pages"
+                                      / "split-variants.pdf.reference.pdf")
+
                     self.assertEqual(len(pdf), len(expected_records))
                     for item in metadata["pages"]:
                         if item["columns"] > 1:
@@ -912,47 +954,51 @@ sys.exit(runner.main())
                             results[name]["nontext"].append({
                                 "source_page": item["source_page"], **variant,
                                 "images": images, "drawings": drawings})
-                            if variant["column"] != SPANNING:
-                                column = variant["column"]
-                                left = item["gutters"][column - 1][1] if column else 0
-                                right = (item["gutters"][column][0]
-                                         if column < item["columns"] - 1 else variant_page.rect.width)
-                                for bounds in images + drawings:
-                                    self.assertGreaterEqual(bounds[0], left,
-                                                            (item["source_page"], column, bounds))
-                                    self.assertLessEqual(bounds[2], right,
-                                                         (item["source_page"], column, bounds))
-                                    self.assertGreaterEqual(bounds[1], 0)
-                                    self.assertLessEqual(bounds[3], variant_page.rect.height)
                             record = expected_records[variant["pdf_page"]]
                             self.assertEqual((record["source_page"], record["column"]),
                                              (item["source_page"], variant["column"]))
-                            if sample_name != "foba":
-                                self.assertEqual(characters(variant_page.get_text()),
-                                                 characters(record["expected"]),
-                                                 (item["source_page"], variant["column"]))
-                        actual = [p for p in results[name]["nontext"]
-                                  if p["source_page"] == item["source_page"]]
-                        for kind in ("images", "drawings"):
-                            self.assertEqual(sum(len(p[kind]) for p in actual),
-                                             results[name]["nontext_counts"][item["source_page"]][kind],
-                                             (item["source_page"], kind))
-                            source_boxes = sorted(results[name]["nontext_boxes"][item["source_page"]][kind])
-                            variant_boxes = sorted(b for p in actual for b in p[kind])
-                            for original_box, variant_box in zip(source_boxes, variant_boxes):
-                                for original_coordinate, variant_coordinate in zip(original_box, variant_box):
-                                    # 内容流序列化保留 6 位小数；仅测试浮点写回误差，不放宽认栏。
-                                    self.assertAlmostEqual(original_coordinate, variant_coordinate, places=2,
-                                                           msg=(item["source_page"], kind,
-                                                                original_box, variant_box))
+                            # 每个变体都验证所属图表与独立原页的 150 dpi 像素，
+                            # 并验证底图以外与注入前一致，覆盖所有嵌套 Form。
+                            with pymupdf.open(reference_path) as reference, pymupdf.open(source) as original:
+                                ref = reference[variant["pdf_page"]]
+                                src = original[item["source_page"]]
+                                for region in record["figure_boxes"]:
+                                    self.assertEqual(pixels(variant_page, region), pixels(src, region),
+                                                     (sample_name, item["source_page"],
+                                                      variant["column"], region))
+                                    self.assertEqual(positioned_words(variant_page, (region,), True),
+                                                     positioned_words(src, (region,), True))
+                                excluded = record["excluded_figure_boxes"]
+                                for region in excluded:
+                                    inner = pymupdf.Rect(region) + (1, 1, -1, -1)
+                                    if not inner.is_empty:
+                                        pix = variant_page.get_pixmap(clip=inner, alpha=False)
+                                        self.assertEqual(set(pix.samples), {255},
+                                                         (sample_name, variant["column"], "unowned figure", region))
+                                regions = [*record["background_regions"], *excluded]
+                                self.assertEqual(outside_pixels(variant_page, regions),
+                                                 outside_pixels(ref, regions),
+                                                 (sample_name, item["source_page"], variant["column"]))
+                                self.assertEqual(positioned_words(variant_page, regions),
+                                                 positioned_words(ref, regions))
                 self.assertTrue(any(p["columns"] == 2 for p in metadata["pages"]))
                 equivalence = json.loads(expected.with_suffix(".render-equivalence.json").read_text())
                 self.assertTrue(equivalence["pixel_equal"])
                 if sample_name == "foba":
                     lazy = json.loads(expected.with_name("source-lazy-1.json").read_text())
-                    self.assertGreater(lazy["lazy_count"], 0)
+                    # Figure curves are intentionally removed from IL before
+                    # variant creation; zero remaining lazy curves is valid.
                     self.assertTrue(lazy["source_caches_unchanged"])
-            self.assertEqual(results["enabled"]["texts"], results["disabled"]["texts"])
+            # 框外译文仍与未启用底图的 mono 一致；图内原文由上面的源页断言覆盖。
+            disabled_mono, = (run / "disabled" / "out").glob("*.mono.pdf")
+            enabled_mono, = (run / "enabled" / "out").glob("*.mono.pdf")
+            layout = json.loads(Path(str(enabled_mono) + ".layout.json").read_text(encoding="utf-8"))
+            with pymupdf.open(disabled_mono) as disabled_pdf, pymupdf.open(enabled_mono) as enabled_pdf:
+                self.assertEqual(len(disabled_pdf), len(enabled_pdf))
+                for index, (old, new) in enumerate(zip(disabled_pdf, enabled_pdf)):
+                    regions = [x["box"] for x in layout["pages"][index]["layouts"]
+                               if x["class"] in ("figure", "table")]
+                    self.assertEqual(positioned_words(old, regions), positioned_words(new, regions))
             self.assertGreater(results["disabled"]["requests"], 0)
             self.assertEqual(results["enabled"]["requests"], results["disabled"]["requests"])
         finally:
@@ -972,6 +1018,8 @@ sys.exit(runner.main())
 
 class HookFailureTests(unittest.TestCase):
     def setUp(self):
+        import pymupdf
+        self.pymupdf = pymupdf
         root = Path(__file__).resolve().parents[1] / "build/t62/t4"
         root.mkdir(parents=True, exist_ok=True)
         # 当前 Windows 沙箱不允许访问 tempfile 创建的私有 ACL 目录。
@@ -1008,6 +1056,66 @@ class HookFailureTests(unittest.TestCase):
 
     def capture(self):
         self.translator().translate(self.document)
+
+    def test_mono_background_survives_split_fallback_after_il_removal(self):
+        import ztf_figure_background as background
+
+        source_path = self.directory / "source.pdf"
+        region = self.pymupdf.Rect(100, 100, 240, 180)
+        with self.pymupdf.open() as source:
+            source.new_page(width=600, height=800).draw_rect(
+                region, color=None, fill=(1, 0, 0))
+            source.save(source_path)
+        self.config.input_file = str(source_path)
+        self.creator.original_pdf_path = str(source_path)
+        self.page.page_number = 0
+        self.page.page_layout = [NS(class_name="figure", box=box(100, 620, 240, 700))]
+        self.translator.translation_config = self.config
+
+        def write_mono(*_):
+            # 模拟写出已移除图表的 IL，底图必须由真实注入函数恢复。
+            self.assertEqual(self.page.pdf_curve, [])
+            with self.pymupdf.open() as mono:
+                mono.new_page(width=600, height=800)
+                mono.save(self.mono)
+            return self.result
+
+        self.original_write.side_effect = write_mono
+        for reason in ("split_paragraph_unresolved", "paragraph_identity_changed"):
+            with self.subTest(reason=reason), \
+                    patch.dict(sys.modules, {"pymupdf": self.pymupdf}):
+                self.page.pdf_curve = [NS(box=box(100, 620, 240, 700), xobj_id=0)]
+                detected = (PageColumns(0, 2, "jump", ((300, 300),), (),
+                                        ((0, 0), (1, 1)), (2,))
+                            if reason == "split_paragraph_unresolved" else columns())
+                with patch("ztf_split_columns.detect_columns", return_value=detected), \
+                        patch.object(split_variants, "collect_source_chars", return_value=()):
+                    # 每次安装时绑定真实 PDF 与本次的分栏结果，避免叠加钩子。
+                    self.translator.translate = lambda *_: None
+                    self.writer.write = self.original_write
+                    split_variants.install(self.events.append)
+                    self.capture()
+                self.assertEqual(self.page.pdf_curve, [], self.events)
+                self.addCleanup(background.forget, self.page)
+                if reason == "paragraph_identity_changed":
+                    self.page.pdf_paragraph = [copy.deepcopy(p) for p in self.page.pdf_paragraph]
+                with patch.object(split_variants, "inject_backgrounds",
+                                  wraps=split_variants.inject_backgrounds) as injecting, \
+                        patch.object(split_variants, "render_variants") as rendering:
+                    self.assertIs(self.writer.write(self.creator, self.config), self.result)
+                injecting.assert_called_once()
+                plans = injecting.call_args.args[2]
+                self.assertEqual(tuple(plans), (0,))
+                self.assertEqual(len(plans[0].selected_curves), 1)
+                rendering.assert_not_called()
+                metadata = json.loads(Path(str(self.mono) + ".variants.json").read_text(encoding="utf-8"))
+                self.assertEqual(metadata["pages"][0]["error"], reason)
+                self.assertEqual(metadata["pages"][0]["variants"], [])
+                with self.pymupdf.open(source_path) as source, self.pymupdf.open(self.mono) as mono:
+                    expected = source[0].get_pixmap(dpi=150, clip=region, alpha=False)
+                    actual = mono[0].get_pixmap(dpi=150, clip=region, alpha=False)
+                    self.assertNotEqual(expected.samples, b"\xff" * len(expected.samples))
+                    self.assertEqual(actual.samples, expected.samples)
 
     def test_source_error_keeps_reason_and_page_without_interrupting_mono(self):
         self.page.pdf_character = [NS(box=box(40, 700, 50, 710), char_unicode="x",

@@ -123,6 +123,16 @@ def run_replay(pdf: Path) -> tuple[list[dict[str, object]], int, int]:
                 for line in log_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
+            # 可选归档，用于核对底图保护造成的有意分类变化，不修改默认断言。
+            evidence_dir = os.environ.get("ZTF_REPLAY_ARTIFACT_DIR")
+            if evidence_dir:
+                evidence = Path(evidence_dir)
+                evidence.mkdir(parents=True, exist_ok=True)
+                (evidence / (pdf.stem + ".json")).write_text(
+                    json.dumps([event for event in events if event.get("event") in {
+                        "figure_background", "paragraph_classification"
+                    }], ensure_ascii=False, indent=2), encoding="utf-8",
+                )
     finally:
         server.shutdown()
         server.server_close()

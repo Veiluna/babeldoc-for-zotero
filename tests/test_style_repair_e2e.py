@@ -227,6 +227,7 @@ class StyleRepairIntegrationTest(unittest.TestCase):
         for helper in (
             "ztf_inline_formulas.py", "ztf_style_guards.py",
             "ztf_links.py",
+            "ztf_figure_background.py", "ztf_split_types.py",
         ):
             source = ROOT / "addon/content/python" / helper
             if source.is_file():

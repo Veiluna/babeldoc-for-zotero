@@ -116,13 +116,26 @@ def _load_helper(name: str) -> Any:
     """Load and cache a sibling helper module next to the runner."""
     module = _HELPER_MODULES.get(name)
     if module is None:
+        helper_directory = os.path.dirname(__file__)
+        if helper_directory not in sys.path:
+            sys.path.insert(0, helper_directory)
         spec = importlib.util.spec_from_file_location(
             name, os.path.join(os.path.dirname(__file__), name + ".py"),
         )
         if spec is None or spec.loader is None:
             raise ImportError(name + ".py is missing next to the runner")
         candidate = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(candidate)
+        # 执行前登记，让相邻 helper 的普通 import 复用同一份注册表和缓存。
+        previous = sys.modules.get(name)
+        sys.modules[name] = candidate
+        try:
+            spec.loader.exec_module(candidate)
+        except BaseException:
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+            raise
         _HELPER_MODULES[name] = candidate
         module = candidate
     return module
@@ -146,6 +159,198 @@ def _punctuation_helper() -> Any:
 def _links_helper() -> Any:
     """Load the sibling helper module that restores PDF links after layout."""
     return _load_helper("ztf_links")
+
+
+def _figure_background_helper() -> Any:
+    """复用普通 import 或 runner 已加载的同一份图表底图模块。"""
+    if "ztf_figure_background" in sys.modules:
+        return sys.modules["ztf_figure_background"]
+    return _load_helper("ztf_figure_background")
+
+
+def _install_figure_background_hook(
+    styles_class: Any, request_state: dict[str, Any], api_key: str
+) -> None:
+    """StylesAndFormulas 结束后采集、移除图表 IL，并登记源页和计划。
+
+    request_state 保存 figure_background_plans（0 起源页号到计划）、
+    figure_background_pages（待清理源页）及 figure_background_config（选页配置）。
+    钩子不依赖分栏开关；原生 dual 的页面几何无法安全注入，故明确记录跳过，
+    并保留其 IL。异常向上传递，由文档生命周期 finally 清理已登记计划。
+    """
+    original = getattr(styles_class, "process", None)
+    if original is None or getattr(styles_class, "_ztf_figure_background_hook", False):
+        return
+
+    @functools.wraps(original)
+    def process(instance, document, *args, **kwargs):
+        result = original(instance, document, *args, **kwargs)
+        if request_state.get("figure_background_captured"):
+            return result
+        if not _split_dual_requested() and "--no-dual" not in sys.argv:
+            request_state["figure_background_skipped"] = "native_dual_unsafe"
+            request_state["figure_background_captured"] = True
+            _write_job_log(
+                request_state,
+                {"event": "figure_background", "skipped": "native_dual_unsafe", "count": 1},
+                api_key,
+            )
+            return result
+
+        helper = _figure_background_helper()
+        plans: dict[int, Any] = {}
+        pages: list[Any] = []
+        preserved_paragraphs: list[list[int]] = []
+        source_texts = request_state.setdefault("figure_background_source_texts", {})
+        source_pdf = _argument_value(sys.argv, "--files")
+        source = None
+        try:
+            if source_pdf:
+                import pymupdf
+                source = pymupdf.open(source_pdf)
+            for page in getattr(document, "page", ()) or ():
+                plan = helper.remembered(page)
+                if plan is None:
+                    convert = None
+                    if source is not None and 0 <= int(page.page_number) < len(source):
+                        matrix = source[int(page.page_number)].transformation_matrix
+
+                        def convert(box, _matrix=matrix):
+                            return tuple(pymupdf.Rect(box.x, box.y, box.x2, box.y2) * _matrix)
+
+                    plan = helper.build_plan(page, convert_box=convert)
+                    original_texts = {
+                        id(p): getattr(p, "unicode", "")
+                        for p in getattr(page, "pdf_paragraph", ()) or ()
+                    }
+                    helper.remove_selected_objects(page, plan)
+                    # 仅保留被清空段落的原文供分类日志使用，不恢复其 IL 字符。
+                    source_texts.update({
+                        id(p): original_texts[id(p)]
+                        for p in getattr(page, "pdf_paragraph", ()) or ()
+                        if original_texts[id(p)] != getattr(p, "unicode", "")
+                    })
+                    preserved_paragraphs.extend(
+                        [int(page.page_number) + 1, index]
+                        for index, p in enumerate(getattr(page, "pdf_paragraph", ()) or ())
+                        if id(p) in source_texts
+                    )
+                    helper.remember(page, plan, removed=True)
+                plans[int(page.page_number)] = plan
+                pages.append(page)
+        finally:
+            if source is not None:
+                source.close()
+        request_state["figure_background_plans"] = plans
+        request_state["figure_background_pages"] = pages
+        request_state["figure_background_config"] = getattr(instance, "translation_config", None)
+        request_state["figure_background_captured"] = True
+        _write_job_log(
+            request_state,
+            {"event": "figure_background", "planned": len(plans),
+             "selected": sum(bool(getattr(plan, "figure_boxes", ())) for plan in plans.values()),
+             "preserved_paragraphs": preserved_paragraphs},
+            api_key,
+        )
+        return result
+
+    styles_class.process = process
+    styles_class._ztf_figure_background_hook = True
+
+
+def _forget_figure_background(request_state: dict[str, Any]) -> None:
+    """清理 request_state 的底图计划、源页以及 helper 的变体注册表。"""
+    pages = tuple(request_state.pop("figure_background_pages", ()) or ())
+    request_state.pop("figure_background_plans", None)
+    request_state.pop("figure_background_config", None)
+    request_state.pop("figure_background_captured", None)
+    request_state.pop("figure_background_source_texts", None)
+    helper = _figure_background_helper()
+    for page in pages:
+        helper.forget(page)
+    helper.forget_all()
+
+
+@contextlib.contextmanager
+def _figure_background_lifecycle(request_state: dict[str, Any]):
+    """文档成功或异常退出时统一释放源页及变体计划。"""
+    try:
+        yield
+    finally:
+        _forget_figure_background(request_state)
+
+
+def _figure_background_source_pages(
+    source_pdf: str, translation_config: Any, output_count: int
+) -> list[int]:
+    """按最终输出顺序返回 0 起源页号，选页后不使用输出序号冒充源页号。"""
+    if not getattr(translation_config, "only_include_translated_page", False):
+        return list(range(max(0, int(output_count))))
+    import pymupdf
+
+    with pymupdf.open(source_pdf) as source:
+        return [
+            index
+            for index in range(len(source))
+            if translation_config.should_translate_page(index + 1)
+        ]
+
+
+def _inject_figure_backgrounds(
+    state: dict[str, Any], request_state: dict[str, Any], api_key: str
+) -> None:
+    """对 state.result 指向的 mono 注入底图；失败时取消缺图产物的交付。"""
+    plans = request_state.get("figure_background_plans") or {}
+    output_pdf = str(state.get("result") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    if request_state.get("figure_background_skipped"):
+        return
+    if not plans or not output_pdf or not source_pdf or not os.path.isfile(output_pdf):
+        _write_job_log(
+            request_state,
+            {"event": "figure_background", "skipped": "missing_path", "count": 1},
+            api_key,
+        )
+        return
+    helper = _figure_background_helper()
+    if getattr(helper, "was_injected", lambda _path: False)(output_pdf):
+        _write_job_log(
+            request_state,
+            {"event": "figure_background", "injected": 0,
+             "skipped": "already_injected", "count": 1},
+            api_key,
+        )
+        return
+    try:
+        import pymupdf
+
+        with pymupdf.open(output_pdf) as output:
+            output_count = len(output)
+        page_numbers = _figure_background_source_pages(
+            source_pdf, request_state.get("figure_background_config"), output_count
+        )
+        changed = helper.inject_backgrounds(
+            output_pdf, source_pdf, plans, page_numbers=page_numbers
+        )
+        request_state["figure_background_injected"] = True
+        _write_job_log(
+            request_state,
+            {"event": "figure_background", "injected": int(changed),
+             "source_pages": len(page_numbers)},
+            api_key,
+        )
+    except Exception as error:
+        _write_job_log(
+            request_state,
+            {"event": "figure_background_error", "stage": "mono",
+             "error": log_safe_error(error, api_key), "count": 1},
+            api_key,
+        )
+        # 图表已从 IL 移除，不能把缺图的产物作为成功结果交付。
+        state["result"] = ""
+        state["dual_result"] = ""
+        state["error"] = "图表底图写入失败，无法交付完整 PDF。"
+        state["error_kind"] = "figure_background"
 
 
 def _argument_value(arguments: list[str], name: str) -> str:
@@ -2764,10 +2969,13 @@ def _parse_json_array_prefix(text: str) -> tuple[list[Any], bool, bool]:
             return values, False, False
 
 
-def snapshot_paragraph_state(document: Any) -> dict[int, tuple[Any, Any]]:
-    """Each paragraph's text and composition before translation, keyed by id()."""
+def snapshot_paragraph_state(
+    document: Any, source_texts: dict[int, str] | None = None
+) -> dict[int, tuple[Any, Any]]:
+    """按对象身份保存分类日志快照；底图段落沿用移除 IL 前的原文预览。"""
     return {
-        id(paragraph): (paragraph.unicode, paragraph.pdf_paragraph_composition)
+        id(paragraph): ((source_texts or {}).get(id(paragraph), paragraph.unicode),
+                        paragraph.pdf_paragraph_composition)
         for page in document.page
         for paragraph in page.pdf_paragraph
     }
@@ -3697,10 +3905,12 @@ def _install_min_request_patches(
     import babeldoc.translator.translator as translator_module
     from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
     from babeldoc.format.pdf.document_il.midend.layout_parser import LayoutParser
+    from babeldoc.format.pdf.document_il.midend.styles_and_formulas import StylesAndFormulas
     from babeldoc.format.pdf.document_il.midend.typesetting import Typesetting
     from babeldoc.translator.translator import OpenAITranslator
 
     _install_pdf_unicode_patch()
+    _install_figure_background_hook(StylesAndFormulas, request_state, api_key)
     formula_spec = importlib.util.spec_from_file_location(
         "ztf_inline_formulas", os.path.join(os.path.dirname(__file__), "ztf_inline_formulas.py")
     )
@@ -5742,7 +5952,9 @@ def _install_min_request_patches(
             )
             request_state["preserved_paragraph_ids"] = set()
             docs = translator.il_translator.docs
-            original_paragraph_state = snapshot_paragraph_state(docs)
+            original_paragraph_state = snapshot_paragraph_state(
+                docs, request_state.get("figure_background_source_texts")
+            )
 
             # 0.7.0 表格翻译封存：表格布局框内的段落（题注除外）与表注一律保留原文；
             # 题注（table_title/table_caption）与表外正文仍走普通翻译路径。
@@ -6461,6 +6673,7 @@ def _compose_split_dual(
         with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
             json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
         compose_helper = _load_helper("ztf_split_compose")
+        _figure_background_helper().install_source_layer_guard(compose_helper)
         stats = compose_helper.compose_split_document(
             source_pdf, mono_pdf, layout, output_pdf,
             log=lambda record: _write_job_log(request_state, record, api_key),
@@ -6938,409 +7151,413 @@ def main() -> int:
         "notify_request_start": notify_request_start,
         "notify_request_finish": notify_request_finish,
     }
-    _write_job_log(
-        request_state,
-        {
-            "event": "job_started",
-            "repair_failed": repair_failed,
-            "translate_references": translate_references,
-            "max_requests": max_requests,
-            "max_output_tokens": max_output_tokens,
-        },
-        api_key,
-    )
-
-    def create_progress_handler(config: Any, show_log: bool = False):
-        del config, show_log
-
-        def handle_event(event: dict[str, Any]) -> None:
-            event_type = event.get("type")
-            if event_type in ("progress_start", "progress_update", "progress_end"):
-                state["overall"] = event.get("overall_progress", 0)
-                state["stage"] = event.get("stage", "正在翻译")
-                state["current"] = event.get("stage_current", 0)
-                state["total"] = event.get("stage_total", 0)
-                _emit(
-                    "ZTF_PROGRESS ",
-                    {
-                        "overall": state["overall"],
-                        "stage": state["stage"],
-                        "current": state["current"],
-                        "total": state["total"],
-                        "requests": request_budget.requests,
-                        "planned": request_budget.planned,
-                    },
-                    api_key,
-                )
-            elif event_type == "error":
-                state["error"] = _redact(
-                    sanitize_provider_error(
-                        event.get("error", "BabelDOC reported an error.")
-                    ),
-                    api_key,
-                )
-            elif event_type == "finish":
-                result = event.get("translate_result") or {}
-
-                def output_path(*names: str) -> str:
-                    if isinstance(result, dict):
-                        value = next(
-                            (result.get(name) for name in names if result.get(name)), ""
-                        )
-                    else:
-                        value = next(
-                            (getattr(result, name, "") for name in names
-                             if getattr(result, name, "")),
-                            "",
-                        )
-                    return str(value) if value else ""
-
-                mono_path = output_path(
-                    "no_watermark_mono_pdf_path", "mono_pdf_path"
-                )
-                if mono_path:
-                    state["result"] = mono_path
-                dual_path = output_path(
-                    "no_watermark_dual_pdf_path", "dual_pdf_path"
-                )
-                if dual_path:
-                    state["dual_result"] = dual_path
-
-        return contextlib.nullcontext(), handle_event
-
-    try:
-        import babeldoc.main as babeldoc_main
-        from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
-
-        babeldoc_main.create_progress_handler = create_progress_handler
-        policy = TranslationPolicy()
-        # BabelDOC pre-translates every paragraph before submitting any batch;
-        # those preparation calls must not count as translation attempts.
-        policy.track_pretranslate_attempts = False
-        policy.instrument(ILTranslator)
-        _install_min_request_patches(
-            policy,
-            request_budget,
+    with _figure_background_lifecycle(request_state):
+        _write_job_log(
             request_state,
-            max_output_tokens,
-            repair_failed,
-            translate_references,
+            {
+                "event": "job_started",
+                "repair_failed": repair_failed,
+                "translate_references": translate_references,
+                "max_requests": max_requests,
+                "max_output_tokens": max_output_tokens,
+            },
             api_key,
         )
-        _configure_logging(api_key, policy)
-        _install_synchronous_log_capture(babeldoc_main, policy)
+
+        def create_progress_handler(config: Any, show_log: bool = False):
+            del config, show_log
+
+            def handle_event(event: dict[str, Any]) -> None:
+                event_type = event.get("type")
+                if event_type in ("progress_start", "progress_update", "progress_end"):
+                    state["overall"] = event.get("overall_progress", 0)
+                    state["stage"] = event.get("stage", "正在翻译")
+                    state["current"] = event.get("stage_current", 0)
+                    state["total"] = event.get("stage_total", 0)
+                    _emit(
+                        "ZTF_PROGRESS ",
+                        {
+                            "overall": state["overall"],
+                            "stage": state["stage"],
+                            "current": state["current"],
+                            "total": state["total"],
+                            "requests": request_budget.requests,
+                            "planned": request_budget.planned,
+                        },
+                        api_key,
+                    )
+                elif event_type == "error":
+                    state["error"] = _redact(
+                        sanitize_provider_error(
+                            event.get("error", "BabelDOC reported an error.")
+                        ),
+                        api_key,
+                    )
+                elif event_type == "finish":
+                    result = event.get("translate_result") or {}
+
+                    def output_path(*names: str) -> str:
+                        if isinstance(result, dict):
+                            value = next(
+                                (result.get(name) for name in names if result.get(name)), ""
+                            )
+                        else:
+                            value = next(
+                                (getattr(result, name, "") for name in names
+                                 if getattr(result, name, "")),
+                                "",
+                            )
+                        return str(value) if value else ""
+
+                    mono_path = output_path(
+                        "no_watermark_mono_pdf_path", "mono_pdf_path"
+                    )
+                    if mono_path:
+                        state["result"] = mono_path
+                    dual_path = output_path(
+                        "no_watermark_dual_pdf_path", "dual_pdf_path"
+                    )
+                    if dual_path:
+                        state["dual_result"] = dual_path
+
+            return contextlib.nullcontext(), handle_event
 
         try:
-            multiprocessing.set_start_method("spawn")
-        except RuntimeError:
-            # Importers or test harnesses may have selected spawn already.
-            if multiprocessing.get_start_method() != "spawn":
-                raise
+            import babeldoc.main as babeldoc_main
+            from babeldoc.format.pdf.document_il.midend.il_translator import ILTranslator
 
-        babeldoc_main.cli()
-        exit_code = 0
-    except SystemExit as error:
-        if error.code is None:
-            exit_code = 0
-        elif isinstance(error.code, int):
-            exit_code = error.code
-        else:
-            print(_redact(error.code, api_key), file=sys.stderr, flush=True)
-            exit_code = 1
-    except BaseException:
-        # Format before writing, then redact the entire traceback so secrets in
-        # exception messages, chained causes, or source excerpts cannot escape.
-        formatted_traceback = traceback.format_exc()
-        print(_redact(formatted_traceback, api_key), file=sys.stderr, flush=True)
-        exit_code = 1
-
-    output_directory = ""
-    arguments = sys.argv[1:]
-    if "--output" in arguments:
-        output_index = arguments.index("--output")
-        if output_index + 1 < len(arguments):
-            output_directory = arguments[output_index + 1]
-    requested_mode = _requested_output_mode(arguments)
-    discovered_output = _discover_output_files(output_directory)
-    if not state.get("result") and discovered_output["mono"]:
-        state["result"] = discovered_output["mono"]
-    if not state.get("dual_result") and discovered_output["dual"]:
-        state["dual_result"] = discovered_output["dual"]
-
-    policy_instance = locals().get("policy")
-    decision = policy_instance.decision() if policy_instance else None
-    translation_count_summary = (
-        policy_instance.count_summary() if policy_instance else ""
-    )
-
-    def with_translation_counts(message: str) -> str:
-        if translation_count_summary and translation_count_summary not in message:
-            return message + "；" + translation_count_summary
-        return message
-
-    # 降级输出：BabelDOC 已经产出 PDF 且至少有一段真正翻译成功时，任何
-    # 段落级/结构性失败都不再丢弃 PDF；原段落保留原文并给完成警告。
-    # 只有“没有产物”或“0 段成功”才继续走下面的硬失败分支。
-    kept_verbatim = request_state.get("kept_verbatim_paragraph_ids") or set()
-    translated_paragraphs = len(
-        set(request_state.get("translated_paragraph_ids") or ()) - set(kept_verbatim)
-    )
-    if _can_degrade_output(state, translated_paragraphs):
-        degraded_failures = _degraded_output_failures(
-            request_state, decision, state, exit_code, api_key, requested_mode
-        )
-        if degraded_failures:
-            _finish_degraded_output(
-                request_state,
-                state,
+            babeldoc_main.create_progress_handler = create_progress_handler
+            policy = TranslationPolicy()
+            # BabelDOC pre-translates every paragraph before submitting any batch;
+            # those preparation calls must not count as translation attempts.
+            policy.track_pretranslate_attempts = False
+            policy.instrument(ILTranslator)
+            _install_min_request_patches(
+                policy,
                 request_budget,
-                degraded_failures,
-                translated_paragraphs,
-                translation_count_summary,
-                job_log_path,
+                request_state,
+                max_output_tokens,
+                repair_failed,
+                translate_references,
                 api_key,
             )
-            return 0
+            _configure_logging(api_key, policy)
+            _install_synchronous_log_capture(babeldoc_main, policy)
 
-    if request_state.get("fatal_error"):
-        # 补译批次因鉴权/重试耗尽而失败时，policy 已记录每个受影响段落的
-        # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
-        fatal_decision = decision
-        fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
-        # reasons 可能带服务商/文档回显；日志与协议只保留有界摘要。
-        fatal_failures = [
-            {
-                **item,
-                "reason": _bounded_log_reason(item.get("reason", ""), api_key),
-            }
-            for item in fatal_failures
-        ]
-        fatal_message = request_state["fatal_error"]
-        if fatal_failures:
-            # decision.message 已含计数摘要，统一在最后补一次，避免重复。
-            fatal_message = fatal_message + "；" + fatal_decision["message"]
-        fatal_message = with_translation_counts(fatal_message)
-        _write_job_log(
-            request_state,
-            {
-                "event": "job_finished",
-                "outcome": "failed",
-                "requests": request_budget.requests,
-                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-                "repair_request_count": request_state.get("repair_request_count", 0),
-                # The fatal message may carry a provider body (it is shown,
-                # redacted, in the alert); the log only gets the fixed summary.
-                "error": request_state.get("fatal_error_log")
-                or log_safe_error(request_state["fatal_error"], api_key),
-                "failures": fatal_failures,
-            },
-            api_key,
-        )
-        _emit(
-            "ZTF_ERROR ",
-            {
-                "message": fatal_message,
-                "kind": request_state.get("fatal_kind") or "api_error",
-                "failed_paragraphs": len(fatal_failures),
-                "failures": fatal_failures,
-                "requests": request_budget.requests,
-                "planned": request_budget.planned,
-                "log_path": job_log_path or None,
-            },
-            api_key,
-        )
-        return 1
+            try:
+                multiprocessing.set_start_method("spawn")
+            except RuntimeError:
+                # Importers or test harnesses may have selected spawn already.
+                if multiprocessing.get_start_method() != "spawn":
+                    raise
 
-    quality_failures = list((request_state.get("quality_failures") or {}).values())
-    if quality_failures:
-        details = "；".join(
-            f"{failure['location']}：{failure['reason']}"
-            for failure in quality_failures[:5]
-        )
-        message = (
-            f"整篇翻译失败：{len(quality_failures)} 段应译内容无法安全还原"
-            + (f"（{details}）" if details else "")
-            + "。"
-        )
-        failure_details = [
-            {
-                "page": failure.get("page"),
-                "paragraph": failure.get("paragraph"),
-                "reason": _bounded_log_reason(
-                    str(failure.get("reason", "")), api_key
-                ),
-            }
-            for failure in quality_failures
-        ]
-        _write_job_log(
-            request_state,
-            {
-                "event": "job_finished",
-                "outcome": "failed",
-                "kind": "translation_failed",
-                "requests": request_budget.requests,
-                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-                "repair_request_count": request_state.get("repair_request_count", 0),
-                "failures": failure_details,
-            },
-            api_key,
-        )
-        _emit(
-            "ZTF_ERROR ",
-            {
-                "message": with_translation_counts(message),
-                "kind": "translation_failed",
-                "failed_paragraphs": len(quality_failures),
-                "failures": failure_details,
-                "requests": request_budget.requests,
-                "planned": request_budget.planned,
-                "log_path": job_log_path or None,
-            },
-            api_key,
-        )
-        return 1
+            babeldoc_main.cli()
+            exit_code = 0
+        except SystemExit as error:
+            if error.code is None:
+                exit_code = 0
+            elif isinstance(error.code, int):
+                exit_code = error.code
+            else:
+                print(_redact(error.code, api_key), file=sys.stderr, flush=True)
+                exit_code = 1
+        except BaseException:
+            # Format before writing, then redact the entire traceback so secrets in
+            # exception messages, chained causes, or source excerpts cannot escape.
+            formatted_traceback = traceback.format_exc()
+            print(_redact(formatted_traceback, api_key), file=sys.stderr, flush=True)
+            exit_code = 1
 
-    # BabelDOC can swallow paragraph API errors and still emit a PDF and exit 0.
-    if decision and decision["kind"] == "translation_failed":
-        _write_job_log(
-            request_state,
-            {
-                "event": "job_finished",
-                "outcome": "failed",
-                "requests": request_budget.requests,
-                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-                "repair_request_count": request_state.get("repair_request_count", 0),
-                "reason": decision["message"],
-            },
-            api_key,
-        )
-        _emit(
-            "ZTF_ERROR ",
-            {
-                "message": with_translation_counts(decision["message"]),
-                "kind": decision["kind"],
-                "failed_paragraphs": decision["failed_paragraphs"],
-                "failures": decision.get("failures", []),
-                "requests": request_budget.requests,
-                "planned": request_budget.planned,
-                "log_path": job_log_path or None,
-            },
-            api_key,
-        )
-        return 1
+        output_directory = ""
+        arguments = sys.argv[1:]
+        if "--output" in arguments:
+            output_index = arguments.index("--output")
+            if output_index + 1 < len(arguments):
+                output_directory = arguments[output_index + 1]
+        requested_mode = _requested_output_mode(arguments)
+        discovered_output = _discover_output_files(output_directory)
+        if not state.get("result") and discovered_output["mono"]:
+            state["result"] = discovered_output["mono"]
+        if not state.get("dual_result") and discovered_output["dual"]:
+            state["dual_result"] = discovered_output["dual"]
 
-    if state["error"]:
-        _write_job_log(
-            request_state,
-            {
-                "event": "job_finished",
-                "outcome": "failed",
-                "requests": request_budget.requests,
-                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-                "repair_request_count": request_state.get("repair_request_count", 0),
-                "reason": state["error"],
-            },
-            api_key,
-        )
-        _emit(
-            "ZTF_ERROR ",
-            {
-                "message": with_translation_counts(state["error"]),
-                "kind": state["error_kind"],
-                "requests": request_budget.requests,
-                "planned": request_budget.planned,
-                "log_path": job_log_path or None,
-            },
-            api_key,
-        )
-        return exit_code or 1
+        # mono 已写完，先按真实源页号注入底图，再恢复图内文字和链接。
+        _inject_figure_backgrounds(state, request_state, api_key)
 
-    if exit_code != 0 or not (state.get("result") or state.get("dual_result")):
-        _write_job_log(
-            request_state,
-            {
-                "event": "job_finished",
-                "outcome": "failed",
-                "requests": request_budget.requests,
-                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-                "repair_request_count": request_state.get("repair_request_count", 0),
-            },
-            api_key,
+        policy_instance = locals().get("policy")
+        decision = policy_instance.decision() if policy_instance else None
+        translation_count_summary = (
+            policy_instance.count_summary() if policy_instance else ""
         )
-        return exit_code or 1
 
-    link_stats = _restore_links_after_layout(state, request_state, api_key)
-    request_state["link_stats"] = link_stats
-    dual_link_stats = _dual_after_layout(
-        state, request_state, link_stats, api_key
-    )
-    warning_messages = []
-    warning_failed = 0
-    if decision and decision["kind"] == "warning":
-        warning_messages.append(str(decision["message"]))
-        warning_failed += int(decision.get("failed_paragraphs") or 0)
-    if warning_messages:
-        _emit(
-            "ZTF_WARNING ",
-            {
-                "message": "；".join(warning_messages),
-                "failed_paragraphs": warning_failed,
-                "tables": [],
-                "requests": request_budget.requests,
-                "planned": request_budget.planned,
-            },
-            api_key,
+        def with_translation_counts(message: str) -> str:
+            if translation_count_summary and translation_count_summary not in message:
+                return message + "；" + translation_count_summary
+            return message
+
+        # 降级输出：BabelDOC 已经产出 PDF 且至少有一段真正翻译成功时，任何
+        # 段落级/结构性失败都不再丢弃 PDF；原段落保留原文并给完成警告。
+        # 只有“没有产物”或“0 段成功”才继续走下面的硬失败分支。
+        kept_verbatim = request_state.get("kept_verbatim_paragraph_ids") or set()
+        translated_paragraphs = len(
+            set(request_state.get("translated_paragraph_ids") or ()) - set(kept_verbatim)
         )
-    else:
-        link_message = _link_warning_message(link_stats)
-        if link_message:
+        if _can_degrade_output(state, translated_paragraphs):
+            degraded_failures = _degraded_output_failures(
+                request_state, decision, state, exit_code, api_key, requested_mode
+            )
+            if degraded_failures:
+                _finish_degraded_output(
+                    request_state,
+                    state,
+                    request_budget,
+                    degraded_failures,
+                    translated_paragraphs,
+                    translation_count_summary,
+                    job_log_path,
+                    api_key,
+                )
+                return 0
+
+        if request_state.get("fatal_error"):
+            # 补译批次因鉴权/重试耗尽而失败时，policy 已记录每个受影响段落的
+            # 页码和原因；附加这些位置，避免最终错误只剩服务商异常。
+            fatal_decision = decision
+            fatal_failures = fatal_decision.get("failures", []) if fatal_decision else []
+            # reasons 可能带服务商/文档回显；日志与协议只保留有界摘要。
+            fatal_failures = [
+                {
+                    **item,
+                    "reason": _bounded_log_reason(item.get("reason", ""), api_key),
+                }
+                for item in fatal_failures
+            ]
+            fatal_message = request_state["fatal_error"]
+            if fatal_failures:
+                # decision.message 已含计数摘要，统一在最后补一次，避免重复。
+                fatal_message = fatal_message + "；" + fatal_decision["message"]
+            fatal_message = with_translation_counts(fatal_message)
+            _write_job_log(
+                request_state,
+                {
+                    "event": "job_finished",
+                    "outcome": "failed",
+                    "requests": request_budget.requests,
+                    "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                    # The fatal message may carry a provider body (it is shown,
+                    # redacted, in the alert); the log only gets the fixed summary.
+                    "error": request_state.get("fatal_error_log")
+                    or log_safe_error(request_state["fatal_error"], api_key),
+                    "failures": fatal_failures,
+                },
+                api_key,
+            )
+            _emit(
+                "ZTF_ERROR ",
+                {
+                    "message": fatal_message,
+                    "kind": request_state.get("fatal_kind") or "api_error",
+                    "failed_paragraphs": len(fatal_failures),
+                    "failures": fatal_failures,
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                    "log_path": job_log_path or None,
+                },
+                api_key,
+            )
+            return 1
+
+        quality_failures = list((request_state.get("quality_failures") or {}).values())
+        if quality_failures:
+            details = "；".join(
+                f"{failure['location']}：{failure['reason']}"
+                for failure in quality_failures[:5]
+            )
+            message = (
+                f"整篇翻译失败：{len(quality_failures)} 段应译内容无法安全还原"
+                + (f"（{details}）" if details else "")
+                + "。"
+            )
+            failure_details = [
+                {
+                    "page": failure.get("page"),
+                    "paragraph": failure.get("paragraph"),
+                    "reason": _bounded_log_reason(
+                        str(failure.get("reason", "")), api_key
+                    ),
+                }
+                for failure in quality_failures
+            ]
+            _write_job_log(
+                request_state,
+                {
+                    "event": "job_finished",
+                    "outcome": "failed",
+                    "kind": "translation_failed",
+                    "requests": request_budget.requests,
+                    "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                    "failures": failure_details,
+                },
+                api_key,
+            )
+            _emit(
+                "ZTF_ERROR ",
+                {
+                    "message": with_translation_counts(message),
+                    "kind": "translation_failed",
+                    "failed_paragraphs": len(quality_failures),
+                    "failures": failure_details,
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                    "log_path": job_log_path or None,
+                },
+                api_key,
+            )
+            return 1
+
+        # BabelDOC can swallow paragraph API errors and still emit a PDF and exit 0.
+        if decision and decision["kind"] == "translation_failed":
+            _write_job_log(
+                request_state,
+                {
+                    "event": "job_finished",
+                    "outcome": "failed",
+                    "requests": request_budget.requests,
+                    "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                    "reason": decision["message"],
+                },
+                api_key,
+            )
+            _emit(
+                "ZTF_ERROR ",
+                {
+                    "message": with_translation_counts(decision["message"]),
+                    "kind": decision["kind"],
+                    "failed_paragraphs": decision["failed_paragraphs"],
+                    "failures": decision.get("failures", []),
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                    "log_path": job_log_path or None,
+                },
+                api_key,
+            )
+            return 1
+
+        if state["error"]:
+            _write_job_log(
+                request_state,
+                {
+                    "event": "job_finished",
+                    "outcome": "failed",
+                    "requests": request_budget.requests,
+                    "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                    "reason": state["error"],
+                },
+                api_key,
+            )
+            _emit(
+                "ZTF_ERROR ",
+                {
+                    "message": with_translation_counts(state["error"]),
+                    "kind": state["error_kind"],
+                    "requests": request_budget.requests,
+                    "planned": request_budget.planned,
+                    "log_path": job_log_path or None,
+                },
+                api_key,
+            )
+            return exit_code or 1
+
+        if exit_code != 0 or not (state.get("result") or state.get("dual_result")):
+            _write_job_log(
+                request_state,
+                {
+                    "event": "job_finished",
+                    "outcome": "failed",
+                    "requests": request_budget.requests,
+                    "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                    "repair_request_count": request_state.get("repair_request_count", 0),
+                },
+                api_key,
+            )
+            return exit_code or 1
+
+        link_stats = _restore_links_after_layout(state, request_state, api_key)
+        request_state["link_stats"] = link_stats
+        dual_link_stats = _dual_after_layout(
+            state, request_state, link_stats, api_key
+        )
+        warning_messages = []
+        warning_failed = 0
+        if decision and decision["kind"] == "warning":
+            warning_messages.append(str(decision["message"]))
+            warning_failed += int(decision.get("failed_paragraphs") or 0)
+        if warning_messages:
             _emit(
                 "ZTF_WARNING ",
                 {
-                    "message": link_message,
-                    "failed_paragraphs": 0,
-                    "links_unresolved": link_stats.get("unresolved", 0),
-                    "links_unsupported": link_stats.get("unsupported", 0),
+                    "message": "；".join(warning_messages),
+                    "failed_paragraphs": warning_failed,
+                    "tables": [],
                     "requests": request_budget.requests,
                     "planned": request_budget.planned,
                 },
                 api_key,
             )
-    _write_job_log(
-        request_state,
-        {
-            "event": "job_finished",
-            "outcome": "warning" if warning_messages else "success",
-            "requests": request_budget.requests,
-            "planned_requests": request_budget.planned,
-            "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
-            "repair_request_count": request_state.get("repair_request_count", 0),
-            "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
-            "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
-            "table_warnings": [],
-            "token_param": request_state.get("token_param"),
-            "parameter_adaptations": request_state.get("parameter_adaptations", []),
-            "links": {
-                key: link_stats.get(key)
-                for key in ("source", "restored", "unresolved", "unsupported",
-                            "mapping_path", "error", "split_layout", "paragraphs")
-            } if link_stats else None,
-        },
-        api_key,
-    )
-    _emit(
-        "ZTF_RESULT ",
-        _result_payload(
-            state,
+        else:
+            link_message = _link_warning_message(link_stats)
+            if link_message:
+                _emit(
+                    "ZTF_WARNING ",
+                    {
+                        "message": link_message,
+                        "failed_paragraphs": 0,
+                        "links_unresolved": link_stats.get("unresolved", 0),
+                        "links_unsupported": link_stats.get("unsupported", 0),
+                        "requests": request_budget.requests,
+                        "planned": request_budget.planned,
+                    },
+                    api_key,
+                )
+        _write_job_log(
             request_state,
-            request_budget,
-            job_log_path,
-            link_stats,
-            dual_link_stats,
-        ),
-        api_key,
-    )
-    return exit_code
+            {
+                "event": "job_finished",
+                "outcome": "warning" if warning_messages else "success",
+                "requests": request_budget.requests,
+                "planned_requests": request_budget.planned,
+                "fragment_item_count": len(request_state.get("fragment_paragraph_ids", set())),
+                "repair_request_count": request_state.get("repair_request_count", 0),
+                "preserved_layout_paragraphs": len(request_state.get("preserved_paragraph_ids", set())),
+                "body_font_scale_summary": request_state.get("body_font_scale_summary", {}),
+                "table_warnings": [],
+                "token_param": request_state.get("token_param"),
+                "parameter_adaptations": request_state.get("parameter_adaptations", []),
+                "links": {
+                    key: link_stats.get(key)
+                    for key in ("source", "restored", "unresolved", "unsupported",
+                                "mapping_path", "error", "split_layout", "paragraphs")
+                } if link_stats else None,
+            },
+            api_key,
+        )
+        _emit(
+            "ZTF_RESULT ",
+            _result_payload(
+                state,
+                request_state,
+                request_budget,
+                job_log_path,
+                link_stats,
+                dual_link_stats,
+            ),
+            api_key,
+        )
+        return exit_code
 
 
 if __name__ == "__main__":
