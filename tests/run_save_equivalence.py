@@ -3,7 +3,7 @@
 
 默认依次运行每个样本的 baseline、baseline-repeat、working；重复基线不一致
 时不认可该样本的优化等价性。同时检查 variants 与 mono 的文本和像素。
-所有实验产物位于 .scratch/t082/t2，基线代码仅用 git archive 导出。
+所有实验产物位于 .scratch/t082/t3，基线代码仅用 git archive 导出。
 需指定环境的 Python 运行。
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import time
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / '.scratch/t082/t2'
+OUTPUT = ROOT / '.scratch/t082/t3'
 BASE = OUTPUT / 'base'
 PYTHON = Path('G:/ProgramData/zotero-translate-files/babeldoc-env/python.exe')
 
@@ -32,6 +32,22 @@ import json
 from pathlib import Path
 import runpy
 import sys
+def stable_link_input(value):
+    # runner 的段落 ID 来自 id(paragraph)，跨进程不可比较。只在实验入口
+    # 给 restore_links 相同的身份输入；不改生产代码，不在比较时忽略 ID。
+    if value is None:
+        return None
+    paragraphs = value.get("paragraphs", []) if isinstance(value, dict) else value
+    aliases = {}
+    result = []
+    for paragraph in paragraphs:
+        item = dict(paragraph)
+        identity = item.get("id")
+        if isinstance(identity, int):
+            item["id"] = aliases.setdefault(identity, len(aliases) + 1)
+        result.append(item)
+    return dict(value, paragraphs=result) if isinstance(value, dict) else result
+
 def capture():
     runner, stats_path, *arguments = sys.argv[1:]
     sys.path.insert(0, str(Path(runner).parent))
@@ -41,6 +57,13 @@ def capture():
     original_load = main.__globals__["_load_helper"]
     def load(name):
         helper = original_load(name)
+        if name == "ztf_links" and not getattr(helper, "_equivalence_link_inputs", False):
+            original_restore = helper.restore_links
+            @functools.wraps(original_restore)
+            def restore(source, output, paragraph_map=None, *args, **kwargs):
+                return original_restore(source, output, stable_link_input(paragraph_map), *args, **kwargs)
+            helper.restore_links = restore
+            helper._equivalence_link_inputs = True
         if name == "ztf_split_compose" and not getattr(helper, "_equivalence_capture", False):
             original_compose = helper.compose_split_document
             @functools.wraps(original_compose)
@@ -147,10 +170,26 @@ def compare_runs(left, right):
         result['checks'][role] = comparison['status'] == 'PASS'
         result['differences'].extend(dict(item, artifact=role) for item in comparison['differences'])
     result['checks']['compose_stats'] = left['stats'] == right['stats']
+    result['checks']['links_mapping'] = compare_link_mappings(
+        str(left['mono'])+'.links.json', str(right['mono'])+'.links.json')
+    if not result['checks']['links_mapping']:
+        result['differences'].append({'page': None, 'type': 'links_mapping'})
     if not result['checks']['compose_stats']:
         result['differences'].append({'page': None, 'type': 'compose_stats'})
     result['status'] = 'PASS' if all(result['checks'].values()) else 'FAIL'
     return result
+
+
+def compare_link_mappings(left, right):
+    """逐条精确比较映射；只忽略顶层 source/output 的运行目录差异。
+
+    不使用 PDF 的 normalize：映射中的 id、xref、列表顺序均必须相同。
+    当前 mapping schema 没有时间戳字段，因此不忽略任何时间戳。
+    """
+    def read(path):
+        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        return {key: item for key, item in value.items() if key not in ('source', 'output')}
+    return read(left) == read(right)
 
 
 def export_baseline(commit):
@@ -216,13 +255,13 @@ def timing_comparison(baseline, working):
     old, new = baseline['timing']['functions'], working['timing']['functions']
     return {key: {'baseline': old.get(key), 'working': new.get(key)}
             for key in sorted(old.keys() | new.keys())
-            if key.startswith(('ztf_split_compose.', 'ztf_split_variants.'))}
+            if key.startswith(('ztf_split_compose.', 'ztf_split_variants.', 'ztf_links.'))}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, default=PYTHON)
-    parser.add_argument('--baseline', default='f61319b')
+    parser.add_argument('--baseline', default='6c7820d')
     parser.add_argument('--timeout', type=int, default=3600)
     parser.add_argument('--samples', nargs='+', choices=['P05', 'chen2026', 'foba'],
                         default=['P05', 'chen2026', 'foba'])
@@ -246,6 +285,7 @@ def main():
                     for n in ('chen2026', 'foba')})
     report = {'baseline_commit': args.baseline, 'run_directory': str(run), 'status': 'FAIL',
               'evidence_kind': '真实 BabelDOC 0.6.4 + 本地合成译文；非真实翻译/非 Zotero 真机',
+              'link_input_ids': '实验入口按首次出现顺序重编号，保持身份等价关系；比较时不忽略 id',
               'cases': []}
     try:
         endpoint = f'http://127.0.0.1:{server.server_port}/v1'

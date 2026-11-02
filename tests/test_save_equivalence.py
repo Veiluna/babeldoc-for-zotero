@@ -21,6 +21,10 @@ class SaveEquivalenceTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.a, self.b = self.root/'a.pdf', self.root/'b.pdf'
+        for path in (self.a, self.b):
+            Path(str(path)+'.links.json').write_text(json.dumps(
+                {'source': str(path), 'output': str(path), 'links': [{'id': 1, 'xref': 5}]}),
+                encoding='utf-8')
         with fitz.open() as doc:
             page = doc.new_page(width=200, height=200)
             page.insert_text((20, 40), 'equivalence')
@@ -97,6 +101,48 @@ class SaveEquivalenceTests(unittest.TestCase):
                 self.assertEqual(report['status'], 'FAIL')
                 self.assertFalse(report['checks'][role])
                 self.assertEqual(report['artifacts'][role]['status'], 'FAIL')
+
+    def test_mapping_only_ignores_top_level_paths_and_preserves_record_order_and_ids(self):
+        from run_save_equivalence import compare_link_mappings
+        a, b = (Path(str(path)+'.links.json') for path in (self.a, self.b))
+        self.assertTrue(compare_link_mappings(a, b))
+        payload = json.loads(b.read_text(encoding='utf-8'))
+        payload['links'][0]['id'] = 2
+        b.write_text(json.dumps(payload), encoding='utf-8')
+        self.assertFalse(compare_link_mappings(a, b))
+        payload['links'] = [{'id': 1, 'xref': 6}]
+        b.write_text(json.dumps(payload), encoding='utf-8')
+        self.assertFalse(compare_link_mappings(a, b))
+        payload['links'] = [{'id': 1}, {'id': 2}]
+        a.write_text(json.dumps(payload), encoding='utf-8')
+        payload['links'].reverse()
+        b.write_text(json.dumps(payload), encoding='utf-8')
+        self.assertFalse(compare_link_mappings(a, b))
+
+    def test_run_comparison_fails_when_only_mapping_changes(self):
+        from run_save_equivalence import compare_runs
+        self.change(lambda doc: None)
+        Path(str(self.b)+'.links.json').write_text('{"links": []}', encoding='utf-8')
+        old = {'pdf': self.a, 'mono': self.a, 'variants': self.a, 'stats': {}}
+        report = compare_runs(old, dict(old, mono=self.b))
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertFalse(report['checks']['links_mapping'])
+
+    def test_capture_stabilizes_only_input_ids_preserving_aliases_order_and_original(self):
+        from run_save_equivalence import CAPTURE_RUNNER
+        namespace = {'__name__': 'equivalence_test'}
+        exec(CAPTURE_RUNNER, namespace)
+        stabilize = namespace['stable_link_input']
+        value = {'paragraphs': [{'id': 900, 'source_page': 0}, {'id': 800, 'source_page': 1},
+                                {'id': 900, 'source_page': 2}], 'version': 1}
+        original = json.loads(json.dumps(value))
+        result = stabilize(value)
+        self.assertEqual([p['id'] for p in result['paragraphs']], [1, 2, 1])
+        self.assertEqual([p['source_page'] for p in result['paragraphs']], [0, 1, 2])
+        self.assertEqual(result['version'], 1)
+        self.assertEqual(value, original)
+        self.assertEqual(stabilize(value['paragraphs']), result['paragraphs'])
+        self.assertIsNone(stabilize(None))
 
 
 if __name__ == '__main__':
