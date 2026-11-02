@@ -202,6 +202,7 @@ var ZoteroTranslateFilesRunner = (function () {
         ["ztf_inline_formulas.py", "公式辅助模块"],
         ["ztf_style_guards.py", "样式保护辅助模块"],
         ["ztf_links.py", "链接恢复辅助模块"],
+        ["ztf_timing.py", "保存计时辅助模块"],
         // 0.6.0 后处理模块：runner 按路径加载，必须与 runner 一起复制到数据目录。
         ["ztf_figure_text.py", "图内文字恢复辅助模块"],
         ["ztf_figure_background.py", "图表矢量底图辅助模块"],
@@ -225,6 +226,23 @@ var ZoteroTranslateFilesRunner = (function () {
         await Zotero.File.putContentsAsync(
           PathUtils.join(dataDir, helperName), helperContents, "utf-8"
         );
+      }
+
+      // 测试包可带空 marker；正式包不带，刷新 runner 时清除历史测试开关。
+      var timingMarkerPath = PathUtils.join(dataDir, "ztf_timing.enabled");
+      var timingMarkerPresent = false;
+      try {
+        await Zotero.File.getContentsFromURL(
+          ZoteroTranslateFiles.rootURI + "content/python/ztf_timing.enabled"
+        );
+        timingMarkerPresent = true;
+      } catch (_error) {
+        // 可选资源缺失是正式包的正常状态。
+      }
+      if (timingMarkerPresent) {
+        await Zotero.File.putContentsAsync(timingMarkerPath, "", "utf-8");
+      } else if (Zotero.File.pathToFile(timingMarkerPath).exists()) {
+        await IOUtils.remove(timingMarkerPath, { ignoreAbsent: true });
       }
 
       var baseTempDir = PathUtils.tempDir;

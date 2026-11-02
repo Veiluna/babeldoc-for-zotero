@@ -21,6 +21,7 @@ if _DIRECTORY not in sys.path:
     sys.path.insert(0, _DIRECTORY)
 
 from ztf_split_types import MARGIN, SPANNING, Char, PageColumns
+import ztf_timing as timing
 from ztf_figure_background import (
     build_plan,
     inject_background_sequence,
@@ -465,17 +466,24 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
             config.raise_if_cancelled()
             # FontMapper.add_font 会往 IL 中追加字体，副本不得污染待交付的 IL。
             document = il.Document(page=[_copy_render_page(variant.page)], total_pages=1)
-            with pymupdf.open(creator.original_pdf_path) as pdf:
+            with timing.call('ztf_split_variants.open[render_variants]',
+                             pymupdf.open, creator.original_pdf_path) as pdf:
                 _isolate_form_streams(document.page[0], pdf)
-                writer = PDFCreater(creator.original_pdf_path, document, config,
-                                    creator.mediabox_data)
-                writer.font_mapper.add_font(pdf, document)
-                writer.update_page_content_stream(False, document.page[0], pdf, config)
-                writer.restore_media_box(pdf, creator.mediabox_data)
+                writer = timing.call('ztf_split_variants.PDFCreater[render_variants]',
+                                     PDFCreater, creator.original_pdf_path, document, config,
+                                     creator.mediabox_data)
+                timing.call('ztf_split_variants.add_font[render_variants]',
+                            writer.font_mapper.add_font, pdf, document)
+                timing.call('ztf_split_variants.update_page_content_stream[render_variants]',
+                            writer.update_page_content_stream, False, document.page[0], pdf, config)
+                timing.call('ztf_split_variants.restore_media_box[render_variants]',
+                            writer.restore_media_box, pdf, creator.mediabox_data)
                 number = document.page[0].page_number
-                output.insert_pdf(pdf, from_page=number, to_page=number,
-                                  links=False, annots=False, widgets=False)
-        output.save(output_pdf, garbage=4, deflate=True)
+                timing.call('ztf_split_variants.insert_pdf[render_variants]',
+                            output.insert_pdf, pdf, from_page=number, to_page=number,
+                            links=False, annots=False, widgets=False)
+        timing.call('ztf_split_variants.save[render_variants]',
+                    output.save, output_pdf, garbage=4, deflate=True)
 
 
 def install(log: Callable[[dict], None]) -> None:
@@ -591,6 +599,7 @@ def install(log: Callable[[dict], None]) -> None:
 
                 original_write = PDFCreater.write
                 PDFCreater.write = functools.wraps(original_write)(write)
+                timing.patch(PDFCreater, 'write', 'ztf_split_variants')
             try:
                 capture(document, instance.translation_config.input_file)
             except Exception as error:  # noqa: BLE001 - 变体诊断不能改变单语翻译路径
@@ -664,7 +673,8 @@ def install(log: Callable[[dict], None]) -> None:
                          "error": type(error).__name__, "count": 1})
             elapsed = time.perf_counter() - started
             # 原写出器只接触原 document，变体从未被写回 creator.docs。
-            result = original_write(creator, translation_config, check_font_exists)
+            result = timing.call('ztf_split_variants.original_write[write]', original_write,
+                                 creator, translation_config, check_font_exists)
             if result.mono_pdf_path and mono_backgrounds:
                 try:
                     inject_backgrounds(
@@ -687,8 +697,9 @@ def install(log: Callable[[dict], None]) -> None:
                     metadata = {"version": 1, "pdf_path": pdf_path if rendered else None,
                                 "render_seconds": round(elapsed, 4), "pages": pages}
                     mapping = str(result.mono_pdf_path) + ".variants.json"
-                    Path(mapping).write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False),
-                                             encoding="utf-8")
+                    with timing.measure('ztf_split_variants.mapping_json[write]'):
+                        Path(mapping).write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False),
+                                                 encoding="utf-8")
                     log({"event": "split_variants", "pages": len(pages),
                          "count": len(variants) if rendered else 0,
                          "render_seconds": metadata["render_seconds"], "mapping_path": mapping})

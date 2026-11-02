@@ -16,6 +16,7 @@ from pathlib import Path
 import tempfile
 
 import pymupdf as fitz
+import ztf_timing as timing
 from ztf_split_types import Char, DocumentColumns, MARGIN, SPANNING
 from ztf_split_lines import build_lines
 from ztf_split_columns import detect_columns
@@ -234,12 +235,13 @@ def analyze_source(source, layout):
         except Exception:
             glyphs = ()
             errors.add(number)
-        for char in glyphs:
-            center = fitz.Point((char.x0+char.x1)/2,(char.y0+char.y1)/2)
-            owner = next((p.get('index',i) for i,p in enumerate(paragraphs)
-                          if fitz.Rect(p['box']).contains(center)), -1)
-            assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
-                                 char.text,owner))
+        with timing.measure('ztf_split_compose.paragraph_ownership[analyze_source]'):
+            for char in glyphs:
+                center = fitz.Point((char.x0+char.x1)/2,(char.y0+char.y1)/2)
+                owner = next((p.get('index',i) for i,p in enumerate(paragraphs)
+                              if fitz.Rect(p['box']).contains(center)), -1)
+                assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
+                                     char.text,owner))
         try:
             page_lines = build_lines(number, assigned)
         except Exception:
@@ -318,7 +320,7 @@ def _layer(source, number, selected, graphic):
 def _content_boxes(page):
     # bboxlog 返回实际内容范围（包括 MediaBox 之外），不是裁剪后的提取文本。
     graphics, skipped = [], 0
-    for kind,box,*_ in page.get_bboxlog():
+    for kind,box,*_ in timing.call('ztf_split_compose.get_bboxlog[_content_boxes]', page.get_bboxlog):
         if kind in ('ignore-text', 'fill-text', 'stroke-text'):
             continue
         if not all(math.isfinite(v) for v in box) or fitz.Rect(box).is_infinite:
@@ -335,8 +337,9 @@ def _content_boxes(page):
 
 def _text_boxes(page):
     """划词区域取真实文本行；未知字映射以实际绘制框补齐，不借用图形外框。"""
-    boxes=[fitz.Rect(line['bbox']) for block in page.get_text('dict',
-            flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,clip=fitz.INFINITE_RECT())['blocks']
+    boxes=[fitz.Rect(line['bbox']) for block in timing.call('ztf_split_compose.get_text[_text_boxes]',
+            page.get_text, 'dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,
+            clip=fitz.INFINITE_RECT())['blocks']
             for line in block.get('lines',()) if any(span['text'].strip() for span in line['spans'])]
     for char in _filter(page,collect=True):
         box=fitz.Rect(char.x0,char.y0,char.x1,char.y1)
@@ -858,6 +861,7 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
             layout_pages={p['index']:p for p in layout.get('pages',())}
             placements=[];reports=[];plans=[];regions=[]
             for number in range(len(source)):
+                page_started = timing.page_started()
                 entry=entries.get(number,{})
                 start,count,region_count=len(output),len(placements),len(regions)
                 safety=False;reason='composed'
@@ -896,12 +900,15 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                 plans.append(_Page(number,0 if safety else handled_columns))
                 if log and not column_origin_missing:
                     log({'event':'split_compose_page','page':number,'reason':reason})
+                timing.page_finished(page_started, number, len(placements)-count,
+                                     len(regions)-region_count)
             _write_layout(output,reports,regions)
             navigation=_rebuild_split_navigation(source,mono,output,plans,placements)
             handle=tempfile.NamedTemporaryFile(prefix='.ztf-split-',suffix='.pdf',
                 dir=os.path.dirname(os.path.abspath(output_pdf)),delete=False)
             temporary=handle.name;handle.close()
-            output.save(temporary,garbage=4,deflate=True)
+            timing.call('ztf_split_compose.save[compose_split_document]',
+                        output.save, temporary,garbage=4,deflate=True)
             os.replace(temporary,output_pdf);temporary=None
             return {'input_pages':len(source),'output_pages':len(output),'regions':len(placements),
                     'fallback_pages':sum(r['safety_net'] for r in reports),

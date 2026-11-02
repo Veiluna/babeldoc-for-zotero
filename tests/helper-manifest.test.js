@@ -29,6 +29,7 @@ const expectedHelpers = [
   "ztf_split_types.py",
   "ztf_split_variants.py",
   "ztf_style_guards.py",
+  "ztf_timing.py",
 ].sort();
 assert.deepEqual(
   helperFiles,
@@ -87,6 +88,7 @@ assert.deepEqual(
     "ztf_split_compose.py",
     "ztf_split_variants.py",
     "ztf_style_guards.py",
+    "ztf_timing.py",
   ],
   "runner 只能加载未封存的 helper 模块"
 );

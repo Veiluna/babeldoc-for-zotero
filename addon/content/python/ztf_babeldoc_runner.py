@@ -115,6 +115,8 @@ _HELPER_MODULES: dict[str, Any] = {}
 def _load_helper(name: str) -> Any:
     """Load and cache a sibling helper module next to the runner."""
     module = _HELPER_MODULES.get(name)
+    if module is None and name == "ztf_timing":
+        module = sys.modules.get(name)
     if module is None:
         helper_directory = os.path.dirname(__file__)
         if helper_directory not in sys.path:
@@ -138,6 +140,9 @@ def _load_helper(name: str) -> Any:
             raise
         _HELPER_MODULES[name] = candidate
         module = candidate
+        timing = sys.modules.get('ztf_timing')
+        if timing is not None and timing._active is not None:
+            timing._active.refresh()
     return module
 
 
@@ -7026,6 +7031,22 @@ def _finish_degraded_output(
     )
 
 
+@contextlib.contextmanager
+def _timing_lifecycle(state, request_state, api_key):
+    timing = _load_helper("ztf_timing")
+    session = timing.install(lambda event: _write_job_log(request_state, event, api_key))
+    try:
+        yield session
+    finally:
+        if session is not None:
+            try:
+                mono = str(state.get('result') or '')
+                session.finish({'mono': mono, 'split': str(state.get('dual_result') or ''),
+                                'variants': mono + '.variants.pdf' if mono else ''})
+            finally:
+                timing.uninstall()
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -7151,7 +7172,7 @@ def main() -> int:
         "notify_request_start": notify_request_start,
         "notify_request_finish": notify_request_finish,
     }
-    with _figure_background_lifecycle(request_state):
+    with _timing_lifecycle(state, request_state, api_key) as timing_session, _figure_background_lifecycle(request_state):
         _write_job_log(
             request_state,
             {
@@ -7251,6 +7272,8 @@ def main() -> int:
                 if multiprocessing.get_start_method() != "spawn":
                     raise
 
+            if timing_session is not None:
+                timing_session.refresh()
             babeldoc_main.cli()
             exit_code = 0
         except SystemExit as error:

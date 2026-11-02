@@ -13,10 +13,17 @@ import json
 import math
 import os
 import re
+import sys
 import unicodedata
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import pymupdf
+
+_DIRECTORY = str(Path(__file__).resolve().parent)
+if _DIRECTORY not in sys.path:
+    sys.path.insert(0, _DIRECTORY)
+import ztf_timing as timing
 
 
 MAPPING_VERSION = 1
@@ -1175,7 +1182,7 @@ def restore_links(source_path: str, output_path: str,
                 restored["mapped_by"] = "unresolved"
 
         if restored_records:
-            output_doc.saveIncr()
+            timing.call('ztf_links.saveIncr[restore_links]', output_doc.saveIncr)
         stats = {
             "paragraphs": len(paragraphs),
             "source": len(restored_records),
@@ -1205,7 +1212,8 @@ def restore_links(source_path: str, output_path: str,
             if directory:
                 os.makedirs(directory, exist_ok=True)
             with open(mapping_path, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+                timing.call('ztf_links.mapping_json[restore_links]',
+                            json.dump, payload, handle, ensure_ascii=False, indent=2, default=str)
             stats["mapping_path"] = mapping_path
         except OSError:
             stats["mapping_path"] = ""
@@ -1342,7 +1350,8 @@ def restore_dual_links(source_path: str, dual_path: str, mono_mapping_path: str,
             if directory:
                 os.makedirs(directory, exist_ok=True)
             with open(mapping_path, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+                timing.call('ztf_links.mapping_json[restore_dual_links]',
+                            json.dump, payload, handle, ensure_ascii=False, indent=2, default=str)
             stats["mapping_path"] = mapping_path
         except OSError:
             stats["mapping_path"] = ""
