@@ -99,7 +99,7 @@ def graphic_marks(page):
         result.append(('image:'+image['digest'].hex(),tuple(image['bbox'])))
     # Pattern 的内部图元可延伸到填充路径之外；其可见范围及归属由使用它的
     # 原路径决定。按实际内容流绘制对象计数，不能把资源内部图元当成额外跨栏对象。
-    for kind,box in compose._GraphicObjects(page).run().paintings:
+    for kind,box in compose._GraphicObjects(page,collect_paintings=True).run().paintings:
         result.append(('path:'+str(kind),box))
     return result
 

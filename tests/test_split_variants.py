@@ -1020,7 +1020,8 @@ class HookFailureTests(unittest.TestCase):
     def setUp(self):
         import pymupdf
         self.pymupdf = pymupdf
-        root = Path(__file__).resolve().parents[1] / "build/t62/t4"
+        root = Path(os.environ.get('ZTF_TEST_OUTPUT',
+            Path(__file__).resolve().parents[1] / "build/t62/t4"))
         root.mkdir(parents=True, exist_ok=True)
         # 当前 Windows 沙箱不允许访问 tempfile 创建的私有 ACL 目录。
         self.directory = root / f"unit-{time.time_ns()}"

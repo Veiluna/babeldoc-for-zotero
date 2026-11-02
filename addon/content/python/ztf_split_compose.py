@@ -49,9 +49,76 @@ class _Page:
     columns: int
 
 
+class _YIndex:
+    """按 y 分桶只缩小候选集；宽框单存，最终包含规则由调用方决定。"""
+    def __init__(self):
+        self.cells = {}
+        self.wide = []
+
+    def add(self, box, value):
+        if not all(math.isfinite(v) for v in box):
+            self.wide.append(value)
+            return
+        if box[0] > box[2] or box[1] > box[3]:
+            return
+        first, last = math.floor(box[1]/32), math.floor(box[3]/32)
+        if last-first > 64:
+            self.wide.append(value)
+        else:
+            # Rect.contains(Rect) 允许落在下边界的退化框，故末桶也要加入。
+            for cell in range(first, last+1):
+                self.cells.setdefault(cell, []).append(value)
+
+    def candidates(self, y):
+        yield from self.wide
+        if math.isfinite(y):
+            yield from self.cells.get(math.floor(y/32), ())
+
+
+class _ParagraphOwners:
+    """Point 包含走 MuPDF float32；命中取原枚举序号最小者。"""
+    def __init__(self, paragraphs):
+        self.index = _YIndex()
+        self.entries = []
+        for i, paragraph in enumerate(paragraphs):
+            rect = fitz.Rect(paragraph['box'])
+            box = tuple(ctypes.c_float(v).value for v in rect)
+            entry = (i, box, paragraph.get('index', i))
+            self.entries.append((rect, entry[2]))
+            self.index.add(box, entry)
+
+    def owner(self, x, y):
+        x, y = ctypes.c_float(x).value, ctypes.c_float(y).value
+        if not math.isfinite(x) or not math.isfinite(y):
+            point = fitz.Point(x, y)
+            return next((owner for rect, owner in self.entries if rect.contains(point)), -1)
+        best, owner = len(self.entries), -1
+        for i, (x0, y0, x1, y1), label in self.index.candidates(y):
+            if i < best and x0 <= x < x1 and y0 <= y < y1:
+                best, owner = i, label
+        return owner
+
+
+class _BoxIndex:
+    """Rect 包含保留 Python double 链式比较，包括空/退化框的本机语义。"""
+    def __init__(self, boxes=()):
+        self.index = _YIndex()
+        for box in boxes:
+            self.add(box)
+
+    def add(self, box):
+        box = tuple(box)
+        self.index.add(box, box)
+
+    def contains(self, box):
+        x0, y0, x1, y1 = box
+        return any(a <= x0 <= x1 <= c and b <= y0 <= y1 <= d
+                   for a, b, c, d in self.index.candidates(y0))
+
+
 class _GraphicObjects(fitz.mupdf.PdfProcessor2):
     """按内容流调用顺序读取原路径和渐变载体，不使用描边外扩框。"""
-    def __init__(self, page, matrix=None, carrier=None, forms=()):
+    def __init__(self, page, matrix=None, carrier=None, forms=(), *, collect_paintings=False):
         super().__init__()
         self.page=page
         self.document=fitz.mupdf.pdf_document_from_fz_document(page.parent.this)
@@ -59,6 +126,7 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
         self.carrier,self.forms=carrier,forms
         self.stack,self.boxes,self.paths,self.parts=[],[],[],[]
         self.paintings=[]
+        self.collect_paintings=collect_paintings
         self.closed=False
         self.clip=False
         self.clip_box=fitz.INFINITE_RECT()
@@ -86,7 +154,8 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
         matrix=fitz.Matrix(m.a,m.b,m.c,m.d,m.e,m.f)*self.matrix
         b=native.pdf_xobject_bbox(obj)
         box=fitz.Rect(b.x0,b.y0,b.x1,b.y1)*matrix*self.page.transformation_matrix
-        child=_GraphicObjects(self.page,matrix,box,(*self.forms,identity))
+        child=_GraphicObjects(self.page,matrix,box,(*self.forms,identity),
+                              collect_paintings=self.collect_paintings)
         native.pdf_process_contents(child,self.document,native.pdf_xobject_resources(obj),
                                     obj,native.FzCookie())
         self.boxes.extend(child.boxes)
@@ -135,12 +204,14 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
             points=[fitz.Point(*point)*matrix for part in self.parts for point in part]
             box=fitz.Rect(min(p.x for p in points),min(p.y for p in points),
                           max(p.x for p in points),max(p.y for p in points))
-            if kind: self.paintings.append((kind,tuple(box)))
+            if kind and self.collect_paintings: self.paintings.append((kind,tuple(box)))
             for part in self.parts:
                 if len(part)<2: continue
-                transformed=[fitz.Point(*point)*matrix for point in part]
-                bounds=fitz.Rect(min(p.x for p in transformed),min(p.y for p in transformed),
-                                 max(p.x for p in transformed),max(p.y for p in transformed))
+                bounds=None  # _GlyphFilter 只读取 parent 与 kind；离线检查可按需收集。
+                if self.collect_paintings:
+                    transformed=[fitz.Point(*point)*matrix for point in part]
+                    bounds=fitz.Rect(min(p.x for p in transformed),min(p.y for p in transformed),
+                                     max(p.x for p in transformed),max(p.y for p in transformed))
                 self.paths.append((bounds,box,kind+4*int(self.clip)))
             if self.clip: self.clip_box=self.clip_box & box
         self.parts=[];self.clip=False;self.closed=False
@@ -205,11 +276,13 @@ class _GlyphFilter(fitz.mupdf.PdfSanitizeFilterOptions2):
         return int(not self.graphic(box))
 
 
-def _filter(page, selected=None, graphic=None, *, collect=False):
+def _filter(page, selected=None, graphic=None, *, collect=False, objects=None):
     native = fitz.mupdf
-    objects=_GraphicObjects(page).run() if graphic is not None else None
+    if objects is None and graphic is not None:
+        parsed=_GraphicObjects(page).run()
+        objects=(parsed.boxes,parsed.paths)
     callback = _GlyphFilter(page.transformation_matrix,selected,graphic,
-                           objects.boxes if objects else (),objects.paths if objects else ())
+                           objects[0] if objects else (),objects[1] if objects else ())
     # 实例化 Form，避免同一 XObject 多次调用时一次筛选污染其他实例。
     # 只按实际绘制调用筛选。recurse 会再次进入 Pattern 等资源的局部坐标流；
     # 其归属已由使用它的路径决定，不能在资源坐标中再按页面中线删一遍。
@@ -236,10 +309,9 @@ def analyze_source(source, layout):
             glyphs = ()
             errors.add(number)
         with timing.measure('ztf_split_compose.paragraph_ownership[analyze_source]'):
+            paragraph_owners = _ParagraphOwners(paragraphs)
             for char in glyphs:
-                center = fitz.Point((char.x0+char.x1)/2,(char.y0+char.y1)/2)
-                owner = next((p.get('index',i) for i,p in enumerate(paragraphs)
-                              if fitz.Rect(p['box']).contains(center)), -1)
+                owner = paragraph_owners.owner((char.x0+char.x1)/2,(char.y0+char.y1)/2)
                 assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
                                      char.text,owner))
         try:
@@ -306,11 +378,17 @@ def column_origin_status(source, analysis, entries):
     return origins, (origins[0] is None) != (origins[1] is None)
 
 
-def _layer(source, number, selected, graphic):
+def _layer(source, number, selected, graphic, *, graphic_cache=None):
     result = fitz.open()
     try:
         result.insert_pdf(source,from_page=number,to_page=number,links=False,annots=False,widgets=False)
-        _filter(result[0],selected,graphic)
+        objects=None
+        if graphic_cache is not None and graphic is not None:
+            if number not in graphic_cache:
+                parsed=_GraphicObjects(result[0]).run()
+                graphic_cache[number]=(parsed.boxes,parsed.paths)
+            objects=graphic_cache[number]
+        _filter(result[0],selected,graphic,objects=objects)
         return result
     except Exception:
         result.close()
@@ -341,20 +419,28 @@ def _text_boxes(page):
             page.get_text, 'dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,
             clip=fitz.INFINITE_RECT())['blocks']
             for line in block.get('lines',()) if any(span['text'].strip() for span in line['spans'])]
+    index=_BoxIndex(boxes)
     for char in _filter(page,collect=True):
         box=fitz.Rect(char.x0,char.y0,char.x1,char.y1)
-        if char.text.strip() and not any(owner.contains(box) for owner in boxes):
+        if char.text.strip() and not index.contains(box):
             boxes.append(box)
+            index.add(box)
     return boxes
 
 
-def _selection(regions, page, kind, document, dx=0, elements=()):
+def _selection(regions, page, kind, document, dx=0, elements=(), *, cache=None):
     # span 的矩形同时是 readerSelection 的元素身份，沿用 IL 段落/图表身份，
     # 不能把同一多行元素按字体 span 分裂；未知文字仍由真实文本框补齐。
-    boxes=[fitz.Rect(box) for box in elements]
-    for box in _text_boxes(document[0]):
-        if not any(owner.contains(box) for owner in boxes):
-            boxes.append(box)
+    boxes=cache.get(kind) if cache is not None else None
+    if boxes is None:
+        boxes=[fitz.Rect(box) for box in elements]
+        index=_BoxIndex(boxes)
+        for box in _text_boxes(document[0]):
+            if not index.contains(box):
+                boxes.append(box)
+                index.add(box)
+        if cache is not None:
+            cache[kind]=boxes
     regions.extend((page.number,kind,tuple(box+(dx,0,dx,0))) for box in boxes)
 
 
@@ -413,21 +499,25 @@ def _compose_columns(source, mono, entry, variants, output, placements, analysis
             _extend(doc[0],bottom)
             zh[column]=(doc,boxes,bottom)
         margins={i for i,owner in owners.items() if owner==MARGIN}
-        hf=stack.enter_context(_layer(source,number,margins,lambda box:False))
+        # 三份 insert_pdf 副本的解析发生在筛选/figure guard 裁剪前。
+        graphic_cache={};selection_cache={}
+        hf=stack.enter_context(_layer(source,number,margins,lambda box:False,
+                                     graphic_cache=graphic_cache))
         hf_boxes=[(l.x0,l.y0,l.x1,l.y1) for l in analysis[1][number] if l.index in analysis[3][number]]
         for column in (0,1):
             selected={i for i,owner in owners.items() if owner==column}
             en=stack.enter_context(_layer(source,number,selected,
                 lambda box,c=column: object_region(tuple(box),analysis[2][number],
-                                                    ((width/2,width/2),))==c))
+                                                    ((width/2,width/2),))==c,
+                graphic_cache=graphic_cache))
             page_height=max(height,zh[column][2],zh[SPANNING][2])
             page=output.new_page(width=width,height=page_height)
             part='ab'[column]
             _embed_full(page,hf,0,kind='hf')
-            _selection(regions,page,'hf',hf)
+            _selection(regions,page,'hf',hf,cache=selection_cache)
             for box in hf_boxes: _record(placements,number,page.number,part,'hf',box)
             _embed_full(page,zh[SPANNING][0],0,kind='span')
-            _selection(regions,page,'span',zh[SPANNING][0],elements=span_elements)
+            _selection(regions,page,'span',zh[SPANNING][0],elements=span_elements,cache=selection_cache)
             for box in zh[SPANNING][1]: _record(placements,number,page.number,part,'span',box)
             dx=-column*column_shift
             _embed_full(page,en,0,dx,kind='en')

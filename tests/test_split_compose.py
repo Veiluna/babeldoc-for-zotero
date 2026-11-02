@@ -12,7 +12,8 @@ import ztf_split_compose as compose
 
 class SplitComposeFixture:
     def setUp(self):
-        root = Path(__file__).resolve().parents[1] / 'build/t5d/unit'
+        root = Path(os.environ.get('ZTF_TEST_OUTPUT',
+            Path(__file__).resolve().parents[1] / 'build/t5d/unit'))
         root.mkdir(parents=True, exist_ok=True)
         mkdir = os.mkdir
         with patch('tempfile._os.mkdir', side_effect=lambda path, mode: mkdir(path, 0o777)):
@@ -94,6 +95,50 @@ class SplitComposeFixture:
         return layout
 
 class SplitComposeTests(SplitComposeFixture,unittest.TestCase):
+    def test_source_graphics_and_shared_selections_are_equivalent(self):
+        from run_save_equivalence import compare_pdfs
+        layout=self.graphic_fixture()
+        run=compose._GraphicObjects.run
+        parsed=[]
+        def record(objects):
+            parsed.append(objects)
+            return run(objects)
+        with patch.object(compose._GraphicObjects,'run',record), \
+                patch.object(compose,'_text_boxes',wraps=compose._text_boxes) as text_boxes:
+            cached=self.run_compose(layout)
+        self.assertEqual(len(parsed),2)  # 每源页一次，hf/en 左/en 右共用。
+        self.assertEqual(text_boxes.call_count,12)  # 每源页 hf/span 各一，en/zh 各二。
+        for objects in parsed:
+            self.assertEqual(objects.paintings,[])
+            self.assertTrue(all(bounds is None for bounds,_,_ in objects.paths))
+        reference=self.root/'uncached.pdf'
+        self.output.replace(reference)
+        layer,selection=compose._layer,compose._selection
+        def uncached_layer(*args,**kwargs):
+            kwargs.pop('graphic_cache',None)
+            return layer(*args,**kwargs)
+        def uncached_selection(*args,**kwargs):
+            kwargs.pop('cache',None)
+            return selection(*args,**kwargs)
+        with patch.object(compose,'_layer',side_effect=uncached_layer), \
+                patch.object(compose,'_selection',side_effect=uncached_selection):
+            self.assertEqual(self.run_compose(layout),cached)
+        self.assertEqual(compare_pdfs(reference,self.output)['status'],'PASS')
+
+    def test_inserted_source_copies_have_identical_graphic_sequences(self):
+        self.graphic_fixture()
+        with fitz.open(self.source) as source:
+            sequences=[]
+            for _ in range(3):
+                with fitz.open() as copied:
+                    copied.insert_pdf(source,from_page=0,to_page=0,
+                                      links=False,annots=False,widgets=False)
+                    objects=compose._GraphicObjects(copied[0],collect_paintings=True).run()
+                    sequences.append(([tuple(b) for b in objects.boxes],
+                        [(tuple(b),tuple(parent),k) for b,parent,k in objects.paths],objects.paintings))
+            self.assertEqual(sequences[0],sequences[1])
+            self.assertEqual(sequences[0],sequences[2])
+
     def test_graphics_follow_spanning_figure_owner_and_column_instances(self):
         self.run_compose(self.graphic_fixture())
         with fitz.open(self.output) as doc:
@@ -101,7 +146,7 @@ class SplitComposeTests(SplitComposeFixture,unittest.TestCase):
                 boxes=[tuple(info['bbox']) for info in page.get_image_info()]
                 self.assertEqual(sorted(boxes),sorted([(80,200,100,220),(280,240,285,245),
                     (30,320,40,330),(230,320,240,330),(80,225,110,235)]))
-                self.assertEqual([box for _,box in compose._GraphicObjects(page).run().paintings],
+                self.assertEqual([box for _,box in compose._GraphicObjects(page,collect_paintings=True).run().paintings],
                     [(61,191,90,191),(70,270,330,270),(30,350,240,360)]+
                     ([(30,380,50,400),(230,380,250,400)] if page.number%2==0 else []))
                 pixels=page.get_pixmap(alpha=False)
