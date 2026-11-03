@@ -3,8 +3,8 @@
     "babeldoc-for-zotero@veiluna.github.io": {
       "updates": [
         {
-          "version": "0.8.1",
-          "update_link": "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.8.1/babeldoc-for-zotero-0.8.1.xpi",
+          "version": "0.8.2",
+          "update_link": "https://github.com/Veiluna/babeldoc-for-zotero/releases/download/v0.8.2/babeldoc-for-zotero-0.8.2.xpi",
           "applications": {
             "zotero": {
               "strict_min_version": "6.999",
