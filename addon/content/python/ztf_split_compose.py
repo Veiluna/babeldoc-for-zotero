@@ -324,7 +324,9 @@ def analyze_source(source, layout):
         figures.append(tuple(tuple(p['box']) for p in data.get('layouts',[])
                              if p.get('class') in {'figure','table','formula','isolate_formula'}))
     try:
-        tagged,appended = read_pdf_evidence(source.name) if source.name else ({},{})
+        tagged,appended = (read_pdf_evidence(
+            source.name, include_appended=timing.enabled()
+        ) if source.name else ({},{}))
     except Exception:
         tagged, appended = {}, {}
         errors.update(range(len(source)))
@@ -993,10 +995,14 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                 timing.page_finished(page_started, number, len(placements)-count,
                                      len(regions)-region_count)
             _write_layout(output,reports,regions)
+            if log:
+                log({'event':'split_compose_navigation'})
             navigation=_rebuild_split_navigation(source,mono,output,plans,placements)
             handle=tempfile.NamedTemporaryFile(prefix='.ztf-split-',suffix='.pdf',
                 dir=os.path.dirname(os.path.abspath(output_pdf)),delete=False)
             temporary=handle.name;handle.close()
+            if log:
+                log({'event':'split_compose_save'})
             timing.call('ztf_split_compose.save[compose_split_document]',
                         output.save, temporary,garbage=4,deflate=True)
             os.replace(temporary,output_pdf);temporary=None

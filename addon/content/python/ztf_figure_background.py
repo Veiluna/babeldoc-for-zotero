@@ -507,40 +507,39 @@ def prepend_background_form(target_page: Any, source_document: Any,
         filtered.close()
 
 
+def inject_backgrounds_document(output: Any, source: Any,
+                                entries: Mapping[int, BackgroundPlan] | Iterable[tuple[int, BackgroundPlan]],
+                                *, page_numbers: Iterable[int] | None = None) -> int:
+    """Inject backgrounds into already-open documents without saving them."""
+    mapping = dict(entries)
+    changed = 0
+    numbers = list(page_numbers) if page_numbers is not None else list(range(len(output)))
+    for output_index, source_number in enumerate(numbers):
+        if output_index >= len(output):
+            break
+        plan = mapping.get(source_number)
+        if plan is not None and prepend_background_form(output[output_index], source, source_number, plan):
+            changed += 1
+    return changed
+
+
 def inject_backgrounds(output_path: str, source_path: str,
                        entries: Mapping[int, BackgroundPlan] | Iterable[tuple[int, BackgroundPlan]],
                        *, page_numbers: Iterable[int] | None = None) -> int:
     """Inject backgrounds into an output PDF and return the number of pages changed."""
     import pymupdf
 
-    mapping = dict(entries)
-    changed = 0
     temporary = output_path + ".figure-background.tmp"
-    output = pymupdf.open(output_path)
-    source = pymupdf.open(source_path)
-    try:
-        numbers = list(page_numbers) if page_numbers is not None else list(range(len(output)))
-        for output_index, source_number in enumerate(numbers):
-            if output_index >= len(output):
-                break
-            plan = mapping.get(source_number)
-            if plan is None:
-                continue
-            if prepend_background_form(output[output_index], source, source_number, plan):
-                changed += 1
+    with pymupdf.open(output_path) as output, pymupdf.open(source_path) as source:
+        changed = inject_backgrounds_document(output, source, entries, page_numbers=page_numbers)
         if not changed:
             return 0
         output.save(temporary, garbage=3, deflate=True)
-        output.close()
-        Path(temporary).replace(output_path)
-        _INJECTED_OUTPUTS.add(os.path.abspath(str(output_path)))
+    Path(temporary).replace(output_path)
+    _INJECTED_OUTPUTS.add(os.path.abspath(str(output_path)))
+    try:
         return changed
     finally:
-        source.close()
-        try:
-            output.close()
-        except ValueError:
-            pass
         try:
             Path(temporary).unlink(missing_ok=True)
         except OSError:
@@ -603,7 +602,7 @@ def inject_background_sequence(output_path: str, source_path: str,
 __all__ = [
     "BackgroundPlan", "FIGURE_CLASSES", "build_plan", "clone_for_owner",
     "figure_boxes", "forget", "inject_backgrounds", "inject_background_sequence",
-    "prepend_background_form",
+    "prepend_background_form", "inject_backgrounds_document",
     "clip_source_layer_outside_figures", "install_source_layer_guard",
     "remember", "remembered", "remove_selected_objects", "was_injected",
     "plan_objects_removed", "forget_all",

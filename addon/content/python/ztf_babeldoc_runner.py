@@ -358,6 +358,15 @@ def _inject_figure_backgrounds(
         state["error_kind"] = "figure_background"
 
 
+def _diagnostics_enabled() -> bool:
+    """Return the opt-in switch shared with the existing timing diagnostics."""
+    try:
+        timing = _load_helper("ztf_timing")
+        return bool(timing.enabled(os.path.dirname(__file__), os.environ))
+    except Exception:
+        return False
+
+
 def _argument_value(arguments: list[str], name: str) -> str:
     """Read a single-valued BabelDOC CLI option."""
     for index, argument in enumerate(arguments):
@@ -6377,6 +6386,121 @@ def _restore_figure_text(
         )
 
 
+def _postprocess_progress(request_state: dict[str, Any], stage: str,
+                          overall: int, current: int = 0, total: int = 0) -> None:
+    callback = request_state.get("notify_progress")
+    if callable(callback):
+        try:
+            callback(stage, overall, current, total)
+        except TypeError:
+            callback(stage, overall)
+        except Exception:
+            pass
+
+
+def _postprocess_mono(
+    state: dict[str, Any], request_state: dict[str, Any], api_key: str
+) -> None:
+    """Run mono post-processing on one open document and save at most once."""
+    output_pdf = str(state.get("result") or "")
+    source_pdf = _argument_value(sys.argv, "--files")
+    if not output_pdf or not source_pdf or not os.path.isfile(output_pdf):
+        return
+    try:
+        import pymupdf
+
+        changed = False
+        with pymupdf.open(output_pdf) as output, pymupdf.open(source_pdf) as source:
+            plans = request_state.get("figure_background_plans") or {}
+            _postprocess_progress(request_state, "恢复图表底图", 66)
+            if (plans and not request_state.get("figure_background_skipped") and
+                    not _figure_background_helper().was_injected(output_pdf)):
+                try:
+                    snapshot = output.tobytes()
+                    helper = _figure_background_helper()
+                    inject = getattr(helper, "inject_backgrounds_document", None)
+                    if inject is None:
+                        raise AttributeError("inject_backgrounds_document")
+                    page_numbers = _figure_background_source_pages(
+                        source_pdf, request_state.get("figure_background_config"), len(output)
+                    )
+                    count = inject(output, source, plans, page_numbers=page_numbers)
+                    changed = changed or bool(count)
+                    request_state["figure_background_injected"] = True
+                    _write_job_log(request_state, {
+                        "event": "figure_background", "injected": int(count),
+                        "source_pages": len(page_numbers)}, api_key)
+                except Exception as error:
+                    output.close()
+                    output = pymupdf.open(stream=snapshot, filetype="pdf")
+                    _write_job_log(request_state, {
+                        "event": "figure_background_error", "stage": "mono",
+                        "error": log_safe_error(error, api_key), "count": 1}, api_key)
+                    state["result"] = ""
+                    state["dual_result"] = ""
+                    state["error"] = "图表底图写入失败，无法交付完整 PDF。"
+                    state["error_kind"] = "figure_background"
+                    return
+
+            _postprocess_progress(request_state, "恢复图内文字", 72)
+            try:
+                snapshot = output.tobytes()
+                helper = _figure_text_helper()
+                restore = getattr(helper, "restore_figure_text_document", None)
+                if restore is None:
+                    raise AttributeError("restore_figure_text_document")
+                stats = restore(source, output)
+                changed = changed or bool(stats.get("changed") or stats.get("restored_labels") or
+                                         stats.get("aligned_labels") or stats.get("removed_fragments"))
+                _write_job_log(request_state, {"event": "figure_text_restore",
+                    "file": os.path.basename(output_pdf), **stats}, api_key)
+            except Exception as error:
+                output.close()
+                output = pymupdf.open(stream=snapshot, filetype="pdf")
+                _write_job_log(request_state, {"event": "figure_text_restore_error",
+                    "file": os.path.basename(output_pdf),
+                    "error": log_safe_error(error, api_key)}, api_key)
+
+            _postprocess_progress(request_state, "清理重复标点", 78)
+            try:
+                snapshot = output.tobytes()
+                helper = _punctuation_helper()
+                clean = getattr(helper, "clean_duplicate_punctuation_document", None)
+                if clean is None:
+                    raise AttributeError("clean_duplicate_punctuation_document")
+                stats = clean(output, source)
+                if stats.get("failed"):
+                    raise RuntimeError("punctuation_cleanup_failed")
+                changed = changed or bool(stats.get("changed") or stats.get("removed"))
+                _write_job_log(request_state, {"event": "punctuation_cleanup",
+                    "file": os.path.basename(output_pdf), **stats}, api_key)
+            except Exception as error:
+                output.close()
+                output = pymupdf.open(stream=snapshot, filetype="pdf")
+                _write_job_log(request_state, {"event": "punctuation_cleanup_error",
+                    "file": os.path.basename(output_pdf),
+                    "error": log_safe_error(error, api_key)}, api_key)
+
+            if changed:
+                _postprocess_progress(request_state, "保存单语", 80)
+                temporary = output_pdf + ".postprocess.tmp"
+                timing = _load_helper("ztf_timing")
+                timing.call("ztf_babeldoc_runner.mono_postprocess.save",
+                             output.save, temporary, garbage=3, deflate=True)
+                output.close()
+                os.replace(temporary, output_pdf)
+                request_state["mono_postprocess_save_count"] = 1
+            else:
+                request_state["mono_postprocess_save_count"] = 0
+            _write_job_log(request_state, {
+                "event": "mono_postprocess_summary",
+                "save_count": request_state["mono_postprocess_save_count"],
+            }, api_key)
+    except Exception as error:
+        _write_job_log(request_state, {"event": "mono_postprocess_save_error",
+            "error": log_safe_error(error, api_key)}, api_key)
+
+
 def _restore_links_after_layout(
     state: dict[str, Any], request_state: dict[str, Any], api_key: str
 ) -> dict[str, Any]:
@@ -6399,15 +6523,17 @@ def _restore_links_after_layout(
     # 图内文字必须在链接之前恢复：BabelDOC 会丢弃热图的轴标签，译文图5
     # 行标签会失去右对齐；图内文字恢复只改图区域，链接恢复需要最终排版，
     # 因此顺序不能反。0.7.0 起表格内容封存，不再处理旋转表头。
-    _restore_figure_text(source_pdf, output_pdf, request_state, api_key)
+    _postprocess_progress(request_state, "恢复链接", 82)
 
+    diagnostics = _diagnostics_enabled()
+    mapping_path = output_pdf + ".links.json" if diagnostics else output_pdf + ".links.tmp.json"
     try:
         helper = _links_helper()
         stats = helper.restore_links(
             source_pdf,
             output_pdf,
             request_state.get("link_paragraph_map"),
-            output_pdf + ".links.json",
+            mapping_path,
         )
     except Exception as error:
         summary = {
@@ -6458,7 +6584,20 @@ def _restore_links_after_layout(
             },
             api_key,
         )
+    _postprocess_progress(request_state, "恢复链接", 84)
     return stats
+
+
+def _cleanup_link_mapping(link_stats: dict[str, Any] | None) -> None:
+    if not link_stats or _diagnostics_enabled():
+        return
+    path = str(link_stats.get("mapping_path") or "")
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        link_stats["mapping_path"] = ""
 
 
 def _restore_dual_links_after_layout(
@@ -6488,7 +6627,8 @@ def _restore_dual_links_after_layout(
     try:
         helper = _links_helper()
         stats = helper.restore_dual_links(
-            source_pdf, dual_pdf, mono_mapping, dual_pdf + ".links.json"
+            source_pdf, dual_pdf, mono_mapping,
+            dual_pdf + (".links.json" if _diagnostics_enabled() else ".links.tmp.json")
         )
     except Exception as error:
         summary = {"source": 0, "restored": 0, "unresolved": 0,
@@ -6514,6 +6654,7 @@ def _restore_dual_links_after_layout(
         },
         api_key,
     )
+    _postprocess_progress(request_state, "导航", 86)
     return stats
 
 
@@ -6675,13 +6816,30 @@ def _compose_split_dual(
             {"event": "split_layout_geometry", **dict(geometry_counts)},
             api_key,
         )
-        with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
-            json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
+        if _diagnostics_enabled():
+            with open(mono_pdf + ".layout.json", "w", encoding="utf-8") as handle:
+                json.dump(layout, handle, ensure_ascii=False, allow_nan=False)
+        else:
+            try:
+                os.remove(mono_pdf + ".layout.json")
+            except OSError:
+                pass
         compose_helper = _load_helper("ztf_split_compose")
         _figure_background_helper().install_source_layer_guard(compose_helper)
+        def compose_log(record: dict[str, Any]) -> None:
+            _write_job_log(request_state, record, api_key)
+            if record.get("event") == "split_compose_page":
+                page = int(record.get("page", 0)) + 1
+                _postprocess_progress(request_state, f"合成分栏 {page}/{page_count}",
+                                      86 + int(6 * page / max(page_count, 1)), page, page_count)
+            elif record.get("event") == "split_compose_navigation":
+                _postprocess_progress(request_state, "导航", 94)
+            elif record.get("event") == "split_compose_save":
+                _postprocess_progress(request_state, "保存分栏", 96)
+        _postprocess_progress(request_state, "合成分栏", 86, 0, page_count)
         stats = compose_helper.compose_split_document(
             source_pdf, mono_pdf, layout, output_pdf,
-            log=lambda record: _write_job_log(request_state, record, api_key),
+            log=compose_log,
         )
     except Exception as error:  # noqa: BLE001 - 失败时回退为导入单语 PDF
         summary = {"error": log_safe_error(error, api_key)}
@@ -6961,7 +7119,11 @@ def _finish_degraded_output(
         dual_link_stats = _dual_after_layout(
             state, request_state, link_stats, api_key
         )
+        _cleanup_link_mapping(link_stats)
+        _cleanup_link_mapping(dual_link_stats)
     except Exception as error:  # noqa: BLE001 - links are best effort in degraded mode
+        _cleanup_link_mapping(link_stats)
+        _cleanup_link_mapping(dual_link_stats)
         _write_job_log(
             request_state,
             {
@@ -7133,10 +7295,13 @@ def main() -> int:
 
     request_budget = RequestBudget(max_requests, emit_request_progress)
 
-    def notify_translation_progress(stage: str, overall: int) -> None:
+    def notify_translation_progress(stage: str, overall: int,
+                                    current: int = 0, total: int = 0) -> None:
         """Push a local stage update; no network request is made for progress."""
         state["stage"] = stage
         state["overall"] = max(int(state.get("overall") or 0), int(overall))
+        state["current"] = current
+        state["total"] = total
         _emit(
             "ZTF_PROGRESS ",
             {
@@ -7171,6 +7336,7 @@ def main() -> int:
         "fragment_paragraph_ids": set(),
         "notify_request_start": notify_request_start,
         "notify_request_finish": notify_request_finish,
+        "notify_progress": notify_translation_progress,
     }
     with _timing_lifecycle(state, request_state, api_key) as timing_session, _figure_background_lifecycle(request_state):
         _write_job_log(
@@ -7305,7 +7471,7 @@ def main() -> int:
             state["dual_result"] = discovered_output["dual"]
 
         # mono 已写完，先按真实源页号注入底图，再恢复图内文字和链接。
-        _inject_figure_backgrounds(state, request_state, api_key)
+        _postprocess_mono(state, request_state, api_key)
 
         policy_instance = locals().get("policy")
         decision = policy_instance.decision() if policy_instance else None
@@ -7514,6 +7680,8 @@ def main() -> int:
         dual_link_stats = _dual_after_layout(
             state, request_state, link_stats, api_key
         )
+        _cleanup_link_mapping(link_stats)
+        _cleanup_link_mapping(dual_link_stats)
         warning_messages = []
         warning_failed = 0
         if decision and decision["kind"] == "warning":

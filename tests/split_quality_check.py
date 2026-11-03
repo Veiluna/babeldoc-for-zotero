@@ -182,6 +182,13 @@ def build_report(source_path,dual_path,mono_path=None):
     def add(key,name,errors,**evidence):
         report['checks'].append({'id':key,'name':name,'status':'FAIL' if errors else 'PASS',
                                  'evidence':{'errors':errors,**evidence}})
+    raw_path=Path(str(mono_path)+'.layout.json')
+    if not raw_path.is_file():
+        add('diagnostics','离线质检缺少 layout 诊断文件',['missing_layout'],
+            required_setting='ZTF_TIMING=1')
+        report['status']='FAIL'
+        return report
+    raw=json.loads(raw_path.read_text(encoding='utf-8'))
     with ExitStack() as stack:
         source=stack.enter_context(fitz.open(source_path))
         dual=stack.enter_context(fitz.open(dual_path))
@@ -191,8 +198,6 @@ def build_report(source_path,dual_path,mono_path=None):
         if layout.get('v')!=1 or len(layout['pages'])!=2*len(source):
             add('metadata','ZTFSplitLayout v1',['invalid_layout']);report['status']='FAIL';return report
         add('metadata','ZTFSplitLayout v1',[])
-        raw_path=Path(str(mono_path)+'.layout.json')
-        raw=json.loads(raw_path.read_text(encoding='utf-8')) if raw_path.is_file() else {'pages':[]}
         mapping=json.loads(Path(str(mono_path)+'.variants.json').read_text(encoding='utf-8'))
         entries={e['source_page']:e for e in mapping['pages']}
         variants=stack.enter_context(fitz.open(mapping['pdf_path'])) if mapping.get('pdf_path') else None

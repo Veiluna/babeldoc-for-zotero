@@ -40,7 +40,9 @@ class SplitComposeFixture:
             {'source_page':i,'columns':2,'basis':'jump','variants':[
                 {'column':c,'pdf_page':i*3+j} for j,c in enumerate((0,1,-2))]} for i in range(count)]}
         Path(str(self.mono)+'.variants.json').write_text(json.dumps(mapping),encoding='utf-8')
-        return {'version':1,'pages':[{'index':i,'paragraphs':[],'layouts':[]} for i in range(count)]}
+        layout={'version':1,'pages':[{'index':i,'paragraphs':[],'layouts':[]} for i in range(count)]}
+        Path(str(self.mono)+'.layout.json').write_text(json.dumps(layout),encoding='utf-8')
+        return layout
     def run_compose(self, layout):
         self.events=[]
         return compose.compose_split_document(str(self.source),str(self.mono),layout,str(self.output),log=self.events.append)
@@ -199,7 +201,53 @@ class SplitComposeTests(SplitComposeFixture,unittest.TestCase):
             meta=self.layout(doc)
             self.assertEqual(meta['v'],1)
             self.assertEqual(meta['pages'][1]['height'],doc[1].rect.height)
-        self.assertEqual(len(self.events),2)
+        self.assertEqual([e['event'] for e in self.events],
+                         ['split_compose_page']*2+['split_compose_navigation','split_compose_save'])
+
+    def test_postprocess_progress_matches_operations_without_regression(self):
+        import ztf_babeldoc_runner as runner
+        from types import SimpleNamespace
+        layout=self.fixture()
+        events=[]
+        state={'result':str(self.mono)}
+        request={'split_layout':layout,
+                 'notify_progress':lambda stage,overall,*_: events.append((stage,overall))}
+        def restore_text(*_):
+            self.assertEqual(events[-1][0],'恢复图内文字')
+            return {'changed':True}
+        def clean(*_):
+            self.assertEqual(events[-1][0],'清理重复标点')
+            return {}
+        def links(*_):
+            self.assertEqual(events[-1][0],'恢复链接')
+            return {}
+        rebuild=compose._rebuild_split_navigation
+        def navigation(*args):
+            self.assertEqual(events[-1][0],'导航')
+            return rebuild(*args)
+        save=compose.timing.call
+        def save_split(name,*args,**kwargs):
+            if name=='ztf_split_compose.save[compose_split_document]':
+                self.assertEqual(events[-1][0],'保存分栏')
+            return save(name,*args,**kwargs)
+        with patch.dict(os.environ,{'ZTF_TIMING':'1','ZTF_SPLIT_DUAL':'1'}), \
+                patch.object(sys,'argv',['runner','--files',str(self.source)]), \
+                patch.object(runner,'_figure_text_helper',return_value=SimpleNamespace(
+                    restore_figure_text_document=restore_text)), \
+                patch.object(runner,'_punctuation_helper',return_value=SimpleNamespace(
+                    clean_duplicate_punctuation_document=clean)), \
+                patch.object(runner,'_links_helper',return_value=SimpleNamespace(restore_links=links)), \
+                patch.object(compose,'_rebuild_split_navigation',side_effect=navigation), \
+                patch.object(compose.timing,'call',side_effect=save_split):
+            runner._postprocess_mono(state,request,'')
+            runner._restore_links_after_layout(state,request,'')
+            stats=runner._compose_split_dual(state,request,'')
+        self.assertNotIn('error',stats)
+        self.assertEqual([stage for stage,_ in events],[
+            '恢复图表底图','恢复图内文字','清理重复标点','保存单语','恢复链接','恢复链接',
+            '合成分栏','合成分栏 1/2','合成分栏 2/2','导航','保存分栏'])
+        values=[value for _,value in events]
+        self.assertEqual(values,sorted(values))
     def test_t4_and_runtime_errors_only_replace_affected_page(self):
         layout=self.fixture(3)
         path=Path(str(self.mono)+'.variants.json');mapping=json.loads(path.read_text())

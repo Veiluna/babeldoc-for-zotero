@@ -128,6 +128,14 @@ class SaveEquivalenceTests(unittest.TestCase):
         self.assertEqual(report['status'], 'FAIL')
         self.assertFalse(report['checks']['links_mapping'])
 
+    def test_missing_link_mapping_fails_even_when_both_are_missing(self):
+        from run_save_equivalence import compare_link_mappings
+        a, b = (Path(str(path)+'.links.json') for path in (self.a, self.b))
+        missing = self.root/'missing.links.json'
+        for left, right in ((a, missing), (missing, b), (missing, missing)):
+            with self.subTest(left=left.name, right=right.name):
+                self.assertFalse(compare_link_mappings(left, right))
+
     def test_capture_stabilizes_only_input_ids_preserving_aliases_order_and_original(self):
         from run_save_equivalence import CAPTURE_RUNNER
         namespace = {'__name__': 'equivalence_test'}

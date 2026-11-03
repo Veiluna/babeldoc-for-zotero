@@ -187,9 +187,12 @@ def compare_link_mappings(left, right):
     当前 mapping schema 没有时间戳字段，因此不忽略任何时间戳。
     """
     def read(path):
+        if not Path(path).is_file():
+            return None
         value = json.loads(Path(path).read_text(encoding='utf-8'))
         return {key: item for key, item in value.items() if key not in ('source', 'output')}
-    return read(left) == read(right)
+    left_value, right_value = read(left), read(right)
+    return left_value is not None and right_value is not None and left_value == right_value
 
 
 def export_baseline(commit):
@@ -261,7 +264,7 @@ def timing_comparison(baseline, working):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, default=PYTHON)
-    parser.add_argument('--baseline', default='6c7820d')
+    parser.add_argument('--baseline', default='6476397')
     parser.add_argument('--timeout', type=int, default=3600)
     parser.add_argument('--samples', nargs='+', choices=['P05', 'chen2026', 'foba'],
                         default=['P05', 'chen2026', 'foba'])

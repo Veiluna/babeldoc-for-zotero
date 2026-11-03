@@ -190,6 +190,8 @@ def _extract_boxes(document, page, scratch, data):
 
 def read_pdf_evidence(
     pdf_path: str,
+    *,
+    include_appended: bool = True,
 ) -> tuple[dict[int, list[tuple[float, float, float, float]]],
            dict[int, list[tuple[float, float, float, float]]]]:
     """返回 (tagged, appended)，键为 0 起页号，值为页面文字行框。
@@ -253,7 +255,7 @@ def read_pdf_evidence(
                                               _masked(data, operations, selected))
                     if boxes:
                         tagged[page.number] = boxes
-                if len(refs) < 2:
+                if not include_appended or len(refs) < 2:
                     continue
                 measurements = []
                 for group in groups:

@@ -959,7 +959,7 @@ if __name__ == "__main__":
                 directory = run / name
                 directory.mkdir()
                 expected = directory / "expected.json"
-                env = dict(environment, ZTF_SPLIT_DUAL=str(int(enabled)),
+                env = dict(environment, ZTF_TIMING="1", ZTF_SPLIT_DUAL=str(int(enabled)),
                            ZTF_JOB_LOG_PATH=str(directory / "runner.jsonl"),
                            T4_EXPECTED=str(expected))
                 command = [sys.executable, "-B", "-X", "utf8", str(harness),

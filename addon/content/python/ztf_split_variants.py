@@ -518,7 +518,9 @@ def install(log: Callable[[dict], None]) -> None:
     original_write = None
 
     def capture(document, source_pdf):
-        tagged, appended = read_pdf_evidence(str(source_pdf))
+        tagged, appended = read_pdf_evidence(
+            str(source_pdf), include_appended=timing.enabled()
+        )
         entries = []
         with pymupdf.open(source_pdf) as source:
             column_count_tag = _column_count_tag(source)
@@ -641,13 +643,16 @@ def install(log: Callable[[dict], None]) -> None:
                 if tuple(id(p) for p in page.pdf_paragraph) != paragraph_ids:
                     raise ValueError("paragraph_identity_changed")
                 entry.update({"columns": columns.columns, "basis": columns.basis,
-                              "gutters": columns.gutters, "reasons": columns.reasons,
+                              "gutters": columns.gutters,
                               "paragraph_column": columns.paragraph_column,
                               "split_paragraphs": columns.split_paragraphs})
+                if timing.enabled():
+                    entry["reasons"] = columns.reasons
                 for variant in create_variants(page, columns, owners, convert_box=convert):
-                    entry["variants"].append({"column": variant.column,
-                                              "pdf_page": len(variants),
-                                              "paragraphs": variant.paragraphs})
+                    item = {"column": variant.column, "pdf_page": len(variants)}
+                    if timing.enabled():
+                        item["paragraphs"] = variant.paragraphs
+                    entry["variants"].append(item)
                     variants.append(variant)
                     variant_backgrounds.append(remembered(variant.page))
                     variant_source_pages.append(page.page_number)
@@ -696,14 +701,19 @@ def install(log: Callable[[dict], None]) -> None:
                     if rendered:
                         temporary.replace(pdf_path)
                     metadata = {"version": 1, "pdf_path": pdf_path if rendered else None,
-                                "render_seconds": round(elapsed, 4), "pages": pages}
+                                "pages": pages}
+                    if timing.enabled():
+                        metadata["render_seconds"] = round(elapsed, 4)
                     mapping = str(result.mono_pdf_path) + ".variants.json"
                     with timing.measure('ztf_split_variants.mapping_json[write]'):
                         Path(mapping).write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False),
                                                  encoding="utf-8")
-                    log({"event": "split_variants", "pages": len(pages),
-                         "count": len(variants) if rendered else 0,
-                         "render_seconds": metadata["render_seconds"], "mapping_path": mapping})
+                    event = {"event": "split_variants", "pages": len(pages),
+                             "count": len(variants) if rendered else 0,
+                             "mapping_path": mapping}
+                    if "render_seconds" in metadata:
+                        event["render_seconds"] = metadata["render_seconds"]
+                    log(event)
                 except Exception as error:  # noqa: BLE001 - sidecar 失败不覆盖单语结果
                     log({"event": "split_variants_error", "stage": "sidecar",
                          "error": type(error).__name__, "count": 1})
