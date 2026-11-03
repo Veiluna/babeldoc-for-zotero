@@ -1156,6 +1156,30 @@ class HookFailureTests(unittest.TestCase):
     def capture(self):
         self.translator().translate(self.document)
 
+    def test_precompute_releases_capture_chars_before_first_translation(self):
+        import weakref
+        from ztf_split_types import Char
+        refs, order, observed = [], [], {}
+        def collect(*_):
+            char = Char(0, 0, 0, 30, 100, 35, 110, 'A')
+            refs.append(weakref.ref(char))
+            return (char,)
+        def precompute(document, source, entries, working):
+            observed.update(document=document, source=source, entries=entries,
+                            working=working, alive=refs[0]() is not None)
+            order.append('precompute')
+        self.translator.translate = lambda *_: order.append('translate')
+        self.translator.translation_config = self.config
+        with patch.object(split_variants, 'collect_source_chars', side_effect=collect), \
+                patch('ztf_split_columns.detect_columns', new=lambda *args: columns()):
+            split_variants.install(self.events.append, precompute_source=precompute)
+            self.capture()
+        self.assertEqual(order, ['precompute', 'translate'], self.events)
+        self.assertIs(observed['document'], self.document)
+        self.assertEqual(observed['entries'][0]['source_page'], 17)
+        self.assertEqual(observed['working'], self.directory)
+        self.assertFalse(observed['alive'])
+
     def test_mono_background_survives_split_fallback_after_il_removal(self):
         import ztf_figure_background as background
 

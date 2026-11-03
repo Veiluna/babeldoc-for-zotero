@@ -153,5 +153,21 @@ class SaveEquivalenceTests(unittest.TestCase):
         self.assertIsNone(stabilize(None))
 
 
+    def test_disabled_run_failure_cannot_leave_case_passing(self):
+        import run_save_equivalence as tool
+        from unittest.mock import patch
+        result = {'timing':{'functions':{}}}
+        with patch.object(sys, 'argv', ['equivalence', '--samples','P05','--include-disabled',
+                                      '--output',str(self.root/'failure-tool')]), \
+             patch.object(tool, 'export_baseline', return_value=self.a), \
+             patch.object(tool, 'run_translation', side_effect=[result,result,result,RuntimeError('disabled_failed')]), \
+             patch.object(tool, 'compare_runs', return_value={'checks':{'pixels':True}}), \
+             patch('run_split_mock_e2e.isolated_environment', return_value={'TIKTOKEN_CACHE_DIR':str(self.root)}):
+            self.assertEqual(tool.main(), 1)
+            report = json.loads((self.root/'failure-tool/equivalence.json').read_text(encoding='utf-8'))
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertEqual(report['cases'][0]['status'], 'FAIL')
+            self.assertIn('disabled_failed', report['cases'][0]['error'])
+
 if __name__ == '__main__':
     unittest.main()

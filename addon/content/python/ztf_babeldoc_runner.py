@@ -6311,8 +6311,19 @@ def _install_min_request_patches(
 
     if _split_dual_requested():
         # T4 挂接，T5 接入合成
+        def precompute_source(document, source_pdf, entries, working):
+            snapshots = _split_source_snapshot(document)
+            pages = _split_layout_pages(document, snapshots, set())
+            for page, original in zip(pages, document.page):
+                page['index'] = original.page_number
+            layout, _ = _normalize_split_layout_geometry({'version':1,'pages':pages}, str(source_pdf))
+            _load_helper('ztf_split_precompute').start(
+                str(source_pdf), layout, entries, working,
+                log=lambda event: _write_job_log(request_state, event, api_key))
+
         _load_helper("ztf_split_variants").install(
-            lambda event: _write_job_log(request_state, event, api_key)
+            lambda event: _write_job_log(request_state, event, api_key),
+            precompute_source=precompute_source,
         )
 
 
@@ -7200,6 +7211,7 @@ def _timing_lifecycle(state, request_state, api_key):
     try:
         yield session
     finally:
+        _load_helper('ztf_split_precompute').cleanup()
         if session is not None:
             try:
                 mono = str(state.get('result') or '')

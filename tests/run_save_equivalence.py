@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -206,7 +207,7 @@ def export_baseline(commit):
     return BASE / 'addon/content/python/ztf_babeldoc_runner.py'
 
 
-def run_translation(python, name, source, label, runner, endpoint, environment, server, run, timeout):
+def run_translation(python, name, source, label, runner, endpoint, environment, server, run, timeout, mock_delay=0):
     directory = run / name / label
     directory.mkdir(parents=True)
     out, work = directory / 'out', directory / 'work'
@@ -222,6 +223,7 @@ def run_translation(python, name, source, label, runner, endpoint, environment, 
                '--openai-base-url', endpoint, '--lang-in', 'en', '--lang-out', 'zh', '--no-dual',
                '--no-auto-extract-glossary', '--disable-same-text-fallback', '--ignore-cache',
                '--watermark-output-mode', 'no_watermark', '--report-interval', '1']
+    server.delay_next_request_seconds = mock_delay
     before, started = server.request_count, time.monotonic()
     print(json.dumps({'sample': name, 'run': label, 'event': 'started'}), flush=True)
     proc = subprocess.Popen(command, cwd=directory, env=env,
@@ -244,7 +246,11 @@ def run_translation(python, name, source, label, runner, endpoint, environment, 
     summaries = [e for e in events if e.get('event') == 'timing_summary']
     if len(summaries) != 1:
         raise RuntimeError('missing_unique_timing_summary')
-    result = {'directory': str(directory), 'pdf': str(pdfs[0]),
+    writer = next(e for e in events if e.get('event')=='split_variants')
+    saved = next(e for e in events if e.get('event')=='split_dual' and 'output_pages' in e)
+    write_time = summaries[0]['functions']['ztf_split_variants.write[save]']['seconds']
+    saving_wall = (datetime.fromisoformat(saved['timestamp']) - datetime.fromisoformat(writer['timestamp'])).total_seconds() + write_time
+    result = {'saving_wall_seconds':saving_wall, 'directory': str(directory), 'pdf': str(pdfs[0]),
               'mono': str(monos[0]), 'variants': str(variants[0]), 'runner_exit': proc.returncode,
               'mock_requests': server.request_count-before, 'elapsed_seconds': time.monotonic()-started,
               'stats': json.loads(stats.read_text(encoding='utf-8')), 'timing': summaries[0]}
@@ -262,13 +268,21 @@ def timing_comparison(baseline, working):
 
 
 def main():
+    global OUTPUT, BASE
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--python', type=Path, default=PYTHON)
     parser.add_argument('--baseline', default='6476397')
+    parser.add_argument('--output', type=Path, default=OUTPUT)
+    parser.add_argument('--mock-delay', type=float, default=0, help='每次翻译首次模拟请求延迟秒数')
+    parser.add_argument('--include-disabled', action='store_true', help='每样本额外运行关闭预计算的工作树')
+    parser.add_argument('--reuse-baseline-run', type=Path, help='复用该 run 目录下已完成的 baseline 结果')
+    parser.add_argument('--skip-baseline-repeat', action='store_true', help='复用既有确定性证据，省略重复基线')
     parser.add_argument('--timeout', type=int, default=3600)
     parser.add_argument('--samples', nargs='+', choices=['P05', 'chen2026', 'foba'],
                         default=['P05', 'chen2026', 'foba'])
     args = parser.parse_args()
+    OUTPUT = args.output.resolve()
+    BASE = OUTPUT / "base"
     OUTPUT.mkdir(parents=True, exist_ok=True)
     (OUTPUT / 'capture_runner.py').write_text(CAPTURE_RUNNER, encoding='utf-8')
     baseline_runner = export_baseline(args.baseline)
@@ -286,7 +300,8 @@ def main():
     samples = {'P05': ROOT / '.scratch/t082/P05.pdf'}
     samples.update({n: Path('G:/ProgramData/zotero-translate-files/ztest/samples/0.8.0') / (n+'.pdf')
                     for n in ('chen2026', 'foba')})
-    report = {'baseline_commit': args.baseline, 'run_directory': str(run), 'status': 'FAIL',
+    report = {'baseline_commit': args.baseline, 'mock_delay_seconds':args.mock_delay,
+              'baseline_repeat_skipped':args.skip_baseline_repeat, 'run_directory': str(run), 'status': 'FAIL',
               'evidence_kind': '真实 BabelDOC 0.6.4 + 本地合成译文；非真实翻译/非 Zotero 真机',
               'link_input_ids': '实验入口按首次出现顺序重编号，保持身份等价关系；比较时不忽略 id',
               'cases': []}
@@ -296,24 +311,37 @@ def main():
             case = {'sample': name, 'status': 'FAIL'}
             report['cases'].append(case)
             try:
-                old = run_translation(args.python, name, samples[name], 'baseline', baseline_runner,
-                                      endpoint, environment, server, run, args.timeout)
-                repeat = run_translation(args.python, name, samples[name], 'baseline-repeat', baseline_runner,
-                                         endpoint, environment, server, run, args.timeout)
+                old = (json.loads((args.reuse_baseline_run/name/'baseline/result.json').read_text(encoding='utf-8'))
+                    if args.reuse_baseline_run else run_translation(
+                        args.python, name, samples[name], 'baseline', baseline_runner,
+                        endpoint, environment, server, run, args.timeout, args.mock_delay))
+                repeat = old if args.skip_baseline_repeat else run_translation(
+                    args.python, name, samples[name], 'baseline-repeat', baseline_runner,
+                    endpoint, environment, server, run, args.timeout, args.mock_delay)
                 case['runs'] = {'baseline': old, 'baseline_repeat': repeat}
-                case['determinism'] = compare_runs(old, repeat)
+                case['determinism'] = ({'status':'NOT_RERUN', 'checks':{}} if args.skip_baseline_repeat
+                                       else compare_runs(old, repeat))
                 if not all(case['determinism']['checks'].values()):
                     case['determinism']['status'] = 'FAIL'
                     case['error'] = 'same_code_not_deterministic'
                     continue
                 new = run_translation(args.python, name, samples[name], 'working', working_runner,
-                                      endpoint, environment, server, run, args.timeout)
+                                      endpoint, environment, server, run, args.timeout, args.mock_delay)
                 case['equivalence'] = compare_runs(old, new)
                 case['timing_comparison'] = timing_comparison(old, new)
                 case['runs'] = {'baseline': old, 'baseline_repeat': repeat, 'working': new}
                 case['status'] = 'PASS' if all(case['equivalence']['checks'].values()) else 'FAIL'
                 case['equivalence']['status'] = case['status']
+                if args.include_disabled:
+                    disabled = run_translation(args.python, name, samples[name], 'working-disabled', working_runner,
+                        endpoint, dict(environment, ZTF_SPLIT_PRECOMPUTE='0'), server, run, args.timeout, args.mock_delay)
+                    case['runs']['working_disabled'] = disabled
+                    case['disabled_equivalence'] = compare_runs(old, disabled)
+                    if not all(case['disabled_equivalence']['checks'].values()):
+                        case['status'] = 'FAIL'
+
             except Exception as error:
+                case['status'] = 'FAIL'
                 case['error'] = type(error).__name__+': '+str(error)
             finally:
                 (OUTPUT / 'equivalence.json').write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')

@@ -478,10 +478,10 @@ def _record(placements, number, out, part, kind, box, dx=0, dy=0):
 
 
 def _compose_columns(source, mono, entry, variants, output, placements, analysis, regions, page_layout,
-                     column_shift):
+                     column_shift, precomputed=None):
     number=entry['source_page']; original=source[number]; width,height=original.rect.width,original.rect.height
     if original.rotation: raise ValueError('rotated_page')
-    owners=_owners(number,entry,analysis,width,height)
+    owners=None if precomputed else _owners(number,entry,analysis,width,height)
     indices={v['column']:v['pdf_page'] for v in entry['variants']}
     if set(indices)!={0,1,SPANNING}: raise ValueError('variant_set_invalid')
     paragraphs=dict(entry.get('paragraph_column',()))
@@ -500,18 +500,23 @@ def _compose_columns(source, mono, entry, variants, output, placements, analysis
             bottom=max([height]+[b.y1 for b in boxes])
             _extend(doc[0],bottom)
             zh[column]=(doc,boxes,bottom)
-        margins={i for i,owner in owners.items() if owner==MARGIN}
+        margins={i for i,owner in (owners or {}).items() if owner==MARGIN}
         # 三份 insert_pdf 副本的解析发生在筛选/figure guard 裁剪前。
         graphic_cache={};selection_cache={}
-        hf=stack.enter_context(_layer(source,number,margins,lambda box:False,
-                                     graphic_cache=graphic_cache))
+        hf=stack.enter_context(fitz.open(precomputed['directory']/precomputed['hf']['file'])
+            if precomputed else _layer(source,number,margins,lambda box:False,
+                                       graphic_cache=graphic_cache))
+        if precomputed:
+            selection_cache['hf']=[fitz.Rect(b) for b in precomputed['hf']['selections']]
         hf_boxes=[(l.x0,l.y0,l.x1,l.y1) for l in analysis[1][number] if l.index in analysis[3][number]]
         for column in (0,1):
-            selected={i for i,owner in owners.items() if owner==column}
-            en=stack.enter_context(_layer(source,number,selected,
-                lambda box,c=column: object_region(tuple(box),analysis[2][number],
-                                                    ((width/2,width/2),))==c,
-                graphic_cache=graphic_cache))
+            selected={i for i,owner in (owners or {}).items() if owner==column}
+            cached=precomputed.get('en'+str(column)) if precomputed else None
+            en=stack.enter_context(fitz.open(precomputed['directory']/cached['file']) if cached else
+                _layer(source,number,selected,
+                    lambda box,c=column: object_region(tuple(box),analysis[2][number],
+                                                        ((width/2,width/2),))==c,
+                    graphic_cache=graphic_cache))
             page_height=max(height,zh[column][2],zh[SPANNING][2])
             page=output.new_page(width=width,height=page_height)
             part='ab'[column]
@@ -523,8 +528,9 @@ def _compose_columns(source, mono, entry, variants, output, placements, analysis
             for box in zh[SPANNING][1]: _record(placements,number,page.number,part,'span',box)
             dx=-column*column_shift
             _embed_full(page,en,0,dx,kind='en')
-            _selection(regions,page,'en',en,dx)
-            for box in _content_boxes(en[0]): _record(placements,number,page.number,part,'en',box,dx)
+            _selection(regions,page,'en',en,dx,cache=({'en':[fitz.Rect(b) for b in cached['selections']]}
+                       if cached else None))
+            for box in (cached['boxes'] if cached else _content_boxes(en[0])): _record(placements,number,page.number,part,'en',box,dx)
             dx=(1-column)*column_shift
             _embed_full(page,zh[column][0],0,dx,kind='zh')
             _selection(regions,page,'zh',zh[column][0],dx)
@@ -924,6 +930,7 @@ def _rebuild_split_navigation(source, mono, output, plans, placements):
 
 def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None):
     """消费 T4 sidecar；逐源页事务，固定原因码日志；原子替换输出。"""
+    import ztf_split_precompute as precompute
     temporary=None
     try:
         with ExitStack() as stack:
@@ -942,8 +949,10 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                 variants=stack.enter_context(fitz.open(mapping['pdf_path'])) if mapping.get('pdf_path') else None
             except Exception:
                 variants=None
-            analysis=analyze_source(source,layout)
-            origins, column_origin_missing = column_origin_status(source,analysis,entries)
+            cached=precompute.consume(source_pdf,layout,list(entries.values()))
+            analysis=cached['analysis'] if cached else analyze_source(source,layout)
+            origins, column_origin_missing = ((cached['origins'],cached['origin_missing']) if cached else
+                column_origin_status(source,analysis,entries))
             column_shift=origins[1]-origins[0] if not any(origin is None for origin in origins) else 0
             if column_origin_missing:
                 _log('split_compose_single_column','column_origin_missing',count=len(source))
@@ -966,7 +975,9 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                     else:
                         if variants is None: raise ValueError('variants_missing')
                         _compose_columns(source,mono,entry,variants,output,placements,analysis,regions,
-                                         layout_pages.get(number,{}),column_shift)
+                                         layout_pages.get(number,{}),column_shift,
+                                         ({**cached['layers'][number], 'directory':precompute._active.directory}
+                                          if cached and number in cached['layers'] else None))
                 except Exception:
                     # 第三方异常不进入日志（可能包含正文或凭据）。
                     if len(output)>start: output.delete_pages(from_page=start,to_page=len(output)-1)
@@ -1013,6 +1024,7 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
     except Exception:
         raise RuntimeError('split_compose_failed') from None
     finally:
+        precompute.cleanup()
         if temporary is not None:
             try: os.remove(temporary)
             except OSError: _log('split_compose_cleanup_error','temporary_remove_failed')

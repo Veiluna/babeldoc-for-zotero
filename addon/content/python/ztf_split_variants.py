@@ -487,7 +487,7 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
                     output.save, output_pdf, garbage=4, deflate=True)
 
 
-def install(log: Callable[[dict], None]) -> None:
+def install(log: Callable[[dict], None], precompute_source=None) -> None:
     """由 runner 的单个挂接点安装；调用方只在 ZTF_SPLIT_DUAL=1 时调用。
 
     sidecar: <mono.pdf>.variants.json，pdf_path + 0 起源页/变体页/栏号映射，
@@ -568,9 +568,13 @@ def install(log: Callable[[dict], None]) -> None:
             margins, {i: e[4] for i, e in enumerate(entries)},
             column_count_tag,
         )
+        source_entries=[]
         for index, (page, chars, lines, convert, figures, width, height, plan) in enumerate(entries):
             columns = detect_columns(page.page_number, width, height, lines,
                                      margins[index], document_columns, figures)
+            source_entries.append({'source_page':page.page_number,'columns':columns.columns,
+                'basis':columns.basis,'gutters':columns.gutters,
+                'paragraph_column':columns.paragraph_column})
             mid = width / 2
             groups = {char_id: group for line, group in zip(lines, columns.line_column)
                       if group in (MARGIN, SPANNING) for char_id in line.char_ids}
@@ -585,6 +589,8 @@ def install(log: Callable[[dict], None]) -> None:
             remember(page, plan, removed=canonical_removed)
             snapshots[id(page)] = (columns, owners, convert,
                                    tuple(id(p) for p in page.pdf_paragraph), plan)
+
+        return source_entries
 
     for translator in (ILTranslator, ILTranslatorLLMOnly):
         original_translate = getattr(translator, "translate", None)
@@ -604,7 +610,11 @@ def install(log: Callable[[dict], None]) -> None:
                 PDFCreater.write = functools.wraps(original_write)(write)
                 timing.patch(PDFCreater, 'write', 'ztf_split_variants')
             try:
-                capture(document, instance.translation_config.input_file)
+                source_pdf=instance.translation_config.input_file
+                source_entries=capture(document, source_pdf)
+                if precompute_source is not None:
+                    precompute_source(document, source_pdf, source_entries,
+                        Path(instance.translation_config.get_working_file_path('split-precompute')).parent)
             except Exception as error:  # noqa: BLE001 - 变体诊断不能改变单语翻译路径
                 log({"event": "split_variants_error", "stage": "source",
                      "error": _error_reason(error), "count": 1})

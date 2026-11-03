@@ -23,6 +23,7 @@ const expectedHelpers = [
   "ztf_links.py",
   "ztf_punctuation_cleanup.py",
   "ztf_split_columns.py",
+  "ztf_split_precompute.py",
   "ztf_split_compose.py",
   "ztf_split_lines.py",
   "ztf_split_margins.py",
@@ -74,10 +75,10 @@ const runnerPythonSource = fs.readFileSync(
   path.join(pythonDirectory, runnerFile),
   "utf8"
 );
-const loadedModules = Array.from(
-  runnerPythonSource.matchAll(/_load_helper\("([a-z0-9_]+)"\)/g),
+const loadedModules = [...new Set(Array.from(
+  runnerPythonSource.matchAll(/_load_helper\(["']([a-z0-9_]+)["']\)/g),
   match => match[1] + ".py"
-).sort();
+))].sort();
 assert.deepEqual(
   loadedModules,
   [
@@ -86,6 +87,7 @@ assert.deepEqual(
     "ztf_links.py",
     "ztf_punctuation_cleanup.py",
     "ztf_split_compose.py",
+    "ztf_split_precompute.py",
     "ztf_split_variants.py",
     "ztf_style_guards.py",
     "ztf_timing.py",
