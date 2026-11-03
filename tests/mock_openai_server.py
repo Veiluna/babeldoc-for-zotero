@@ -13,6 +13,7 @@ import math
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 import re
+import time
 from typing import Any
 import zlib
 
@@ -241,6 +242,10 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             return
 
         self.server.count_request()
+        delay = getattr(self.server, 'delay_next_request_seconds', 0)
+        self.server.delay_next_request_seconds = 0
+        if delay:
+            time.sleep(delay)
         if self.server.response_status == 429:
             self._send_json(
                 429,

@@ -10,6 +10,7 @@ text layer and leaves the Chinese punctuation and every other glyph untouched.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import pymupdf
 
@@ -170,3 +171,48 @@ def clean_duplicate_punctuation(output_path: str, source_path: str = "") -> dict
                 document.close()
             except Exception:
                 pass
+
+
+def clean_duplicate_punctuation_document(document: Any, source: Any = None) -> dict:
+    """Clean punctuation on an already-open output document without saving."""
+    offsets = {}
+    if source is not None:
+        try:
+            for index in range(min(document.page_count, source.page_count)):
+                source_width = float(source[index].rect.width)
+                output_width = float(document[index].rect.width)
+                offsets[index] = (source_width if source_width > 0 and
+                                  output_width >= source_width * 1.5 else 0.0)
+        except Exception:
+            offsets = {}
+    stats: dict = {"pages": 0, "removed": 0, "failed": False}
+    modified = False
+    for page_index in range(document.page_count):
+        page = document[page_index]
+        offset = offsets.get(page_index, 0.0)
+        chars = _text_chars(page)
+        if not chars:
+            continue
+        text = "".join(value for value, _ in chars)
+        removals = [
+            index for index in _removal_indices(text)
+            if index < len(chars) and (offset <= 0.0 or
+               (chars[index][1].x0 + chars[index][1].x1) / 2.0 >= offset)
+        ]
+        if not removals:
+            continue
+        stats["pages"] += 1
+        for index in removals:
+            try:
+                page.add_redact_annot(_redaction_rect(chars[index][1]), fill=False)
+            except Exception:
+                continue
+        try:
+            page.apply_redactions(images=0, graphics=0)
+        except Exception:
+            stats["failed"] = True
+            continue
+        stats["removed"] += len(removals)
+        modified = True
+    stats["changed"] = int(modified)
+    return stats

@@ -58,6 +58,7 @@ def isolated_environment(directory):
                         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
                         "NO_COLOR": "1", "NO_PROXY": "127.0.0.1,localhost",
                         "ZTF_OPENAI_API_KEY": "mock-test-key", "ZTF_SPLIT_DUAL": "1",
+                        "ZTF_TIMING": "1",  # 离线质检依赖 layout / variants 诊断。
                         "ZTF_MAX_OUTPUT_TOKENS": "8192", "ZTF_MAX_REQUESTS": "200",
                         "ZTF_REPAIR_FAILED": "1", "ZTF_TRANSLATE_REFERENCES": "0",
                         "ZTF_TOKEN_PARAM": "max_tokens"})

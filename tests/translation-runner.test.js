@@ -46,6 +46,8 @@ function makeHarness(options = {}) {
     [pythonPath, { exists: true, isFile: true, fileSize: 1000 }],
   ]);
   const calls = [];
+  const timingMarkerPath = "C:\\Zotero\\babeldoc-for-zotero\\ztf_timing.enabled";
+  if (options.staleTimingMarker) files.set(timingMarkerPath, { exists: true, isFile: true });
   const copiedFiles = [];
   const createdDirectories = [];
   const removedDirectories = [];
@@ -66,6 +68,10 @@ function makeHarness(options = {}) {
     },
     async getContentsFromURL(url) {
       copiedFiles.push(["read-resource", url]);
+      if (url.endsWith("ztf_timing.enabled")) {
+        if (!options.timingMarker) throw new Error("resource missing");
+        return "";
+      }
       return "# copied runner source";
     },
     async putContentsAsync(filePath, contents, charset) {
@@ -220,6 +226,7 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
   for (const helperName of [
     "ztf_inline_formulas.py", "ztf_style_guards.py",
     "ztf_links.py",
+    "ztf_timing.py",
   ]) {
     assert.ok(harness.copiedFiles.some(entry => entry[0] === "read-resource" &&
       entry[1].endsWith("content/python/" + helperName)), "读取 Python 辅助模块 " + helperName);
@@ -264,6 +271,18 @@ async function copiesResourcesLaunchesSafelyAndParsesProgress() {
 
   await result.cleanup();
   assert.deepEqual(harness.removedDirectories, ["C:\\Temp\\zotero-translate-files-test-job-id"]);
+}
+
+async function timingMarkerFollowsInstalledResources() {
+  const enabled = makeHarness({ timingMarker: true });
+  await enabled.runner.translate(enabled.item);
+  assert.ok(enabled.copiedFiles.some(entry => entry[0] === "write-runner" &&
+    entry[1].endsWith("\\ztf_timing.enabled") && entry[2] === ""));
+  const disabled = makeHarness({ staleTimingMarker: true });
+  await disabled.runner.translate(disabled.item);
+  assert.ok(disabled.removedDirectories.includes("C:\\Zotero\\babeldoc-for-zotero\\ztf_timing.enabled"));
+  assert.ok(!disabled.copiedFiles.some(entry => entry[0] === "write-runner" &&
+    entry[1].endsWith("\\ztf_timing.enabled")));
 }
 
 async function reportsRequestCountsInProgressAndResult() {
@@ -519,6 +538,7 @@ async function fallsBackToAvailableOutputMode() {
 
 (async () => {
   await copiesResourcesLaunchesSafelyAndParsesProgress();
+  await timingMarkerFollowsInstalledResources();
   await supportsBilingualOutputs();
   await fallsBackToAvailableOutputMode();
   await reportsRequestCountsInProgressAndResult();

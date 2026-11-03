@@ -13,10 +13,18 @@ import json
 import math
 import os
 import re
+import struct
+import sys
 import unicodedata
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import pymupdf
+
+_DIRECTORY = str(Path(__file__).resolve().parent)
+if _DIRECTORY not in sys.path:
+    sys.path.insert(0, _DIRECTORY)
+import ztf_timing as timing
 
 
 MAPPING_VERSION = 1
@@ -46,6 +54,71 @@ _ROMAN_RE = re.compile(r"(?<![\w.])([IVXLCDM]{1,7})(?![\w])")
 _ORCID_RE = re.compile(r"^https?://orcid\.org/", re.I)
 _MEANINGFUL_TEXT_RE = re.compile(r"[0-9A-Za-z\u00C0-\u024F]")
 _SENTENCE_PUNCTUATION = ".,;:)]}、，。；：）】》"
+
+
+class _PageCache:
+    """One restore_links document lifetime; only link annotations may change.
+
+    Textbox uses the default flags=0 TextPage, NOT TEXTFLAGS_RAWDICT. Cache the
+    native JM_copy_rectangle character/bbox inputs, including zero-width spans
+    that extractRAWDICT can omit, then keep its overlap and original line order.
+    Clipped rawdict remains a native extraction, memoized only for identical clips.
+    """
+
+    def __init__(self):
+        self.pages = {}
+
+    def get(self, page, name, *args):
+        data = self.pages.setdefault(page.number, {})
+        if name == 'get_textbox':
+            if 'textbox' not in data:
+                textpage = page.get_textpage()
+                lines = []
+                # These are the same native inputs/helpers used by PyMuPDF
+                # 1.28.2 JM_copy_rectangle; do not pass through RAWDICT's filters.
+                for block in textpage.this:
+                    if block.m_internal.type != pymupdf.mupdf.FZ_STEXT_BLOCK_TEXT:
+                        continue
+                    for line in block:
+                        chars = []
+                        for char in line:
+                            box = pymupdf.JM_char_bbox(line, char)
+                            value = pymupdf.PyUnicode_DecodeRawUnicodeEscape(
+                                pymupdf.make_escape(char.m_internal.c))
+                            chars.append((value, (box.x0, box.y0, box.x1, box.y1)))
+                        lines.append(chars)
+                data['textbox'] = lines
+            lines = data['textbox']
+            rect = pymupdf.Rect(args[0])
+            # JM_rect_from_py converts query coordinates to MuPDF float32.
+            x0, y0, x1, y1 = struct.unpack('4f', struct.pack('4f', *rect))
+            result = []
+            for line in lines:
+                text = ''.join(value
+                               for value, (a, b, c, d) in line
+                               if not (x0 >= c or y0 >= d or x1 <= a or y1 <= b))
+                if text:
+                    result.append(text)
+            return '\n'.join(result)
+        if name == 'get_text':
+            option, region = args
+            key = (name, option, tuple(region))
+            if key not in data:
+                data[key] = page.get_text(option, clip=region)
+        else:
+            key = name
+            if key not in data:
+                data[key] = getattr(page, name)()
+        return data[key]
+
+
+def _page_extract(page, name, *args):
+    cache = getattr(page.parent, '_ztf_link_cache', None)
+    if cache is not None:
+        return cache.get(page, name, *args)
+    if name == 'get_text':
+        return page.get_text(args[0], clip=args[1])
+    return getattr(page, name)(*args)
 
 
 def _as_rect(value: Any) -> pymupdf.Rect:
@@ -284,7 +357,7 @@ def _line_context(page: Any, rect: pymupdf.Rect) -> str:
     band = pymupdf.Rect(max(0.0, rect.x0 - 160), rect.y0 - 2,
                         min(_page_text_rect(page).x1, rect.x1 + 160), rect.y1 + 2)
     try:
-        return page.get_textbox(band)
+        return _page_extract(page, 'get_textbox', band)
     except Exception:
         return ""
 
@@ -408,7 +481,7 @@ def _region_for_link(paragraph: dict[str, Any] | None, page: Any) -> pymupdf.Rec
 def _text_chars(page: Any, region: pymupdf.Rect) -> list[tuple[str, pymupdf.Rect]]:
     chars: list[tuple[str, pymupdf.Rect]] = []
     try:
-        raw = page.get_text("rawdict", clip=region)
+        raw = _page_extract(page, 'get_text', 'rawdict', region)
     except Exception:
         return chars
     for block in raw.get("blocks", []):
@@ -676,14 +749,14 @@ def _graphics_region_preserved(page: Any, rect: pymupdf.Rect) -> bool:
     the rectangle must correspond to preserved non-text artwork.
     """
     try:
-        for drawing in page.get_drawings():
+        for drawing in _page_extract(page, 'get_drawings'):
             drawing_rect = drawing.get("rect")
             if drawing_rect is not None and pymupdf.Rect(drawing_rect).intersects(rect):
                 return True
     except Exception:
         pass
     try:
-        for image in page.get_image_info():
+        for image in _page_extract(page, 'get_image_info'):
             if pymupdf.Rect(image["bbox"]).intersects(rect):
                 return True
     except Exception:
@@ -726,7 +799,7 @@ def _target_anchor_text(source_doc: Any, destination: dict[str, Any]) -> dict[st
         min(page_rect.y1, float(point[1]) + 24),
     )
     try:
-        under = page.get_textbox(band)
+        under = _page_extract(page, 'get_textbox', band)
     except Exception:
         return None
     line = _line_context(page, band)
@@ -906,7 +979,7 @@ def _source_links(source_doc: Any, paragraphs: list[dict[str, Any]]) -> list[dic
         for link in page.get_links():
             rect = _visible_rect_to_unrotated(link.get("from"), page)
             try:
-                under = page.get_textbox(rect)
+                under = _page_extract(page, 'get_textbox', rect)
             except Exception:
                 under = ""
             line = _line_context(page, rect)
@@ -1138,6 +1211,12 @@ def restore_links(source_path: str, output_path: str,
             source_doc.authenticate("")
         if output_doc.is_encrypted:
             output_doc.authenticate("")
+        # These documents are private to this call. From here until saveIncr,
+        # only /Link annotations and their Rect/A dictionaries are modified;
+        # they have no appearance stream and do not paint text, drawings or images.
+        # Never attach caches to caller-owned documents or reuse across calls.
+        source_doc._ztf_link_cache = _PageCache()
+        output_doc._ztf_link_cache = _PageCache()
         records = _source_links(source_doc, paragraphs)
         ordinals = _assign_group_ordinals(records)
         page_mapping = _page_map(source_doc, output_doc)
@@ -1175,7 +1254,7 @@ def restore_links(source_path: str, output_path: str,
                 restored["mapped_by"] = "unresolved"
 
         if restored_records:
-            output_doc.saveIncr()
+            timing.call('ztf_links.saveIncr[restore_links]', output_doc.saveIncr)
         stats = {
             "paragraphs": len(paragraphs),
             "source": len(restored_records),
@@ -1205,7 +1284,8 @@ def restore_links(source_path: str, output_path: str,
             if directory:
                 os.makedirs(directory, exist_ok=True)
             with open(mapping_path, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+                timing.call('ztf_links.mapping_json[restore_links]',
+                            json.dump, payload, handle, ensure_ascii=False, indent=2, default=str)
             stats["mapping_path"] = mapping_path
         except OSError:
             stats["mapping_path"] = ""
@@ -1342,7 +1422,8 @@ def restore_dual_links(source_path: str, dual_path: str, mono_mapping_path: str,
             if directory:
                 os.makedirs(directory, exist_ok=True)
             with open(mapping_path, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(payload, handle, ensure_ascii=False, indent=2, default=str)
+                timing.call('ztf_links.mapping_json[restore_dual_links]',
+                            json.dump, payload, handle, ensure_ascii=False, indent=2, default=str)
             stats["mapping_path"] = mapping_path
         except OSError:
             stats["mapping_path"] = ""

@@ -21,6 +21,7 @@ if _DIRECTORY not in sys.path:
     sys.path.insert(0, _DIRECTORY)
 
 from ztf_split_types import MARGIN, SPANNING, Char, PageColumns
+import ztf_timing as timing
 from ztf_figure_background import (
     build_plan,
     inject_background_sequence,
@@ -454,10 +455,10 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
 
     每份变体重新打开解析用 PDF，避免共享 xref/Form 流被上一份变体改写；
     保持原 page_number，隔离每次 Form 调用的流，恢复原页几何后整页复制。
+    浅复制 writer 复用已加载的 FontMapper；只替换副本的 docs，不影响随后 mono。
     """
     import pymupdf
     from babeldoc.format.pdf.document_il import il_version_1 as il
-    from babeldoc.format.pdf.document_il.backend.pdf_creater import PDFCreater
 
     config = creator.translation_config
     with pymupdf.open() as output:
@@ -465,20 +466,28 @@ def render_variants(creator: Any, variants: tuple[Variant, ...], output_pdf: str
             config.raise_if_cancelled()
             # FontMapper.add_font 会往 IL 中追加字体，副本不得污染待交付的 IL。
             document = il.Document(page=[_copy_render_page(variant.page)], total_pages=1)
-            with pymupdf.open(creator.original_pdf_path) as pdf:
+            with timing.call('ztf_split_variants.open[render_variants]',
+                             pymupdf.open, creator.original_pdf_path) as pdf:
                 _isolate_form_streams(document.page[0], pdf)
-                writer = PDFCreater(creator.original_pdf_path, document, config,
-                                    creator.mediabox_data)
-                writer.font_mapper.add_font(pdf, document)
-                writer.update_page_content_stream(False, document.page[0], pdf, config)
-                writer.restore_media_box(pdf, creator.mediabox_data)
+                # 0.6.4 add_font 的 xref/PdfFont 均按 doc/IL 局部创建；mapper 只读。
+                # 每份 writer 保留原配置/字体，docs 仍指向本次独立的 IL 副本。
+                writer = copy.copy(creator)
+                writer.docs = document
+                timing.call('ztf_split_variants.add_font[render_variants]',
+                            writer.font_mapper.add_font, pdf, document)
+                timing.call('ztf_split_variants.update_page_content_stream[render_variants]',
+                            writer.update_page_content_stream, False, document.page[0], pdf, config)
+                timing.call('ztf_split_variants.restore_media_box[render_variants]',
+                            writer.restore_media_box, pdf, creator.mediabox_data)
                 number = document.page[0].page_number
-                output.insert_pdf(pdf, from_page=number, to_page=number,
-                                  links=False, annots=False, widgets=False)
-        output.save(output_pdf, garbage=4, deflate=True)
+                timing.call('ztf_split_variants.insert_pdf[render_variants]',
+                            output.insert_pdf, pdf, from_page=number, to_page=number,
+                            links=False, annots=False, widgets=False)
+        timing.call('ztf_split_variants.save[render_variants]',
+                    output.save, output_pdf, garbage=4, deflate=True)
 
 
-def install(log: Callable[[dict], None]) -> None:
+def install(log: Callable[[dict], None], precompute_source=None) -> None:
     """由 runner 的单个挂接点安装；调用方只在 ZTF_SPLIT_DUAL=1 时调用。
 
     sidecar: <mono.pdf>.variants.json，pdf_path + 0 起源页/变体页/栏号映射，
@@ -509,7 +518,9 @@ def install(log: Callable[[dict], None]) -> None:
     original_write = None
 
     def capture(document, source_pdf):
-        tagged, appended = read_pdf_evidence(str(source_pdf))
+        tagged, appended = read_pdf_evidence(
+            str(source_pdf), include_appended=timing.enabled()
+        )
         entries = []
         with pymupdf.open(source_pdf) as source:
             column_count_tag = _column_count_tag(source)
@@ -557,9 +568,13 @@ def install(log: Callable[[dict], None]) -> None:
             margins, {i: e[4] for i, e in enumerate(entries)},
             column_count_tag,
         )
+        source_entries=[]
         for index, (page, chars, lines, convert, figures, width, height, plan) in enumerate(entries):
             columns = detect_columns(page.page_number, width, height, lines,
                                      margins[index], document_columns, figures)
+            source_entries.append({'source_page':page.page_number,'columns':columns.columns,
+                'basis':columns.basis,'gutters':columns.gutters,
+                'paragraph_column':columns.paragraph_column})
             mid = width / 2
             groups = {char_id: group for line, group in zip(lines, columns.line_column)
                       if group in (MARGIN, SPANNING) for char_id in line.char_ids}
@@ -574,6 +589,8 @@ def install(log: Callable[[dict], None]) -> None:
             remember(page, plan, removed=canonical_removed)
             snapshots[id(page)] = (columns, owners, convert,
                                    tuple(id(p) for p in page.pdf_paragraph), plan)
+
+        return source_entries
 
     for translator in (ILTranslator, ILTranslatorLLMOnly):
         original_translate = getattr(translator, "translate", None)
@@ -591,8 +608,13 @@ def install(log: Callable[[dict], None]) -> None:
 
                 original_write = PDFCreater.write
                 PDFCreater.write = functools.wraps(original_write)(write)
+                timing.patch(PDFCreater, 'write', 'ztf_split_variants')
             try:
-                capture(document, instance.translation_config.input_file)
+                source_pdf=instance.translation_config.input_file
+                source_entries=capture(document, source_pdf)
+                if precompute_source is not None:
+                    precompute_source(document, source_pdf, source_entries,
+                        Path(instance.translation_config.get_working_file_path('split-precompute')).parent)
             except Exception as error:  # noqa: BLE001 - 变体诊断不能改变单语翻译路径
                 log({"event": "split_variants_error", "stage": "source",
                      "error": _error_reason(error), "count": 1})
@@ -631,13 +653,16 @@ def install(log: Callable[[dict], None]) -> None:
                 if tuple(id(p) for p in page.pdf_paragraph) != paragraph_ids:
                     raise ValueError("paragraph_identity_changed")
                 entry.update({"columns": columns.columns, "basis": columns.basis,
-                              "gutters": columns.gutters, "reasons": columns.reasons,
+                              "gutters": columns.gutters,
                               "paragraph_column": columns.paragraph_column,
                               "split_paragraphs": columns.split_paragraphs})
+                if timing.enabled():
+                    entry["reasons"] = columns.reasons
                 for variant in create_variants(page, columns, owners, convert_box=convert):
-                    entry["variants"].append({"column": variant.column,
-                                              "pdf_page": len(variants),
-                                              "paragraphs": variant.paragraphs})
+                    item = {"column": variant.column, "pdf_page": len(variants)}
+                    if timing.enabled():
+                        item["paragraphs"] = variant.paragraphs
+                    entry["variants"].append(item)
                     variants.append(variant)
                     variant_backgrounds.append(remembered(variant.page))
                     variant_source_pages.append(page.page_number)
@@ -664,7 +689,8 @@ def install(log: Callable[[dict], None]) -> None:
                          "error": type(error).__name__, "count": 1})
             elapsed = time.perf_counter() - started
             # 原写出器只接触原 document，变体从未被写回 creator.docs。
-            result = original_write(creator, translation_config, check_font_exists)
+            result = timing.call('ztf_split_variants.original_write[write]', original_write,
+                                 creator, translation_config, check_font_exists)
             if result.mono_pdf_path and mono_backgrounds:
                 try:
                     inject_backgrounds(
@@ -685,13 +711,19 @@ def install(log: Callable[[dict], None]) -> None:
                     if rendered:
                         temporary.replace(pdf_path)
                     metadata = {"version": 1, "pdf_path": pdf_path if rendered else None,
-                                "render_seconds": round(elapsed, 4), "pages": pages}
+                                "pages": pages}
+                    if timing.enabled():
+                        metadata["render_seconds"] = round(elapsed, 4)
                     mapping = str(result.mono_pdf_path) + ".variants.json"
-                    Path(mapping).write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False),
-                                             encoding="utf-8")
-                    log({"event": "split_variants", "pages": len(pages),
-                         "count": len(variants) if rendered else 0,
-                         "render_seconds": metadata["render_seconds"], "mapping_path": mapping})
+                    with timing.measure('ztf_split_variants.mapping_json[write]'):
+                        Path(mapping).write_text(json.dumps(metadata, ensure_ascii=False, allow_nan=False),
+                                                 encoding="utf-8")
+                    event = {"event": "split_variants", "pages": len(pages),
+                             "count": len(variants) if rendered else 0,
+                             "mapping_path": mapping}
+                    if "render_seconds" in metadata:
+                        event["render_seconds"] = metadata["render_seconds"]
+                    log(event)
                 except Exception as error:  # noqa: BLE001 - sidecar 失败不覆盖单语结果
                     log({"event": "split_variants_error", "stage": "sidecar",
                          "error": type(error).__name__, "count": 1})

@@ -10,7 +10,7 @@
 
 在 Zotero 里一键把外文 PDF 翻译成**保持原版式的简体中文 PDF**，也可以生成**分栏中英对照 PDF**。翻译引擎是开源的 [BabelDOC](https://github.com/funstory-ai/BabelDOC)，模型用你自己的 OpenAI 兼容接口（填写接口地址、API key 和模型名即可）。
 
-当前版本：**0.8.1**　|　[下载最新版](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest)　|　[更新日志](CHANGELOG.md)　|　[问题反馈](https://github.com/Veiluna/babeldoc-for-zotero/issues)　|　[English](#english)
+当前版本：**0.8.2**　|　[下载最新版](https://github.com/Veiluna/babeldoc-for-zotero/releases/latest)　|　[更新日志](CHANGELOG.md)　|　[问题反馈](https://github.com/Veiluna/babeldoc-for-zotero/issues)　|　[English](#english)
 
 > 从旧版 Translate Files for Zotero 升级：Zotero 会把本插件识别为新插件，设置会自动迁移；旧版 Translate Files for Zotero 需手动卸载。
 

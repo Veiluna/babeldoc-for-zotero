@@ -111,7 +111,7 @@ class SplitWiringTests(unittest.TestCase):
             Path(output).write_bytes(b"%PDF-1.7 split")
             return {"output_pages": 3}
 
-        with self._with_env("1"), mock.patch.dict(
+        with self._with_env("1"), mock.patch.dict(os.environ, {"ZTF_TIMING": "1"}), mock.patch.dict(
             runner._HELPER_MODULES, _fake_helpers(compose)
         ):
             result = runner._dual_after_layout(self.state, self.request_state, {}, "")

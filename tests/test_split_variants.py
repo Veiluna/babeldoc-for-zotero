@@ -446,7 +446,11 @@ class VariantTests(unittest.TestCase):
                 mutations.append("font")
 
         class FakeWriter:
-            def __init__(self, *_args):
+            def __init__(self, _path, document, config, mediabox):
+                self.docs = document
+                self.translation_config = config
+                self.original_pdf_path = _path
+                self.mediabox_data = mediabox
                 self.font_mapper = FakeFontMapper()
 
             def update_page_content_stream(self, *_args):
@@ -464,6 +468,8 @@ class VariantTests(unittest.TestCase):
         fake_backend = types.ModuleType(
             "babeldoc.format.pdf.document_il.backend.pdf_creater")
         fake_backend.PDFCreater = FakeWriter
+        creator = FakeWriter(creator.original_pdf_path, creator.docs,
+                             creator.translation_config, creator.mediabox_data)
         with patch.object(pymupdf, "open", side_effect=fake_open), \
                 patch.dict(sys.modules, {
                     "babeldoc.format.pdf.document_il.il_version_1": fake_il,
@@ -695,6 +701,98 @@ class VariantTests(unittest.TestCase):
             collect_source_chars(original)
 
 
+class FontReuseTests(unittest.TestCase):
+    def test_shared_mapper_matches_fresh_writers_and_preserves_mono(self):
+        """真实字体/写出器：比较内容流、字体对象，并计数循环内的字体加载。"""
+        import dataclasses
+        import pymupdf
+        from babeldoc.format.pdf.document_il import il_version_1 as il
+        from babeldoc.format.pdf.document_il.backend import pdf_creater as backend
+
+        root = Path(os.environ.get('ZTF_TEST_OUTPUT',
+                    Path(__file__).resolve().parents[1] / '.scratch/t082/t2/unit'))
+        root = root / ('font-reuse-' + str(time.time_ns()))
+        root.mkdir(parents=True)
+        source, output = root / 'source.pdf', root / 'variants.pdf'
+        with pymupdf.open() as pdf:
+            pdf.new_page(width=200, height=200)
+            pdf.new_page(width=220, height=200)
+            pdf.save(source)
+        config = NS(font=None, primary_font_family=None, lang_out='zh', skip_form_render=False,
+                    skip_curve_render=False, ocr_workaround=False, debug=False,
+                    progress_monitor=NS(stage_start=lambda *_: nullcontext(Mock())),
+                    raise_if_cancelled=lambda: None)
+        pages = [il.Page(page_number=n, mediabox=il.Mediabox(box=il.Box(0, 0, 200, 200)),
+                         cropbox=il.Cropbox(box=il.Box(0, 0, 200, 200))) for n in (0, 1)]
+        document = il.Document(page=pages, total_pages=2)
+        creator = backend.PDFCreater(str(source), document, config, {})
+        mapper = creator.font_mapper
+        original_font = il.PdfFont(bold=False, italic=False, monospace=False, serif=False)
+        for p, text in zip(pages, ('中文A', '译文β')):
+            for i, char in enumerate(text):
+                font = mapper.map(original_font, char)
+                self.assertIsNotNone(font)
+                p.pdf_character.append(il.PdfCharacter(
+                    pdf_style=il.PdfStyle(font_id=font.font_id, font_size=12),
+                    box=il.Box(20 + i * 16, 100, 36 + i * 16, 112),
+                    pdf_character_id=font.has_glyph(ord(char)), char_unicode=char,
+                    xobj_id=0, render_order=i, sub_render_order=0))
+        before = dataclasses.asdict(document)
+        creator_fields = vars(creator).copy()
+        mapper_fields = vars(mapper).copy()
+        update = backend.PDFCreater.update_page_content_stream
+
+        def snapshot(pdf, p):
+            # 不归一化 xref：同一底稿、相同调用顺序应产生相同的字体对象与流。
+            return (dataclasses.asdict(p), [
+                (pdf.xref_object(i), pdf.xref_stream_raw(i))
+                for i in range(1, pdf.xref_length())])
+
+        def fresh_render(p, font_mapper=None):
+            doc = il.Document(page=[split_variants._copy_render_page(p)], total_pages=1)
+            writer = backend.PDFCreater(str(source), doc, config, {})
+            if font_mapper is not None:
+                writer.font_mapper = font_mapper
+            for c in p.pdf_character:
+                self.assertEqual(writer.font_mapper.map(original_font, c.char_unicode).font_id,
+                                 c.pdf_style.font_id)
+            with pymupdf.open(source) as pdf:
+                split_variants._isolate_form_streams(doc.page[0], pdf)
+                writer.font_mapper.add_font(pdf, doc)
+                update(writer, False, doc.page[0], pdf, config)
+                return snapshot(pdf, doc.page[0])
+
+        # 顺序 A、B、A 检测跨页字体/文档状态泄漏；参考路径每份重新构造。
+        sequence = [pages[0], pages[1], pages[0]]
+        expected = [fresh_render(p) for p in sequence]
+        mono_before = fresh_render(pages[0], mapper)
+        actual, render_docs = [], []
+
+        def checked_update(writer, check, p, pdf, cfg):
+            self.assertIsNot(writer, creator)
+            self.assertIs(writer.font_mapper, mapper)
+            self.assertIs(writer.docs.page[0], p)
+            render_docs.append(writer.docs)
+            update(writer, check, p, pdf, cfg)
+            actual.append(snapshot(pdf, p))
+
+        with patch.object(backend, 'FontMapper', wraps=backend.FontMapper) as constructors, \
+                patch.object(backend.PDFCreater, 'update_page_content_stream', checked_update):
+            split_variants.render_variants(creator, tuple(
+                split_variants.Variant(i, p, ()) for i, p in enumerate(sequence)), str(output))
+        self.assertEqual(constructors.call_count, 0)
+        self.assertEqual(actual, expected)
+        self.assertEqual(len({id(doc) for doc in render_docs}), 3)
+        self.assertEqual(dataclasses.asdict(document), before)
+        self.assertTrue(all(vars(creator)[key] is value for key, value in creator_fields.items()))
+        self.assertTrue(all(vars(mapper)[key] is value for key, value in mapper_fields.items()))
+        self.assertEqual(fresh_render(pages[0], mapper), mono_before)
+        with pymupdf.open(output) as pdf:
+            self.assertEqual(len(pdf), 3)
+            self.assertEqual(pdf[0].get_text('rawdict'), pdf[2].get_text('rawdict'))
+            self.assertEqual(pdf[0].get_pixmap().samples, pdf[2].get_pixmap().samples)
+
+
 class MockRunnerTests(unittest.TestCase):
     def test_chen_two_pages_with_local_synthetic_translation(self):
         # 第七页含严格回跳证据；前两页在新规则下本身不足以判定全文双栏。
@@ -861,7 +959,7 @@ if __name__ == "__main__":
                 directory = run / name
                 directory.mkdir()
                 expected = directory / "expected.json"
-                env = dict(environment, ZTF_SPLIT_DUAL=str(int(enabled)),
+                env = dict(environment, ZTF_TIMING="1", ZTF_SPLIT_DUAL=str(int(enabled)),
                            ZTF_JOB_LOG_PATH=str(directory / "runner.jsonl"),
                            T4_EXPECTED=str(expected))
                 command = [sys.executable, "-B", "-X", "utf8", str(harness),
@@ -1020,7 +1118,8 @@ class HookFailureTests(unittest.TestCase):
     def setUp(self):
         import pymupdf
         self.pymupdf = pymupdf
-        root = Path(__file__).resolve().parents[1] / "build/t62/t4"
+        root = Path(os.environ.get('ZTF_TEST_OUTPUT',
+            Path(__file__).resolve().parents[1] / "build/t62/t4"))
         root.mkdir(parents=True, exist_ok=True)
         # 当前 Windows 沙箱不允许访问 tempfile 创建的私有 ACL 目录。
         self.directory = root / f"unit-{time.time_ns()}"
@@ -1056,6 +1155,30 @@ class HookFailureTests(unittest.TestCase):
 
     def capture(self):
         self.translator().translate(self.document)
+
+    def test_precompute_releases_capture_chars_before_first_translation(self):
+        import weakref
+        from ztf_split_types import Char
+        refs, order, observed = [], [], {}
+        def collect(*_):
+            char = Char(0, 0, 0, 30, 100, 35, 110, 'A')
+            refs.append(weakref.ref(char))
+            return (char,)
+        def precompute(document, source, entries, working):
+            observed.update(document=document, source=source, entries=entries,
+                            working=working, alive=refs[0]() is not None)
+            order.append('precompute')
+        self.translator.translate = lambda *_: order.append('translate')
+        self.translator.translation_config = self.config
+        with patch.object(split_variants, 'collect_source_chars', side_effect=collect), \
+                patch('ztf_split_columns.detect_columns', new=lambda *args: columns()):
+            split_variants.install(self.events.append, precompute_source=precompute)
+            self.capture()
+        self.assertEqual(order, ['precompute', 'translate'], self.events)
+        self.assertIs(observed['document'], self.document)
+        self.assertEqual(observed['entries'][0]['source_page'], 17)
+        self.assertEqual(observed['working'], self.directory)
+        self.assertFalse(observed['alive'])
 
     def test_mono_background_survives_split_fallback_after_il_removal(self):
         import ztf_figure_background as background

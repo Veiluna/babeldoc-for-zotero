@@ -16,6 +16,7 @@ from pathlib import Path
 import tempfile
 
 import pymupdf as fitz
+import ztf_timing as timing
 from ztf_split_types import Char, DocumentColumns, MARGIN, SPANNING
 from ztf_split_lines import build_lines
 from ztf_split_columns import detect_columns
@@ -48,9 +49,76 @@ class _Page:
     columns: int
 
 
+class _YIndex:
+    """按 y 分桶只缩小候选集；宽框单存，最终包含规则由调用方决定。"""
+    def __init__(self):
+        self.cells = {}
+        self.wide = []
+
+    def add(self, box, value):
+        if not all(math.isfinite(v) for v in box):
+            self.wide.append(value)
+            return
+        if box[0] > box[2] or box[1] > box[3]:
+            return
+        first, last = math.floor(box[1]/32), math.floor(box[3]/32)
+        if last-first > 64:
+            self.wide.append(value)
+        else:
+            # Rect.contains(Rect) 允许落在下边界的退化框，故末桶也要加入。
+            for cell in range(first, last+1):
+                self.cells.setdefault(cell, []).append(value)
+
+    def candidates(self, y):
+        yield from self.wide
+        if math.isfinite(y):
+            yield from self.cells.get(math.floor(y/32), ())
+
+
+class _ParagraphOwners:
+    """Point 包含走 MuPDF float32；命中取原枚举序号最小者。"""
+    def __init__(self, paragraphs):
+        self.index = _YIndex()
+        self.entries = []
+        for i, paragraph in enumerate(paragraphs):
+            rect = fitz.Rect(paragraph['box'])
+            box = tuple(ctypes.c_float(v).value for v in rect)
+            entry = (i, box, paragraph.get('index', i))
+            self.entries.append((rect, entry[2]))
+            self.index.add(box, entry)
+
+    def owner(self, x, y):
+        x, y = ctypes.c_float(x).value, ctypes.c_float(y).value
+        if not math.isfinite(x) or not math.isfinite(y):
+            point = fitz.Point(x, y)
+            return next((owner for rect, owner in self.entries if rect.contains(point)), -1)
+        best, owner = len(self.entries), -1
+        for i, (x0, y0, x1, y1), label in self.index.candidates(y):
+            if i < best and x0 <= x < x1 and y0 <= y < y1:
+                best, owner = i, label
+        return owner
+
+
+class _BoxIndex:
+    """Rect 包含保留 Python double 链式比较，包括空/退化框的本机语义。"""
+    def __init__(self, boxes=()):
+        self.index = _YIndex()
+        for box in boxes:
+            self.add(box)
+
+    def add(self, box):
+        box = tuple(box)
+        self.index.add(box, box)
+
+    def contains(self, box):
+        x0, y0, x1, y1 = box
+        return any(a <= x0 <= x1 <= c and b <= y0 <= y1 <= d
+                   for a, b, c, d in self.index.candidates(y0))
+
+
 class _GraphicObjects(fitz.mupdf.PdfProcessor2):
     """按内容流调用顺序读取原路径和渐变载体，不使用描边外扩框。"""
-    def __init__(self, page, matrix=None, carrier=None, forms=()):
+    def __init__(self, page, matrix=None, carrier=None, forms=(), *, collect_paintings=False):
         super().__init__()
         self.page=page
         self.document=fitz.mupdf.pdf_document_from_fz_document(page.parent.this)
@@ -58,6 +126,7 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
         self.carrier,self.forms=carrier,forms
         self.stack,self.boxes,self.paths,self.parts=[],[],[],[]
         self.paintings=[]
+        self.collect_paintings=collect_paintings
         self.closed=False
         self.clip=False
         self.clip_box=fitz.INFINITE_RECT()
@@ -85,7 +154,8 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
         matrix=fitz.Matrix(m.a,m.b,m.c,m.d,m.e,m.f)*self.matrix
         b=native.pdf_xobject_bbox(obj)
         box=fitz.Rect(b.x0,b.y0,b.x1,b.y1)*matrix*self.page.transformation_matrix
-        child=_GraphicObjects(self.page,matrix,box,(*self.forms,identity))
+        child=_GraphicObjects(self.page,matrix,box,(*self.forms,identity),
+                              collect_paintings=self.collect_paintings)
         native.pdf_process_contents(child,self.document,native.pdf_xobject_resources(obj),
                                     obj,native.FzCookie())
         self.boxes.extend(child.boxes)
@@ -134,12 +204,14 @@ class _GraphicObjects(fitz.mupdf.PdfProcessor2):
             points=[fitz.Point(*point)*matrix for part in self.parts for point in part]
             box=fitz.Rect(min(p.x for p in points),min(p.y for p in points),
                           max(p.x for p in points),max(p.y for p in points))
-            if kind: self.paintings.append((kind,tuple(box)))
+            if kind and self.collect_paintings: self.paintings.append((kind,tuple(box)))
             for part in self.parts:
                 if len(part)<2: continue
-                transformed=[fitz.Point(*point)*matrix for point in part]
-                bounds=fitz.Rect(min(p.x for p in transformed),min(p.y for p in transformed),
-                                 max(p.x for p in transformed),max(p.y for p in transformed))
+                bounds=None  # _GlyphFilter 只读取 parent 与 kind；离线检查可按需收集。
+                if self.collect_paintings:
+                    transformed=[fitz.Point(*point)*matrix for point in part]
+                    bounds=fitz.Rect(min(p.x for p in transformed),min(p.y for p in transformed),
+                                     max(p.x for p in transformed),max(p.y for p in transformed))
                 self.paths.append((bounds,box,kind+4*int(self.clip)))
             if self.clip: self.clip_box=self.clip_box & box
         self.parts=[];self.clip=False;self.closed=False
@@ -204,11 +276,13 @@ class _GlyphFilter(fitz.mupdf.PdfSanitizeFilterOptions2):
         return int(not self.graphic(box))
 
 
-def _filter(page, selected=None, graphic=None, *, collect=False):
+def _filter(page, selected=None, graphic=None, *, collect=False, objects=None):
     native = fitz.mupdf
-    objects=_GraphicObjects(page).run() if graphic is not None else None
+    if objects is None and graphic is not None:
+        parsed=_GraphicObjects(page).run()
+        objects=(parsed.boxes,parsed.paths)
     callback = _GlyphFilter(page.transformation_matrix,selected,graphic,
-                           objects.boxes if objects else (),objects.paths if objects else ())
+                           objects[0] if objects else (),objects[1] if objects else ())
     # 实例化 Form，避免同一 XObject 多次调用时一次筛选污染其他实例。
     # 只按实际绘制调用筛选。recurse 会再次进入 Pattern 等资源的局部坐标流；
     # 其归属已由使用它的路径决定，不能在资源坐标中再按页面中线删一遍。
@@ -234,12 +308,12 @@ def analyze_source(source, layout):
         except Exception:
             glyphs = ()
             errors.add(number)
-        for char in glyphs:
-            center = fitz.Point((char.x0+char.x1)/2,(char.y0+char.y1)/2)
-            owner = next((p.get('index',i) for i,p in enumerate(paragraphs)
-                          if fitz.Rect(p['box']).contains(center)), -1)
-            assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
-                                 char.text,owner))
+        with timing.measure('ztf_split_compose.paragraph_ownership[analyze_source]'):
+            paragraph_owners = _ParagraphOwners(paragraphs)
+            for char in glyphs:
+                owner = paragraph_owners.owner((char.x0+char.x1)/2,(char.y0+char.y1)/2)
+                assigned.append(Char(char.id,char.order,0,char.x0,char.y0,char.x1,char.y1,
+                                     char.text,owner))
         try:
             page_lines = build_lines(number, assigned)
         except Exception:
@@ -250,7 +324,9 @@ def analyze_source(source, layout):
         figures.append(tuple(tuple(p['box']) for p in data.get('layouts',[])
                              if p.get('class') in {'figure','table','formula','isolate_formula'}))
     try:
-        tagged,appended = read_pdf_evidence(source.name) if source.name else ({},{})
+        tagged,appended = (read_pdf_evidence(
+            source.name, include_appended=timing.enabled()
+        ) if source.name else ({},{}))
     except Exception:
         tagged, appended = {}, {}
         errors.update(range(len(source)))
@@ -304,11 +380,17 @@ def column_origin_status(source, analysis, entries):
     return origins, (origins[0] is None) != (origins[1] is None)
 
 
-def _layer(source, number, selected, graphic):
+def _layer(source, number, selected, graphic, *, graphic_cache=None):
     result = fitz.open()
     try:
         result.insert_pdf(source,from_page=number,to_page=number,links=False,annots=False,widgets=False)
-        _filter(result[0],selected,graphic)
+        objects=None
+        if graphic_cache is not None and graphic is not None:
+            if number not in graphic_cache:
+                parsed=_GraphicObjects(result[0]).run()
+                graphic_cache[number]=(parsed.boxes,parsed.paths)
+            objects=graphic_cache[number]
+        _filter(result[0],selected,graphic,objects=objects)
         return result
     except Exception:
         result.close()
@@ -318,7 +400,7 @@ def _layer(source, number, selected, graphic):
 def _content_boxes(page):
     # bboxlog 返回实际内容范围（包括 MediaBox 之外），不是裁剪后的提取文本。
     graphics, skipped = [], 0
-    for kind,box,*_ in page.get_bboxlog():
+    for kind,box,*_ in timing.call('ztf_split_compose.get_bboxlog[_content_boxes]', page.get_bboxlog):
         if kind in ('ignore-text', 'fill-text', 'stroke-text'):
             continue
         if not all(math.isfinite(v) for v in box) or fitz.Rect(box).is_infinite:
@@ -335,23 +417,32 @@ def _content_boxes(page):
 
 def _text_boxes(page):
     """划词区域取真实文本行；未知字映射以实际绘制框补齐，不借用图形外框。"""
-    boxes=[fitz.Rect(line['bbox']) for block in page.get_text('dict',
-            flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,clip=fitz.INFINITE_RECT())['blocks']
+    boxes=[fitz.Rect(line['bbox']) for block in timing.call('ztf_split_compose.get_text[_text_boxes]',
+            page.get_text, 'dict', flags=fitz.TEXTFLAGS_DICT & ~fitz.TEXT_PRESERVE_IMAGES,
+            clip=fitz.INFINITE_RECT())['blocks']
             for line in block.get('lines',()) if any(span['text'].strip() for span in line['spans'])]
+    index=_BoxIndex(boxes)
     for char in _filter(page,collect=True):
         box=fitz.Rect(char.x0,char.y0,char.x1,char.y1)
-        if char.text.strip() and not any(owner.contains(box) for owner in boxes):
+        if char.text.strip() and not index.contains(box):
             boxes.append(box)
+            index.add(box)
     return boxes
 
 
-def _selection(regions, page, kind, document, dx=0, elements=()):
+def _selection(regions, page, kind, document, dx=0, elements=(), *, cache=None):
     # span 的矩形同时是 readerSelection 的元素身份，沿用 IL 段落/图表身份，
     # 不能把同一多行元素按字体 span 分裂；未知文字仍由真实文本框补齐。
-    boxes=[fitz.Rect(box) for box in elements]
-    for box in _text_boxes(document[0]):
-        if not any(owner.contains(box) for owner in boxes):
-            boxes.append(box)
+    boxes=cache.get(kind) if cache is not None else None
+    if boxes is None:
+        boxes=[fitz.Rect(box) for box in elements]
+        index=_BoxIndex(boxes)
+        for box in _text_boxes(document[0]):
+            if not index.contains(box):
+                boxes.append(box)
+                index.add(box)
+        if cache is not None:
+            cache[kind]=boxes
     regions.extend((page.number,kind,tuple(box+(dx,0,dx,0))) for box in boxes)
 
 
@@ -387,10 +478,10 @@ def _record(placements, number, out, part, kind, box, dx=0, dy=0):
 
 
 def _compose_columns(source, mono, entry, variants, output, placements, analysis, regions, page_layout,
-                     column_shift):
+                     column_shift, precomputed=None):
     number=entry['source_page']; original=source[number]; width,height=original.rect.width,original.rect.height
     if original.rotation: raise ValueError('rotated_page')
-    owners=_owners(number,entry,analysis,width,height)
+    owners=None if precomputed else _owners(number,entry,analysis,width,height)
     indices={v['column']:v['pdf_page'] for v in entry['variants']}
     if set(indices)!={0,1,SPANNING}: raise ValueError('variant_set_invalid')
     paragraphs=dict(entry.get('paragraph_column',()))
@@ -409,27 +500,37 @@ def _compose_columns(source, mono, entry, variants, output, placements, analysis
             bottom=max([height]+[b.y1 for b in boxes])
             _extend(doc[0],bottom)
             zh[column]=(doc,boxes,bottom)
-        margins={i for i,owner in owners.items() if owner==MARGIN}
-        hf=stack.enter_context(_layer(source,number,margins,lambda box:False))
+        margins={i for i,owner in (owners or {}).items() if owner==MARGIN}
+        # 三份 insert_pdf 副本的解析发生在筛选/figure guard 裁剪前。
+        graphic_cache={};selection_cache={}
+        hf=stack.enter_context(fitz.open(precomputed['directory']/precomputed['hf']['file'])
+            if precomputed else _layer(source,number,margins,lambda box:False,
+                                       graphic_cache=graphic_cache))
+        if precomputed:
+            selection_cache['hf']=[fitz.Rect(b) for b in precomputed['hf']['selections']]
         hf_boxes=[(l.x0,l.y0,l.x1,l.y1) for l in analysis[1][number] if l.index in analysis[3][number]]
         for column in (0,1):
-            selected={i for i,owner in owners.items() if owner==column}
-            en=stack.enter_context(_layer(source,number,selected,
-                lambda box,c=column: object_region(tuple(box),analysis[2][number],
-                                                    ((width/2,width/2),))==c))
+            selected={i for i,owner in (owners or {}).items() if owner==column}
+            cached=precomputed.get('en'+str(column)) if precomputed else None
+            en=stack.enter_context(fitz.open(precomputed['directory']/cached['file']) if cached else
+                _layer(source,number,selected,
+                    lambda box,c=column: object_region(tuple(box),analysis[2][number],
+                                                        ((width/2,width/2),))==c,
+                    graphic_cache=graphic_cache))
             page_height=max(height,zh[column][2],zh[SPANNING][2])
             page=output.new_page(width=width,height=page_height)
             part='ab'[column]
             _embed_full(page,hf,0,kind='hf')
-            _selection(regions,page,'hf',hf)
+            _selection(regions,page,'hf',hf,cache=selection_cache)
             for box in hf_boxes: _record(placements,number,page.number,part,'hf',box)
             _embed_full(page,zh[SPANNING][0],0,kind='span')
-            _selection(regions,page,'span',zh[SPANNING][0],elements=span_elements)
+            _selection(regions,page,'span',zh[SPANNING][0],elements=span_elements,cache=selection_cache)
             for box in zh[SPANNING][1]: _record(placements,number,page.number,part,'span',box)
             dx=-column*column_shift
             _embed_full(page,en,0,dx,kind='en')
-            _selection(regions,page,'en',en,dx)
-            for box in _content_boxes(en[0]): _record(placements,number,page.number,part,'en',box,dx)
+            _selection(regions,page,'en',en,dx,cache=({'en':[fitz.Rect(b) for b in cached['selections']]}
+                       if cached else None))
+            for box in (cached['boxes'] if cached else _content_boxes(en[0])): _record(placements,number,page.number,part,'en',box,dx)
             dx=(1-column)*column_shift
             _embed_full(page,zh[column][0],0,dx,kind='zh')
             _selection(regions,page,'zh',zh[column][0],dx)
@@ -829,6 +930,7 @@ def _rebuild_split_navigation(source, mono, output, plans, placements):
 
 def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None):
     """消费 T4 sidecar；逐源页事务，固定原因码日志；原子替换输出。"""
+    import ztf_split_precompute as precompute
     temporary=None
     try:
         with ExitStack() as stack:
@@ -847,8 +949,10 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                 variants=stack.enter_context(fitz.open(mapping['pdf_path'])) if mapping.get('pdf_path') else None
             except Exception:
                 variants=None
-            analysis=analyze_source(source,layout)
-            origins, column_origin_missing = column_origin_status(source,analysis,entries)
+            cached=precompute.consume(source_pdf,layout,list(entries.values()))
+            analysis=cached['analysis'] if cached else analyze_source(source,layout)
+            origins, column_origin_missing = ((cached['origins'],cached['origin_missing']) if cached else
+                column_origin_status(source,analysis,entries))
             column_shift=origins[1]-origins[0] if not any(origin is None for origin in origins) else 0
             if column_origin_missing:
                 _log('split_compose_single_column','column_origin_missing',count=len(source))
@@ -858,6 +962,7 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
             layout_pages={p['index']:p for p in layout.get('pages',())}
             placements=[];reports=[];plans=[];regions=[]
             for number in range(len(source)):
+                page_started = timing.page_started()
                 entry=entries.get(number,{})
                 start,count,region_count=len(output),len(placements),len(regions)
                 safety=False;reason='composed'
@@ -870,7 +975,9 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                     else:
                         if variants is None: raise ValueError('variants_missing')
                         _compose_columns(source,mono,entry,variants,output,placements,analysis,regions,
-                                         layout_pages.get(number,{}),column_shift)
+                                         layout_pages.get(number,{}),column_shift,
+                                         ({**cached['layers'][number], 'directory':precompute._active.directory}
+                                          if cached and number in cached['layers'] else None))
                 except Exception:
                     # 第三方异常不进入日志（可能包含正文或凭据）。
                     if len(output)>start: output.delete_pages(from_page=start,to_page=len(output)-1)
@@ -896,12 +1003,19 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
                 plans.append(_Page(number,0 if safety else handled_columns))
                 if log and not column_origin_missing:
                     log({'event':'split_compose_page','page':number,'reason':reason})
+                timing.page_finished(page_started, number, len(placements)-count,
+                                     len(regions)-region_count)
             _write_layout(output,reports,regions)
+            if log:
+                log({'event':'split_compose_navigation'})
             navigation=_rebuild_split_navigation(source,mono,output,plans,placements)
             handle=tempfile.NamedTemporaryFile(prefix='.ztf-split-',suffix='.pdf',
                 dir=os.path.dirname(os.path.abspath(output_pdf)),delete=False)
             temporary=handle.name;handle.close()
-            output.save(temporary,garbage=4,deflate=True)
+            if log:
+                log({'event':'split_compose_save'})
+            timing.call('ztf_split_compose.save[compose_split_document]',
+                        output.save, temporary,garbage=4,deflate=True)
             os.replace(temporary,output_pdf);temporary=None
             return {'input_pages':len(source),'output_pages':len(output),'regions':len(placements),
                     'fallback_pages':sum(r['safety_net'] for r in reports),
@@ -910,6 +1024,7 @@ def compose_split_document(source_pdf, mono_pdf, layout, output_pdf, *, log=None
     except Exception:
         raise RuntimeError('split_compose_failed') from None
     finally:
+        precompute.cleanup()
         if temporary is not None:
             try: os.remove(temporary)
             except OSError: _log('split_compose_cleanup_error','temporary_remove_failed')

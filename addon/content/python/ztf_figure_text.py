@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import os
 import re
+from typing import Any
 
 import pymupdf
 
@@ -324,6 +325,38 @@ def _restore_region(source_page: pymupdf.Page, output_page: pymupdf.Page,
     return stats
 
 
+def restore_figure_text_document(source: Any, output: Any) -> dict:
+    """Restore figure labels on already-open documents without saving them."""
+    stats = {
+        "pages": 0, "regions": 0, "restored_labels": 0,
+        "aligned_labels": 0, "removed_fragments": 0,
+    }
+    for index in range(min(len(source), len(output))):
+        source_page = source[index]
+        output_page = output[index]
+        # The bilingual output keeps the source page on the left; use its
+        # width as the translation-side origin.
+        dual = output_page.rect.width >= source_page.rect.width * 1.5
+        offset_x = source_page.rect.width if dual else 0.0
+        regions = _figure_regions(source_page)
+        stats["regions"] += len(regions)
+        page_stats = None
+        for region in regions:
+            current = _restore_region(source_page, output_page, region, offset_x)
+            if page_stats is None:
+                page_stats = current
+            else:
+                for key, value in current.items():
+                    page_stats[key] += value
+        if page_stats:
+            for key, value in page_stats.items():
+                stats[key] += value
+            stats["pages"] += 1
+    stats["changed"] = int(stats["restored_labels"] or stats["aligned_labels"] or
+                            stats["removed_fragments"])
+    return stats
+
+
 def restore_figure_text(source_path: str, output_path: str) -> dict:
     """Rewrite the translated PDF, restoring figure labels in place."""
     source = pymupdf.open(source_path)
@@ -331,31 +364,7 @@ def restore_figure_text(source_path: str, output_path: str) -> dict:
     temporary = output_path + ".figuretmp"
     saved = False
     try:
-        stats = {
-            "pages": 0, "regions": 0, "restored_labels": 0,
-            "aligned_labels": 0, "removed_fragments": 0,
-        }
-        for index in range(min(len(source), len(output))):
-            source_page = source[index]
-            output_page = output[index]
-            # BabelDOC 的双语版左半是原页宽；整页宽度可能大于两倍，不能用
-            # output 宽度的一半当译文侧起点。
-            dual = output_page.rect.width >= source_page.rect.width * 1.5
-            offset_x = source_page.rect.width if dual else 0.0
-            regions = _figure_regions(source_page)
-            stats["regions"] += len(regions)
-            page_stats = None
-            for region in regions:
-                current = _restore_region(source_page, output_page, region, offset_x)
-                if page_stats is None:
-                    page_stats = current
-                else:
-                    for key, value in current.items():
-                        page_stats[key] += value
-            if page_stats:
-                for key, value in page_stats.items():
-                    stats[key] += value
-                stats["pages"] += 1
+        stats = restore_figure_text_document(source, output)
         output.save(temporary, garbage=3, deflate=True)
         output.close()
         saved = True

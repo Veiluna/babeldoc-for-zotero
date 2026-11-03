@@ -8,6 +8,13 @@ from tests import split_quality_check as quality
 import ztf_split_compose as compose
 
 class SplitQualityTests(SplitComposeFixture,unittest.TestCase):
+    def test_missing_layout_is_an_explicit_quality_failure(self):
+        report=self.check()
+        self.assertEqual(report['status'],'FAIL')
+        check=report['checks'][0]
+        self.assertEqual(check['evidence']['errors'],['missing_layout'])
+        self.assertEqual(check['evidence']['required_setting'],'ZTF_TIMING=1')
+
     def test_duplicate_spanning_graphics_and_alternating_body_offsets_are_rejected(self):
         layout=self.graphic_fixture();self.run_compose(layout)
         self.assertEqual(self.check()['status'],'PASS')
